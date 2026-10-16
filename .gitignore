@@ -1,0 +1,10 @@
+.env.local
+.next
+node_modules
+tsconfig.tsbuildinfo
+
+# Generated QR files contain active table-specific ordering links.
+outputs/table-qr-codes/
+
+# Local scratch work and extracted reference materials.
+work/

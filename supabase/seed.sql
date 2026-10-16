@@ -1,0 +1,11 @@
+insert into public.cafe_settings(cafe_name,tagline) values ('Your Café','Sample café ordering setup');
+insert into public.cafe_tables(table_number,label) values (1,'Table 1'),(2,'Table 2'),(3,'Table 3'),(4,'Table 4'),(5,'Table 5');
+insert into public.menu_categories(name,slug,sort_order) values ('Coffee','coffee',1),('Small plates','small-plates',2),('Desserts','desserts',3);
+insert into public.menu_items(category_id,name,description,price_paise,is_veg,sort_order) select id,'Classic Cappuccino','Sample menu item',18000,true,1 from public.menu_categories where slug='coffee';
+insert into public.menu_items(category_id,name,description,price_paise,is_veg,sort_order) select id,'Masala Toastie','Sample menu item',22000,true,1 from public.menu_categories where slug='small-plates';
+insert into public.menu_items(category_id,name,description,price_paise,is_veg,sort_order) select id,'Flat White','Sample menu item',19000,true,2 from public.menu_categories where slug='coffee';
+insert into public.menu_items(category_id,name,description,price_paise,is_veg,sort_order) select id,'Iced Mocha','Sample menu item',24000,true,3 from public.menu_categories where slug='coffee';
+insert into public.menu_items(category_id,name,description,price_paise,is_veg,sort_order) select id,'Pesto Chicken Sandwich','Sample menu item',29000,false,2 from public.menu_categories where slug='small-plates';
+insert into public.menu_items(category_id,name,description,price_paise,is_veg,sort_order) select id,'Crispy Fries','Sample menu item',16000,true,3 from public.menu_categories where slug='small-plates';
+insert into public.menu_items(category_id,name,description,price_paise,is_veg,sort_order) select id,'Chocolate Brownie','Sample menu item',15000,true,1 from public.menu_categories where slug='desserts';
+insert into public.menu_items(category_id,name,description,price_paise,is_veg,sort_order) select id,'Burnt Basque Cheesecake','Sample menu item',21000,true,2 from public.menu_categories where slug='desserts';
