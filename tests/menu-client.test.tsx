@@ -9,6 +9,8 @@ describe('customer menu', () => {
     render(<MenuClient table={{label:'Table 1',qr_token:'test-table-token'}} categories={[{id:'coffee',name:'Coffee'}]} items={[item]} />);
     fireEvent.click(screen.getByRole('button',{name:'Add'}));
     expect(screen.getByText('1 item')).toBeTruthy();
+    fireEvent.change(screen.getByRole('textbox',{name:'Your name'}),{target:{value:'Namit'}});
+    fireEvent.change(screen.getByRole('spinbutton',{name:'Number of people'}),{target:{value:'2'}});
     expect((screen.getByRole('button',{name:'Place Order'}) as HTMLButtonElement).disabled).toBe(false);
   });
 });
