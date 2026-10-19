@@ -3,18 +3,44 @@
 import { useEffect,useState } from 'react';
 import { useRouter } from 'next/navigation';
 
-type Order={id:string;order_number:number;status:string;customer_name:string|null;guest_count:number|null;total_paise:number;created_at:string;cafe_tables:{label:string}|null;order_items:{item_name_snapshot:string;quantity:number}[]};
+type Order={id:string;order_number:number;status:string;customer_name:string|null;guest_count:number|null;total_paise:number;created_at:string;cafe_tables:{label:string}|null;order_items:{menu_item_id:string|null;item_name_snapshot:string;quantity:number}[]};
+type MenuItem={id:string;name:string;price_paise:number;is_available:boolean};
 const next:Record<string,string|undefined>={NEW:'ACCEPTED',ACCEPTED:'PREPARING',PREPARING:'READY',READY:'COMPLETED'};
 const action:Record<string,string>={NEW:'Accept order',ACCEPTED:'Start preparing',PREPARING:'Mark ready',READY:'Mark completed'};
 
-export default function OrderBoard({initial}:{initial:Order[]}){
+export default function OrderBoard({initial,menu}:{initial:Order[];menu:MenuItem[]}){
   const router=useRouter();
   const [statusById,setStatusById]=useState<Record<string,string>>({});
   const [busy,setBusy]=useState<string>();
   const [error,setError]=useState('');
+  const [editing,setEditing]=useState<{id:string;qty:Record<string,number>}|null>(null);
+  const [adding,setAdding]=useState('');
+  const nameOf=(id:string,o?:Order)=>menu.find(m=>m.id===id)?.name??o?.order_items.find(i=>i.menu_item_id===id)?.item_name_snapshot??'Item';
   const orders=initial.map(order=>({...order,status:statusById[order.id]??order.status}));
 
   useEffect(()=>{const timer=window.setInterval(()=>router.refresh(),15000);return()=>window.clearInterval(timer)},[router]);
+
+  async function reject(o:Order){
+    if(!confirm(`Reject order #${o.order_number}? The customer will see it as cancelled.`))return;
+    setBusy(o.id);setError('');
+    const r=await fetch(`/api/staff/orders/${o.id}`,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({status:'CANCELLED'})});
+    if(r.ok){setStatusById(v=>({...v,[o.id]:'CANCELLED'}));router.refresh()}
+    else setError('Could not reject this order. Staff can only reject orders that are still new.');
+    setBusy(undefined);
+  }
+
+  function startEdit(o:Order){setAdding('');setEditing({id:o.id,qty:Object.fromEntries(o.order_items.filter(i=>i.menu_item_id).map(i=>[i.menu_item_id as string,i.quantity]))})}
+  function setQty(id:string,delta:number){setEditing(e=>{if(!e)return e;const n=(e.qty[id]??0)+delta;const qty={...e.qty};if(n<1)delete qty[id];else qty[id]=Math.min(n,20);return {...e,qty}})}
+  async function saveEdit(){
+    if(!editing)return;
+    const items=Object.entries(editing.qty).map(([menuItemId,quantity])=>({menuItemId,quantity}));
+    if(!items.length)return setError('An order needs at least one item. Use Reject to cancel it instead.');
+    setBusy(editing.id);setError('');
+    const r=await fetch(`/api/staff/orders/${editing.id}/items`,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({items})});
+    if(r.ok){setEditing(null);router.refresh()}
+    else setError((await r.json().catch(()=>null))?.error??'Could not save the changes.');
+    setBusy(undefined);
+  }
 
   async function advance(o:Order){
     const status=next[o.status];
@@ -27,5 +53,5 @@ export default function OrderBoard({initial}:{initial:Order[]}){
   }
 
   if(!orders.length)return <section className="card" style={{padding:'clamp(28px,6vw,52px)',textAlign:'center'}}><div aria-hidden style={{fontSize:34,marginBottom:8}}>☕</div><h2 style={{fontFamily:'Georgia,serif',margin:'0 0 8px'}}>Waiting for the first order</h2><p className="muted" style={{maxWidth:420,margin:'auto'}}>This queue checks for new table orders every 15 seconds.</p></section>;
-  return <section style={{display:'grid',gap:12}}>{error&&<p role="alert" style={{padding:12,borderLeft:'3px solid #df6d5d'}}>{error}</p>}{orders.map(o=>{const following=next[o.status];return <article className="card" key={o.id} style={{padding:18}}><div style={{display:'flex',justifyContent:'space-between',gap:12,alignItems:'start'}}><div><span style={{color:'var(--accent)',fontSize:12,letterSpacing:'.12em'}}>TABLE · {o.cafe_tables?.label??'Unknown'}</span><h2 style={{fontFamily:'Georgia,serif',margin:'5px 0'}}>Order #{o.order_number}</h2><p className="muted" style={{margin:'0 0 4px'}}>{o.customer_name||'Guest'} · {o.guest_count??1} {o.guest_count===1?'person':'people'}</p></div><span className="chip" style={{color:'var(--accent)'}}>{o.status}</span></div><ul className="muted" style={{paddingLeft:20,lineHeight:1.7}}>{o.order_items.map((i,n)=><li key={n}>{i.quantity}× {i.item_name_snapshot}</li>)}</ul><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,borderTop:'1px solid var(--line)',paddingTop:14}}><b>₹{(o.total_paise/100).toFixed(2)}</b>{following&&<button className="btn" disabled={busy===o.id} onClick={()=>advance(o)}>{busy===o.id?'Updating…':action[o.status]}</button>}</div></article>})}</section>;
+  return <section style={{display:'grid',gap:12}}>{error&&<p role="alert" style={{padding:12,borderLeft:'3px solid #df6d5d'}}>{error}</p>}{orders.map(o=>{const following=next[o.status];return <article className="card" key={o.id} style={{padding:18}}><div style={{display:'flex',justifyContent:'space-between',gap:12,alignItems:'start'}}><div><span style={{color:'var(--accent)',fontSize:12,letterSpacing:'.12em'}}>TABLE · {o.cafe_tables?.label??'Unknown'}</span><h2 style={{fontFamily:'Georgia,serif',margin:'5px 0'}}>Order #{o.order_number}</h2><p className="muted" style={{margin:'0 0 4px'}}>{o.customer_name||'Guest'} · {o.guest_count??1} {o.guest_count===1?'person':'people'}</p></div><span className="chip" style={{color:'var(--accent)'}}>{o.status}</span></div>{editing?.id===o.id?<div style={{display:'grid',gap:8,margin:'12px 0'}}>{Object.entries(editing.qty).map(([id,q])=><div key={id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}}><span>{nameOf(id,o)}</span><span><button className="chip" aria-label="Less" onClick={()=>setQty(id,-1)}>−</button><span style={{padding:'0 10px'}}>{q}</span><button className="chip" aria-label="More" onClick={()=>setQty(id,1)}>+</button></span></div>)}<select value={adding} onChange={e=>{if(e.target.value){setQty(e.target.value,1)}setAdding('')}} style={{padding:10,borderRadius:8,border:'1px solid var(--line)',background:'#ffffff10',color:'var(--ink)'}}><option value="">+ Add an item…</option>{menu.filter(m=>m.is_available&&!(m.id in editing.qty)).map(m=><option key={m.id} value={m.id}>{m.name} · ₹{m.price_paise/100}</option>)}</select><div style={{display:'flex',gap:8}}><button className="btn" disabled={busy===o.id} onClick={saveEdit}>{busy===o.id?'Saving…':'Save changes'}</button><button className="chip" onClick={()=>setEditing(null)}>Cancel</button></div></div>:<ul className="muted" style={{paddingLeft:20,lineHeight:1.7}}>{o.order_items.map((i,n)=><li key={n}>{i.quantity}× {i.item_name_snapshot}</li>)}</ul>}<div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,borderTop:'1px solid var(--line)',paddingTop:14}}><b>₹{(o.total_paise/100).toFixed(2)}</b><div style={{display:'flex',gap:8,flexWrap:'wrap',justifyContent:'flex-end'}}>{o.status==='NEW'&&<button className="chip" disabled={busy===o.id} onClick={()=>reject(o)}>Reject</button>}{['NEW','ACCEPTED','PREPARING'].includes(o.status)&&editing?.id!==o.id&&<button className="chip" onClick={()=>startEdit(o)}>Edit items</button>}{following&&<button className="btn" disabled={busy===o.id} onClick={()=>advance(o)}>{busy===o.id?'Updating…':action[o.status]}</button>}</div></div></article>})}</section>;
 }
