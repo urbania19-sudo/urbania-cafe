@@ -6,7 +6,7 @@ import {
 } from '../src/components/admin/MenuManager';
 
 describe('Menu Item Image Upload Validation', () => {
-  it('allows standard web image formats: JPEG, PNG, WebP, and AVIF', () => {
+  it('allows image formats supported by the menu-images bucket: JPEG, PNG, and WebP', () => {
     ALLOWED_IMAGE_TYPES.forEach((type) => {
       const file = new File(['mock content'], 'test-image', { type });
       const res = validateImageFile(file);
@@ -16,7 +16,7 @@ describe('Menu Item Image Upload Validation', () => {
   });
 
   it('rejects unsupported file formats such as PDF, GIF, and plain text', () => {
-    const invalidTypes = ['application/pdf', 'image/gif', 'text/plain', ''];
+    const invalidTypes = ['application/pdf', 'image/gif', 'image/avif', 'text/plain', ''];
     invalidTypes.forEach((type) => {
       const file = new File(['mock content'], 'doc', { type });
       const res = validateImageFile(file);
