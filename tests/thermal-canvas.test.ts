@@ -74,6 +74,50 @@ describe('Thermal Canvas Receipt Generator (384px for Fun Print / MX11)', () => 
     expect(canvas.height).toBeGreaterThan(400);
   });
 
+  it('renders distinct GST text for not_registered, unconfirmed, and registered', () => {
+    const filledTexts: string[] = [];
+    const origGetContext = HTMLCanvasElement.prototype.getContext;
+    (HTMLCanvasElement.prototype as unknown as { getContext: unknown }).getContext = function () {
+      const ctx = origGetContext.call(this, '2d') as unknown as Record<string, unknown>;
+      return {
+        ...ctx,
+        fillText: (text: string) => {
+          filledTexts.push(text);
+        },
+      };
+    };
+
+    // 1. Not registered
+    filledTexts.length = 0;
+    renderReceiptToCanvas({
+      ...mockBill,
+      business_snapshot: { ...mockBill.business_snapshot, gst_status: 'not_registered' },
+    });
+    expect(filledTexts).toContain('GST: Not Registered (Not a Tax Invoice)');
+
+    // 2. Unconfirmed / Pending Registration
+    filledTexts.length = 0;
+    renderReceiptToCanvas({
+      ...mockBill,
+      business_snapshot: { ...mockBill.business_snapshot, gst_status: 'unconfirmed' },
+    });
+    expect(filledTexts).toContain('GST: Pending Registration (Not a Tax Invoice)');
+
+    // 3. Registered with GSTIN
+    filledTexts.length = 0;
+    renderReceiptToCanvas({
+      ...mockBill,
+      business_snapshot: {
+        ...mockBill.business_snapshot,
+        gst_status: 'registered',
+        gstin: '08AAAAA0000A1Z5',
+      },
+    });
+    expect(filledTexts).toContain('GSTIN: 08AAAAA0000A1Z5');
+
+    (HTMLCanvasElement.prototype as unknown as { getContext: unknown }).getContext = origGetContext;
+  });
+
   it('returns valid intent URL targeting com.fun.mxw package on Android', () => {
     const origUserAgent = navigator.userAgent;
     Object.defineProperty(navigator, 'userAgent', {

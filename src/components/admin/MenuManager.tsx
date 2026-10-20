@@ -23,6 +23,25 @@ const field = {
   color: 'var(--ink)',
 };
 
+export const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/avif'];
+export const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
+
+export function validateImageFile(file: File): { valid: boolean; error?: string } {
+  if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+    return {
+      valid: false,
+      error: `Unsupported image format (${file.type || 'unknown'}). Please upload a JPEG, PNG, WebP, or AVIF image.`,
+    };
+  }
+  if (file.size > MAX_IMAGE_SIZE_BYTES) {
+    return {
+      valid: false,
+      error: `File size exceeds 5MB limit (${(file.size / (1024 * 1024)).toFixed(1)}MB). Please choose a smaller image.`,
+    };
+  }
+  return { valid: true };
+}
+
 async function post(url: string, body: unknown) {
   const r = await fetch(url, {
     method: 'POST',
@@ -80,32 +99,54 @@ export default function MenuManager({
   }
 
   async function handleItemPhotoUpload(item: Item, file: File) {
+    const val = validateImageFile(file);
+    if (!val.valid) {
+      alert(val.error);
+      return;
+    }
+
     try {
       setUploadingId(item.id);
       const publicUrl = await uploadToStorage(file);
-      edit(item.id, { image_url: publicUrl });
-      // Auto-save the item with new image URL
-      await fetch('/api/admin/menu', {
+
+      // Verify server persistence before updating local UI state
+      const res = await fetch('/api/admin/menu', {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ ...item, image_url: publicUrl }),
       });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => null);
+        throw new Error(errData?.error || 'Database rejected updated image URL');
+      }
+
+      // Confirmed saved on server: update local state
+      edit(item.id, { image_url: publicUrl });
     } catch (err) {
       console.error('Photo upload error:', err);
-      alert('Photo upload failed. Ensure the "menu-images" Supabase Storage bucket exists and allows uploads.');
+      const msg = err instanceof Error ? err.message : 'Photo upload failed';
+      alert(`Could not save dish photo: ${msg}\n\nNote: If this is the first upload, verify the 'menu-images' public bucket exists in Supabase Storage.`);
     } finally {
       setUploadingId(null);
     }
   }
 
   async function handleDraftPhotoUpload(file: File) {
+    const val = validateImageFile(file);
+    if (!val.valid) {
+      alert(val.error);
+      return;
+    }
+
     try {
       setUploadingId('draft');
       const publicUrl = await uploadToStorage(file);
       setDraft((d) => ({ ...d, image_url: publicUrl }));
     } catch (err) {
       console.error('Draft photo upload error:', err);
-      alert('Photo upload failed. Ensure the "menu-images" Supabase Storage bucket exists and allows uploads.');
+      const msg = err instanceof Error ? err.message : 'Photo upload failed';
+      alert(`Could not upload draft photo: ${msg}\n\nNote: Verify the 'menu-images' public bucket exists in Supabase Storage.`);
     } finally {
       setUploadingId(null);
     }

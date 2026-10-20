@@ -18,6 +18,7 @@ export interface BillBusinessSnapshot {
   city?: string;
   state?: string;
   pincode?: string;
+  pincode_verified?: boolean;
   phone?: string | null;
   email?: string | null;
   gst_status?: "unconfirmed" | "registered" | "not_registered";
@@ -55,6 +56,9 @@ export function friendlyBillingError(err: unknown): string {
   if (msg.includes("URB:order_cancelled")) return "Cannot generate a bill for a cancelled order.";
   if (msg.includes("URB:order_not_accepted")) return "Please accept the order before generating its bill.";
   if (msg.includes("URB:settings_missing")) return "Café settings are not configured in the database.";
+  if (msg.includes("URB:tax_invoice_not_configured")) {
+    return "GST Tax Invoices are not yet enabled pending itemized tax calculation. Please keep GST status as Pending Registration or Not Registered in Settings.";
+  }
   return msg || "An unexpected billing error occurred.";
 }
 

@@ -69,6 +69,7 @@ export function renderReceiptToCanvas(
   if (biz.phone) y += 14;
   if (biz.fssai_number) y += 16;
   if (biz.gst_status === "registered" && biz.gstin) y += 16;
+  else if (biz.gst_status === "not_registered") y += 14;
   else if (biz.gst_status === "unconfirmed") y += 14;
 
   y += 12; // Divider
@@ -181,6 +182,10 @@ export function renderReceiptToCanvas(
     renderCtx.font = `bold 11px ${fontMono}`;
     renderCtx.fillText(`GSTIN: ${biz.gstin}`, centerX, curY);
     curY += 16;
+  } else if (biz.gst_status === "not_registered") {
+    renderCtx.font = `10px ${fontSans}`;
+    renderCtx.fillText("GST: Not Registered (Not a Tax Invoice)", centerX, curY);
+    curY += 14;
   } else if (biz.gst_status === "unconfirmed") {
     renderCtx.font = `10px ${fontSans}`;
     renderCtx.fillText("GST: Pending Registration (Not a Tax Invoice)", centerX, curY);

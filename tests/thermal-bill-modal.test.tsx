@@ -60,6 +60,25 @@ describe('ThermalBillModal Component (Mobile Fun Print Workflow)', () => {
     expect(screen.getAllByText('₹520.00').length).toBeGreaterThanOrEqual(1);
   });
 
+  it('distinguishes not_registered from unconfirmed GST statuses', () => {
+    const onClose = vi.fn();
+    const notRegBill: Bill = {
+      ...mockBill,
+      business_snapshot: { ...mockBill.business_snapshot, gst_status: 'not_registered' },
+    };
+    const { rerender } = render(
+      <ThermalBillModal bill={notRegBill} onClose={onClose} isReprint={false} />
+    );
+    expect(screen.getByText('GST: Not Registered (Not a Tax Invoice)')).toBeInTheDocument();
+
+    const unconfBill: Bill = {
+      ...mockBill,
+      business_snapshot: { ...mockBill.business_snapshot, gst_status: 'unconfirmed' },
+    };
+    rerender(<ThermalBillModal bill={unconfBill} onClose={onClose} isReprint={false} />);
+    expect(screen.getByText('GST: Pending Registration (Not a Tax Invoice)')).toBeInTheDocument();
+  });
+
   it('renders duplicate indicator when isReprint=true', () => {
     const onClose = vi.fn();
     render(<ThermalBillModal bill={mockBill} onClose={onClose} isReprint={true} />);

@@ -16,6 +16,9 @@ describe('Billing Logic & Validation Helpers', () => {
     expect(friendlyBillingError(new Error('URB:settings_missing'))).toBe(
       'Café settings are not configured in the database.'
     );
+    expect(friendlyBillingError(new Error('URB:tax_invoice_not_configured'))).toBe(
+      'GST Tax Invoices are not yet enabled pending itemized tax calculation. Please keep GST status as Pending Registration or Not Registered in Settings.'
+    );
     expect(friendlyBillingError(new Error('Unknown postgres fault'))).toBe(
       'Unknown postgres fault'
     );
@@ -57,6 +60,7 @@ describe('Billing Logic & Validation Helpers', () => {
         city: 'Jodhpur',
         state: 'Rajasthan',
         pincode: '342008',
+        pincode_verified: true,
         gst_status: 'unconfirmed',
       },
       items_snapshot: [
@@ -78,6 +82,7 @@ describe('Billing Logic & Validation Helpers', () => {
     };
 
     expect(mockBill.business_snapshot.fssai_number).toBe('12226032000212');
+    expect(mockBill.business_snapshot.pincode_verified).toBe(true);
     expect(mockBill.total_paise).toBe(44000);
     expect(mockBill.status).toBe('issued');
   });

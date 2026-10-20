@@ -214,6 +214,10 @@ export default function ThermalBillModal({
             )}
             {biz.gst_status === 'registered' && biz.gstin ? (
               <div style={{ fontSize: 10, fontWeight: 700 }}>GSTIN: {biz.gstin}</div>
+            ) : biz.gst_status === 'not_registered' ? (
+              <div style={{ fontSize: 9, color: '#4b5563', marginTop: 2 }}>
+                GST: Not Registered (Not a Tax Invoice)
+              </div>
             ) : (
               <div style={{ fontSize: 9, color: '#4b5563', marginTop: 2 }}>
                 GST: Pending Registration (Not a Tax Invoice)

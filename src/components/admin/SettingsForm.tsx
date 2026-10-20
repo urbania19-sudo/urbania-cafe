@@ -209,10 +209,43 @@ export default function SettingsForm({ initial }: { initial: Settings | null }) 
           </div>
         </div>
 
-        {/* Address/PIN Discrepancy Note */}
-        <div style={{ padding: 12, borderRadius: 8, background: '#ffffff0a', fontSize: 12, lineHeight: 1.5 }}>
-          <b>📍 Location Confirmation:</b> Certificate lists{' '}
-          <i>17/456, Chopasni Housing Board, Jodhpur, Rajasthan 342008</i>. This matches verified FSSAI records and will print directly on customer bills.
+        {/* Address & PIN Verification Section */}
+        <div
+          style={{
+            padding: 14,
+            borderRadius: 8,
+            background: form.pincode_verified ? '#10b98115' : '#f59e0b15',
+            border: `1px solid ${form.pincode_verified ? '#10b98144' : '#f59e0b44'}`,
+            display: 'grid',
+            gap: 8,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+            <b>📍 Business Premises & PIN Verification</b>
+            <span
+              className="chip"
+              style={{
+                fontSize: 11,
+                borderColor: form.pincode_verified ? '#10b981' : '#f59e0b',
+                color: form.pincode_verified ? '#10b981' : '#f59e0b',
+              }}
+            >
+              {form.pincode_verified ? '✓ PIN Confirmed' : '⚠️ Verification Pending'}
+            </span>
+          </div>
+          <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5 }}>
+            {form.pincode_verified
+              ? 'Address and PIN code (342008) have been confirmed by the administrator against the physical café location.'
+              : 'Registered certificate address: "17/456, Chopasni Housing Board, Jodhpur, Rajasthan 342008". Verification is pending: confirm that PIN 342008 matches local postal deliveries for Chopasni Housing Board before marking as verified.'}
+          </p>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', marginTop: 4 }}>
+            <input
+              type="checkbox"
+              checked={form.pincode_verified}
+              onChange={(e) => setForm({ ...form, pincode_verified: e.target.checked })}
+            />
+            <span>I have verified that PIN code {form.pincode || '342008'} matches the physical café premises</span>
+          </label>
         </div>
       </section>
 
@@ -232,8 +265,10 @@ export default function SettingsForm({ initial }: { initial: Settings | null }) 
               style={fieldStyle}
             >
               <option value="unconfirmed">Pending / Unconfirmed Registration</option>
-              <option value="registered">Registered (Regular Taxable)</option>
-              <option value="not_registered">Not Registered (Exempt/Small Business)</option>
+              <option value="not_registered">Not Registered (Exempt / Below Threshold)</option>
+              <option value="registered" disabled>
+                Registered (Disabled pending itemized GST engine)
+              </option>
             </select>
           </label>
 
@@ -252,7 +287,7 @@ export default function SettingsForm({ initial }: { initial: Settings | null }) 
         {/* GST Warning callout */}
         <div style={{ padding: 12, borderRadius: 8, background: '#ffffff0a', fontSize: 12, lineHeight: 1.5 }}>
           <b>🛡️ Legal Notice:</b> When GST status is pending or unregistered, customer receipts are issued as{' '}
-          <b>BILL / CASH RECEIPT</b> without tax invoices, fulfilling Indian compliance requirements without misrepresenting tax liability.
+          <b>BILL / CASH RECEIPT</b> without tax invoices. Switching to Registered is temporarily disabled until itemized CGST + SGST tax calculation is configured in the billing engine.
         </div>
       </section>
 

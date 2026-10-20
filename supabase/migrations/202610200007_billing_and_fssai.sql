@@ -152,11 +152,13 @@ begin
     )::public.cafe_settings;
   end if;
 
-  v_doc_type := case
-    when v_settings.gst_status = 'registered' and v_settings.gstin is not null and length(trim(v_settings.gstin)) > 0
-    then 'tax_invoice'
-    else 'bill'
-  end;
+  -- 6. Enforce GST correctness: until itemized CGST/SGST tax calculation is implemented
+  -- and validated, block tax-invoice generation to prevent issuing zero-tax tax invoices.
+  if v_settings.gst_status = 'registered' then
+    raise exception 'URB:tax_invoice_not_configured';
+  end if;
+
+  v_doc_type := 'bill';
 
   v_business := jsonb_build_object(
     'cafe_name', coalesce(v_settings.cafe_name, 'Urbania Café'),
@@ -167,6 +169,7 @@ begin
     'city', coalesce(v_settings.city, 'Jodhpur'),
     'state', coalesce(v_settings.state, 'Rajasthan'),
     'pincode', coalesce(v_settings.pincode, '342008'),
+    'pincode_verified', coalesce(v_settings.pincode_verified, false),
     'phone', v_settings.phone,
     'email', v_settings.email,
     'gst_status', coalesce(v_settings.gst_status, 'unconfirmed'),

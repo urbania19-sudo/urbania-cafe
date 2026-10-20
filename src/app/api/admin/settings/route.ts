@@ -47,7 +47,17 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: "FSSAI licence number must be exactly 14 digits" }, { status: 400 });
   }
 
-  if (data.gst_status === "registered" && data.gstin && !isValidGstin(data.gstin)) {
+  if (data.gst_status === "registered") {
+    return NextResponse.json(
+      {
+        error:
+          "GST Tax Invoice generation is disabled pending itemized GST calculation. Please keep GST status as Pending Registration or Not Registered.",
+      },
+      { status: 400 }
+    );
+  }
+
+  if (data.gstin && !isValidGstin(data.gstin)) {
     return NextResponse.json({ error: "GSTIN must match standard 15-character format" }, { status: 400 });
   }
 
