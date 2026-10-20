@@ -5,6 +5,17 @@ import MenuClient from '../src/components/menu/MenuClient';
 
 const item = { id:'4f1a0bc1-a561-47a4-a61d-04d9b4c7035d', name:'Test Coffee', description:'Test drink', price_paise:18000, is_veg:true, is_available:true, category_id:'coffee', image_url:null };
 describe('customer menu', () => {
+  it('clearly marks demo menus as preview-only and prevents order submission', () => {
+    render(<MenuClient demo table={{label:'Table 1',qr_token:'demo-table-1'}} categories={[{id:'coffee',name:'Coffee'}]} items={[item]} />);
+    fireEvent.click(screen.getByRole('button',{name:'Add'}));
+    fireEvent.click(screen.getByRole('button',{name:'Place Order'}));
+    fireEvent.change(screen.getByRole('textbox',{name:'Your name'}),{target:{value:'Test Guest'}});
+    expect(screen.getByText(/Demo mode — orders will not be sent to staff/i)).toBeTruthy();
+    expect((screen.getByRole('button',{name:'Preview only'}) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button',{name:'Preview only'}));
+    expect(screen.queryByText(/orders will not be sent to staff/i)).toBeTruthy();
+  });
+
   it('adds an item to the cart when the customer taps Add', () => {
     render(<MenuClient table={{label:'Table 1',qr_token:'test-table-token'}} categories={[{id:'coffee',name:'Coffee'}]} items={[item]} />);
     fireEvent.click(screen.getByRole('button',{name:'Add'}));
