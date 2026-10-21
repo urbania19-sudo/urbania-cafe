@@ -73,6 +73,40 @@ describe('Preview Write Isolation Guard', () => {
     expect(result.blocked).toBe(false);
     expect(enforcePreviewWriteGuard()).toBeNull();
   });
+
+  it('blocks writes when SUPABASE_INTERNAL_URL is non-prod proxy but NEXT_PUBLIC_SUPABASE_URL is production', () => {
+    process.env.VERCEL_ENV = 'preview';
+    process.env.ALLOW_PREVIEW_WRITES = 'true';
+    process.env.SUPABASE_INTERNAL_URL = 'https://custom-proxy.internal:5432';
+    process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://rexeyagnvssvjlukjcbd.supabase.co';
+
+    const result = isPreviewWriteBlocked();
+    expect(result.blocked).toBe(true);
+    expect(result.code).toBe('PREVIEW_READ_ONLY');
+  });
+
+  it('blocks writes when NEXT_PUBLIC_SUPABASE_URL is staging but SUPABASE_INTERNAL_URL points to production', () => {
+    process.env.VERCEL_ENV = 'preview';
+    process.env.ALLOW_PREVIEW_WRITES = 'true';
+    process.env.SUPABASE_INTERNAL_URL = 'https://rexeyagnvssvjlukjcbd.supabase.co';
+    process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://staging-isolated-db-123.supabase.co';
+
+    const result = isPreviewWriteBlocked();
+    expect(result.blocked).toBe(true);
+    expect(result.code).toBe('PREVIEW_READ_ONLY');
+  });
+
+  it('blocks writes when POSTGRES_URL or DATABASE_URL points to production', () => {
+    process.env.VERCEL_ENV = 'preview';
+    process.env.ALLOW_PREVIEW_WRITES = 'true';
+    delete process.env.SUPABASE_INTERNAL_URL;
+    delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+    process.env.POSTGRES_URL = 'postgres://postgres:pw@db.rexeyagnvssvjlukjcbd.supabase.co:5432/postgres';
+
+    const result = isPreviewWriteBlocked();
+    expect(result.blocked).toBe(true);
+    expect(result.code).toBe('PREVIEW_READ_ONLY');
+  });
 });
 
 describe('API Route Preview Write Protection (Direct Invocations)', () => {

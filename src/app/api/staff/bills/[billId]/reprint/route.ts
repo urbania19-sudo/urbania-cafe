@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { staffDb } from "@/lib/owner";
+import { friendlyBillingError } from "@/lib/billing";
 import { enforcePreviewWriteGuard } from "@/lib/preview-guard";
 
 export async function POST(
@@ -24,54 +25,53 @@ export async function POST(
   const metadata = typeof body === "object" && body !== null ? body : {};
 
   try {
-    // 1. Try RPC record_bill_reprint
+    // Authoritative reprint logging via database RPC.
+    // Inspects returned database errors and never claims an audit event was recorded when it was not.
     const { data: rpcData, error: rpcError } = await db.rpc("record_bill_reprint", {
       p_bill_id: billId,
       p_metadata: metadata,
     });
 
-    if (!rpcError && rpcData?.ok) {
-      return NextResponse.json(rpcData);
+    if (rpcError) {
+      const msg = rpcError.message || "";
+      if (msg.includes("URB:forbidden") || msg.includes("staff only")) {
+        return NextResponse.json(
+          { error: "Staff permissions required to record reprint" },
+          { status: 403 }
+        );
+      }
+      if (msg.includes("URB:not_found") || rpcError.code === "PGRST116") {
+        return NextResponse.json({ error: "Bill not found" }, { status: 404 });
+      }
+      if (
+        rpcError.code === "PGRST202" ||
+        msg.includes("record_bill_reprint") ||
+        msg.includes("function public.record_bill_reprint")
+      ) {
+        return NextResponse.json(
+          { error: "Reprint audit logging requires database migration 0009 to be applied" },
+          { status: 501 }
+        );
+      }
+      return NextResponse.json(
+        { error: friendlyBillingError(rpcError) },
+        { status: 400 }
+      );
     }
 
-    // 2. Fallback insert
-    const { data: bill, error: billErr } = await db
-      .from("bills")
-      .select("id, bill_number")
-      .eq("id", billId)
-      .maybeSingle();
-
-    if (billErr || !bill) {
-      return NextResponse.json({ error: "Bill not found" }, { status: 404 });
+    if (!rpcData?.ok) {
+      return NextResponse.json(
+        { error: "Failed to record reprint event" },
+        { status: 400 }
+      );
     }
 
-    const {
-      data: { user },
-    } = await db.auth.getUser();
-
-    const { data: profile } = await db
-      .from("admin_profiles")
-      .select("role")
-      .eq("user_id", user?.id)
-      .maybeSingle();
-
-    try {
-      await db.from("bill_audit_events").insert({
-        bill_id: bill.id,
-        bill_number: bill.bill_number,
-        event_type: "reprinted",
-        actor_id: user?.id ?? null,
-        actor_role: profile?.role ?? "staff",
-        actor_email: user?.email ?? null,
-        metadata,
-      });
-    } catch {
-      // bill_audit_events table pending migration
-    }
-
-    return NextResponse.json({ ok: true, bill_number: bill.bill_number });
+    return NextResponse.json(rpcData);
   } catch (err) {
     console.error("Reprint logging error:", err);
-    return NextResponse.json({ error: "Failed to record reprint event" }, { status: 500 });
+    return NextResponse.json(
+      { error: friendlyBillingError(err) },
+      { status: 500 }
+    );
   }
 }

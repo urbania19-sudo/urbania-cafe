@@ -88,7 +88,12 @@ export interface CreateManualOrderInput {
 }
 
 export function friendlyBillingError(err: unknown): string {
-  const msg = err instanceof Error ? err.message : String(err || "");
+  const msg =
+    err instanceof Error
+      ? err.message
+      : typeof err === "object" && err !== null && "message" in err && typeof (err as { message: unknown }).message === "string"
+      ? (err as { message: string }).message
+      : String(err || "");
   if (msg.includes("URB:forbidden")) return "You are not authorised to generate or view bills.";
   if (msg.includes("URB:not_found")) return "Order not found.";
   if (msg.includes("URB:order_cancelled")) return "Cannot generate a bill for a cancelled order.";

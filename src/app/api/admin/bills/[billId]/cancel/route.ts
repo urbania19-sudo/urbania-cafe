@@ -34,100 +34,45 @@ export async function POST(
   const reason = parsed.data.reason?.trim() || "Voided by admin";
 
   try {
-    // 1. Try RPC cancel_bill
+    // Authoritative atomic cancellation via database RPC.
+    // Updates bill status, linked order status, and logs 'cancelled' audit event in one transaction.
+    // If the RPC fails, we do NOT execute partial or non-atomic fallback updates.
     const { data: rpcData, error: rpcError } = await db.rpc("cancel_bill", {
       p_bill_id: billId,
       p_reason: reason,
     });
 
-    if (!rpcError && rpcData?.ok) {
-      return NextResponse.json(rpcData);
-    }
-
-    // 2. Graceful fallback if RPC is not yet registered in database
-    const { data: bill, error: fetchErr } = await db
-      .from("bills")
-      .select("*")
-      .eq("id", billId)
-      .maybeSingle();
-
-    if (fetchErr || !bill) {
-      return NextResponse.json({ error: "Bill not found" }, { status: 404 });
-    }
-
-    if (bill.status === "cancelled") {
-      return NextResponse.json({ ok: true, already_cancelled: true, bill });
-    }
-
-    const {
-      data: { user },
-    } = await db.auth.getUser();
-
-    const { data: updatedBill, error: updateErr } = await db
-      .from("bills")
-      .update({
-        status: "cancelled",
-        cancelled_at: new Date().toISOString(),
-        cancelled_by: user?.id ?? null,
-        cancellation_reason: reason,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", billId)
-      .select()
-      .single();
-
-    let finalBill = updatedBill;
-    if (updateErr) {
-      // Fallback for pre-migration-0009 schema (update status & updated_at only)
-      const { data: legacyBill, error: legacyErr } = await db
-        .from("bills")
-        .update({
-          status: "cancelled",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", billId)
-        .select()
-        .single();
-
-      if (legacyErr) {
+    if (rpcError) {
+      const msg = rpcError.message || "";
+      if (msg.includes("URB:forbidden") || msg.includes("admin only")) {
         return NextResponse.json(
-          { error: friendlyBillingError(legacyErr) },
-          { status: 500 }
+          { error: "Only administrators can cancel bills" },
+          { status: 403 }
         );
       }
-      finalBill = legacyBill;
+      if (msg.includes("URB:not_found") || rpcError.code === "PGRST116") {
+        return NextResponse.json({ error: "Bill not found" }, { status: 404 });
+      }
+      if (rpcError.code === "PGRST202" || msg.includes("function public.cancel_bill")) {
+        return NextResponse.json(
+          { error: "Atomic cancellation requires database migration 0009 to be applied" },
+          { status: 501 }
+        );
+      }
+      return NextResponse.json(
+        { error: friendlyBillingError(rpcError) },
+        { status: 400 }
+      );
     }
 
-    // Cancel linked order
-    const orderUpdate = await db
-      .from("orders")
-      .update({
-        status: "CANCELLED",
-        cancelled_at: new Date().toISOString(),
-        cancellation_reason: `Bill ${bill.bill_number} cancelled: ${reason}`,
-      })
-      .eq("id", bill.order_id);
-
-    if (orderUpdate.error) {
-      await db.from("orders").update({ status: "CANCELLED" }).eq("id", bill.order_id);
+    if (!rpcData?.ok) {
+      return NextResponse.json(
+        { error: "Cancellation could not be completed" },
+        { status: 400 }
+      );
     }
 
-    // Record audit event if table exists
-    try {
-      await db.from("bill_audit_events").insert({
-        bill_id: bill.id,
-        bill_number: bill.bill_number,
-        event_type: "cancelled",
-        actor_id: user?.id ?? null,
-        actor_role: "admin",
-        actor_email: user?.email ?? null,
-        metadata: { reason, order_number: bill.order_number, total_paise: bill.total_paise },
-      });
-    } catch {
-      // bill_audit_events table pending migration
-    }
-
-    return NextResponse.json({ ok: true, bill: finalBill });
+    return NextResponse.json(rpcData);
   } catch (err) {
     console.error("Error cancelling bill:", err);
     return NextResponse.json(

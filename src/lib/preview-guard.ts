@@ -22,13 +22,20 @@ export function isPreviewWriteBlocked(): PreviewGuardResult {
   }
 
   const allowPreviewWrites = process.env.ALLOW_PREVIEW_WRITES === 'true';
-  const supabaseUrl =
-    process.env.SUPABASE_INTERNAL_URL ||
-    process.env.NEXT_PUBLIC_SUPABASE_URL ||
-    '';
+
+  // Inspect internal, public, and connection string URLs without short-circuiting
+  const candidateUrls = [
+    process.env.SUPABASE_INTERNAL_URL,
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
+    process.env.SUPABASE_URL,
+    process.env.POSTGRES_URL,
+    process.env.DATABASE_URL,
+  ].filter((url): url is string => typeof url === 'string' && url.length > 0);
 
   // Known production project reference
-  const isProductionDatabase = supabaseUrl.includes('rexeyagnvssvjlukjcbd');
+  const isProductionDatabase = candidateUrls.some((url) =>
+    url.toLowerCase().includes('rexeyagnvssvjlukjcbd')
+  );
 
   if (isProductionDatabase || !allowPreviewWrites) {
     return {
