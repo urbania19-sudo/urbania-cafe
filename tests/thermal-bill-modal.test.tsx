@@ -192,21 +192,21 @@ describe('ThermalBillModal Component (Mobile Fun Print Workflow)', () => {
     const viewBtn = screen.getByRole('button', { name: /View Full PNG/i });
     fireEvent.click(viewBtn);
     expect(windowOpenSpy).not.toHaveBeenCalled();
-    expect(screen.getByText('← Back to Bill')).toBeInTheDocument();
-    expect(screen.getByText(/In Fun Print’s browser, tap menu/i)).toBeInTheDocument();
+    const backBtn = screen.getByRole('button', { name: /Back to bill/i });
+    expect(backBtn).toBeInTheDocument();
 
     // Tapping Back to Bill returns to the standard bill modal
-    fireEvent.click(screen.getByText('← Back to Bill'));
+    fireEvent.click(backBtn);
     expect(screen.getByText(/Target:/i)).toBeInTheDocument();
 
     // Primary Print Bill with Fun Print button also opens clean in-page print view directly
     const printBtn = screen.getByRole('button', { name: /Print Bill with Fun Print/i });
     fireEvent.click(printBtn);
     expect(windowOpenSpy).not.toHaveBeenCalled();
-    expect(screen.getByText('← Back to Bill')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Back to bill/i })).toBeInTheDocument();
 
     // Return again
-    fireEvent.click(screen.getByText('← Back to Bill'));
+    fireEvent.click(screen.getByRole('button', { name: /Back to bill/i }));
 
     // Fun Print info link must NOT use target="_blank"
     const link = screen.getByRole('link', { name: /Open Fun Print|Fun Print App/i });

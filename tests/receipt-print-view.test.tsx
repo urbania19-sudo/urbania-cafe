@@ -80,13 +80,12 @@ describe('ReceiptPrintView Dedicated Print-Only Component', () => {
     expect(receiptImg.getAttribute('src')).toMatch(/^data:image\/png;base64,/);
   });
 
-  it('renders Android Fun Print guidance and print button', () => {
+  it('excludes instructional banners and action cards, displaying only the receipt and back button', () => {
     render(<ReceiptPrintView bill={sampleBill} isReprint={true} />);
 
-    expect(screen.getByText(/Fun Print on Android/i)).toBeInTheDocument();
-    expect(screen.getByText(/Print Current Page/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Print Dialog/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /← Back/i })).toBeInTheDocument();
+    expect(screen.queryByText(/Fun Print on Android/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Print Dialog/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Back/i })).toBeInTheDocument();
   });
 
   it('includes 58mm thermal @page and @media print CSS rules to hide UI chrome on print', () => {

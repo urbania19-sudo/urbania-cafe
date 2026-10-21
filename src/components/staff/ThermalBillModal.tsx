@@ -1,9 +1,8 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Bill } from '@/lib/billing';
-import { HtmlReceipt } from '@/components/bills/ReceiptPrintView';
 import {
   renderReceiptToCanvas,
   downloadReceiptImage,
@@ -39,7 +38,12 @@ export default function ThermalBillModal({
   const meaningfulTagline = useMemo(() => getMeaningfulTagline(biz), [biz]);
 
   // Pre-render the 384px dot-pitch PNG data URL and exact dimensions for <img> display
-  const receiptMeta = useMemo(() => {
+  const [receiptMeta, setReceiptMeta] = useState<{
+    dataUrl: string;
+    width: number;
+    height: number;
+  } | null>(() => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return null;
     try {
       const canvas = renderReceiptToCanvas(bill, { scale: 1, isReprint });
       return {
@@ -50,6 +54,26 @@ export default function ThermalBillModal({
     } catch {
       return null;
     }
+  });
+
+  useEffect(() => {
+    let isMounted = true;
+    requestAnimationFrame(() => {
+      if (!isMounted) return;
+      try {
+        const canvas = renderReceiptToCanvas(bill, { scale: 1, isReprint });
+        setReceiptMeta({
+          dataUrl: canvas.toDataURL('image/png'),
+          width: canvas.width,
+          height: canvas.height,
+        });
+      } catch (err) {
+        console.error('Error rendering receipt canvas:', err);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
   }, [bill, isReprint]);
 
   const receiptDataUrl = receiptMeta?.dataUrl ?? null;
@@ -176,6 +200,38 @@ export default function ThermalBillModal({
           }}
         />
 
+        {/* Subtle back navigation button (hidden on print) */}
+        <nav
+          className="no-print"
+          style={{
+            position: 'fixed',
+            top: 12,
+            left: 12,
+            zIndex: 10000,
+          }}
+        >
+          <button
+            onClick={() => setInPagePrintView(false)}
+            aria-label="Back to bill"
+            style={{
+              background: 'rgba(0, 0, 0, 0.08)',
+              border: '1px solid rgba(0, 0, 0, 0.15)',
+              borderRadius: '50%',
+              width: 38,
+              height: 38,
+              display: 'grid',
+              placeItems: 'center',
+              cursor: 'pointer',
+              fontSize: 18,
+              color: '#18181b',
+            }}
+            title="Back to bill"
+          >
+            ←
+          </button>
+        </nav>
+
+        {/* Clean Receipt Container: ONLY the genuine 384px PNG receipt on white */}
         <main
           style={{
             width: '100%',
@@ -185,10 +241,10 @@ export default function ThermalBillModal({
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
-            padding: '10px 8px 80px',
+            padding: 0,
           }}
         >
-          {receiptMeta ? (
+          {receiptMeta && (
             /* eslint-disable-next-line @next/next/no-img-element */
             <img
               src={receiptMeta.dataUrl}
@@ -204,74 +260,8 @@ export default function ThermalBillModal({
                 background: '#ffffff',
               }}
             />
-          ) : (
-            <HtmlReceipt bill={bill} isReprint={isReprint} />
           )}
         </main>
-
-        <footer
-          className="no-print"
-          style={{
-            position: 'fixed',
-            bottom: 16,
-            left: '50%',
-            transform: 'translateX(-50%)',
-            width: 'min(92%, 420px)',
-            background: '#18181b',
-            color: '#ffffff',
-            borderRadius: 12,
-            padding: '12px 16px',
-            boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 8,
-            zIndex: 10000,
-            fontSize: 13,
-          }}
-        >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontWeight: 700, color: '#f59e0b' }}>
-              🖨️ Fun Print on Android:
-            </span>
-            <button
-              onClick={() => setInPagePrintView(false)}
-              style={{
-                background: '#f59e0b',
-                color: '#000000',
-                border: 'none',
-                borderRadius: 6,
-                padding: '5px 12px',
-                fontWeight: 700,
-                fontSize: 12,
-                cursor: 'pointer',
-              }}
-            >
-              ← Back to Bill
-            </button>
-          </div>
-          <div style={{ fontSize: 12, color: '#d1d5db', lineHeight: 1.4 }}>
-            In Fun Print&rsquo;s browser, tap menu (<b>⋮</b>) &gt; <b>&ldquo;Print Current Page&rdquo;</b> to print directly to your MX11.
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, borderTop: '1px solid #27272a', paddingTop: 6 }}>
-            <button
-              onClick={() => {
-                setInPagePrintView(false);
-                onClose();
-              }}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: '#9ca3af',
-                fontSize: 12,
-                cursor: 'pointer',
-                textDecoration: 'underline',
-                padding: 0,
-              }}
-            >
-              Close &amp; Return to Queue
-            </button>
-          </div>
-        </footer>
       </div>
     );
   }
@@ -584,6 +574,10 @@ export default function ThermalBillModal({
             <span className="muted">Target: <b>58 mm / MX11 Mini Printer (384px)</b></span>
             <a
               href={launchInfo.url}
+              onClick={(e) => {
+                e.preventDefault();
+                setStatusMessage('You are already inside Fun Print. Tap "Print Bill with Fun Print", then use browser menu (⋮) > "Print Current Page".');
+              }}
               className="chip"
               style={{ fontSize: 11, padding: '4px 10px', textDecoration: 'none' }}
               title="Fun Print App info"
