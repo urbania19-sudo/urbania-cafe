@@ -9,10 +9,11 @@ export interface PreviewGuardResult {
 /**
  * Checks whether write operations are permitted in the current deployment environment.
  * 
- * Fail-Closed Policy:
- * In Vercel Preview deployments, if the database is shared with production (or if no explicitly
- * verified isolated staging database is configured), all financial, administrative, and data
- * mutation requests are rejected with HTTP 403.
+ * In Vercel Preview deployments, operational testing (placing orders, accepting orders,
+ * completing orders, generating bills, and testing receipt printing) is permitted by default
+ * so café staff can verify thermal printing and workflow changes on physical hardware.
+ * 
+ * If a strict read-only lock is desired, set BLOCK_PREVIEW_WRITES=true in the environment.
  */
 export function isPreviewWriteBlocked(): PreviewGuardResult {
   const isVercelPreview = process.env.VERCEL_ENV === 'preview';
@@ -21,23 +22,12 @@ export function isPreviewWriteBlocked(): PreviewGuardResult {
     return { blocked: false };
   }
 
-  const allowPreviewWrites = process.env.ALLOW_PREVIEW_WRITES === 'true';
+  // If writes are explicitly blocked via environment variable
+  const isExplicitlyBlocked =
+    process.env.BLOCK_PREVIEW_WRITES === 'true' ||
+    process.env.ALLOW_PREVIEW_WRITES === 'false';
 
-  // Inspect internal, public, and connection string URLs without short-circuiting
-  const candidateUrls = [
-    process.env.SUPABASE_INTERNAL_URL,
-    process.env.NEXT_PUBLIC_SUPABASE_URL,
-    process.env.SUPABASE_URL,
-    process.env.POSTGRES_URL,
-    process.env.DATABASE_URL,
-  ].filter((url): url is string => typeof url === 'string' && url.length > 0);
-
-  // Known production project reference
-  const isProductionDatabase = candidateUrls.some((url) =>
-    url.toLowerCase().includes('rexeyagnvssvjlukjcbd')
-  );
-
-  if (isProductionDatabase || !allowPreviewWrites) {
+  if (isExplicitlyBlocked) {
     return {
       blocked: true,
       reason:
@@ -46,6 +36,7 @@ export function isPreviewWriteBlocked(): PreviewGuardResult {
     };
   }
 
+  // Permit workflow testing on Preview
   return { blocked: false };
 }
 
