@@ -128,9 +128,10 @@ describe('Mobile Viewports (320px, 360px, 375px, 390px, 414px) Responsiveness', 
 
         const dialog = screen.getByRole('dialog');
         expect(dialog).toBeInTheDocument();
-        // Overlay must use flex centering rather than grid to prevent mobile webview collapse
+        // Overlay must use flex top-alignment with scrolling rather than fragile centering to prevent mobile webview collapse
         expect(dialog.style.display).toBe('flex');
-        expect(dialog.style.alignItems).toBe('center');
+        expect(dialog.style.alignItems).toBe('flex-start');
+        expect(dialog.style.overflowY).toBe('auto');
 
         expect(screen.getByText('New Counter / Custom Order')).toBeInTheDocument();
 

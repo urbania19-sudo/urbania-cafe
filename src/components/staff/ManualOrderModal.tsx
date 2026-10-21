@@ -200,16 +200,15 @@ export default function ManualOrderModal({
         left: 0,
         right: 0,
         bottom: 0,
-        width: '100vw',
+        width: '100%',
         height: '100%',
-        minHeight: '100dvh',
         backgroundColor: 'rgba(0,0,0,0.85)',
         backdropFilter: 'blur(4px)',
         WebkitBackdropFilter: 'blur(4px)',
         display: 'flex',
-        alignItems: 'center',
         justifyContent: 'center',
-        padding: 'calc(12px + env(safe-area-inset-top, 0px)) 12px calc(12px + env(safe-area-inset-bottom, 0px)) 12px',
+        alignItems: 'flex-start',
+        padding: 'calc(16px + env(safe-area-inset-top, 0px)) 12px calc(16px + env(safe-area-inset-bottom, 0px)) 12px',
         zIndex: 1001,
         boxSizing: 'border-box',
         overflowY: 'auto',
@@ -219,30 +218,24 @@ export default function ManualOrderModal({
       <div
         className="card"
         style={{
-          width: 'min(calc(100vw - 24px), 580px)',
+          width: '100%',
           maxWidth: 580,
-          maxHeight: 'min(92vh, 92dvh)',
-          display: 'flex',
-          flexDirection: 'column',
+          margin: 'auto 0',
           backgroundColor: 'var(--card, #1c1512)',
           border: '1px solid var(--line, #3d2d24)',
           borderRadius: 12,
-          boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
-          overflow: 'hidden',
+          boxShadow: '0 20px 40px rgba(0,0,0,0.6)',
           boxSizing: 'border-box',
-          margin: 'auto',
         }}
       >
-        {/* Pinned Header */}
+        {/* Header */}
         <div
           style={{
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
-            padding: '16px 20px',
+            padding: '16px 18px',
             borderBottom: '1px solid var(--line, #3d2d24)',
-            flexShrink: 0,
-            background: 'var(--card, #1c1512)',
             gap: 12,
           }}
         >
@@ -252,7 +245,7 @@ export default function ManualOrderModal({
               fontFamily: 'Georgia, serif',
               margin: 0,
               fontSize: '1.25rem',
-              lineHeight: 1.25,
+              lineHeight: 1.3,
               fontWeight: 700,
             }}
           >
@@ -267,7 +260,6 @@ export default function ManualOrderModal({
               minHeight: 36,
               padding: '6px 14px',
               cursor: 'pointer',
-              flexShrink: 0,
               fontWeight: 600,
             }}
             aria-label="Close dialog"
@@ -276,18 +268,14 @@ export default function ManualOrderModal({
           </button>
         </div>
 
-        {/* Scrollable Form Body */}
+        {/* Form Body (Standard Flow - Rock Solid across all WebViews) */}
         <div
           style={{
-            flex: 1,
-            overflowY: 'auto',
-            WebkitOverflowScrolling: 'touch',
-            overscrollBehavior: 'contain',
-            padding: '16px 20px',
-            minHeight: 0,
+            padding: '16px 18px',
             display: 'flex',
             flexDirection: 'column',
             gap: 14,
+            boxSizing: 'border-box',
           }}
         >
           {error && (
@@ -386,7 +374,7 @@ export default function ManualOrderModal({
                   onChange={(e) => setTableId(e.target.value)}
                   style={{
                     width: '100%',
-                    minHeight: 42,
+                    minHeight: 44,
                     padding: '8px 10px',
                     borderRadius: 6,
                     border: '1px solid var(--line, #3d2d24)',
@@ -416,7 +404,7 @@ export default function ManualOrderModal({
                   onChange={(e) => setGuestCount(parseInt(e.target.value, 10) || 1)}
                   style={{
                     width: '100%',
-                    minHeight: 42,
+                    minHeight: 44,
                     padding: '8px 10px',
                     borderRadius: 6,
                     border: '1px solid var(--line, #3d2d24)',
@@ -449,7 +437,7 @@ export default function ManualOrderModal({
                 onChange={(e) => setCustomerName(e.target.value)}
                 style={{
                   width: '100%',
-                  minHeight: 42,
+                  minHeight: 44,
                   padding: '8px 10px',
                   borderRadius: 6,
                   border: '1px solid var(--line, #3d2d24)',
@@ -472,7 +460,7 @@ export default function ManualOrderModal({
                 onChange={(e) => setCustomerNote(e.target.value)}
                 style={{
                   width: '100%',
-                  minHeight: 42,
+                  minHeight: 44,
                   padding: '8px 10px',
                   borderRadius: 6,
                   border: '1px solid var(--line, #3d2d24)',
@@ -498,7 +486,7 @@ export default function ManualOrderModal({
                 onChange={(e) => setSelectedMenuItemId(e.target.value)}
                 style={{
                   flex: '1 1 200px',
-                  minHeight: 42,
+                  minHeight: 44,
                   padding: '8px 10px',
                   borderRadius: 6,
                   border: '1px solid var(--line, #3d2d24)',
@@ -518,7 +506,7 @@ export default function ManualOrderModal({
                 type="button"
                 className="btn"
                 onClick={addCatalogueItem}
-                style={{ minHeight: 42, whiteSpace: 'nowrap', flex: '0 0 auto' }}
+                style={{ minHeight: 44, whiteSpace: 'nowrap', flex: '0 0 auto' }}
               >
                 + Add Item
               </button>
@@ -568,7 +556,7 @@ export default function ManualOrderModal({
                       color: 'inherit',
                       boxSizing: 'border-box',
                       fontSize: 13,
-                      minHeight: 38,
+                      minHeight: 40,
                     }}
                   />
                   <input
@@ -586,7 +574,7 @@ export default function ManualOrderModal({
                       color: 'inherit',
                       boxSizing: 'border-box',
                       fontSize: 13,
-                      minHeight: 38,
+                      minHeight: 40,
                     }}
                   />
                   <input
@@ -604,7 +592,7 @@ export default function ManualOrderModal({
                       color: 'inherit',
                       boxSizing: 'border-box',
                       fontSize: 13,
-                      minHeight: 38,
+                      minHeight: 40,
                     }}
                   />
                 </div>
@@ -623,7 +611,7 @@ export default function ManualOrderModal({
                     marginBottom: 8,
                     boxSizing: 'border-box',
                     fontSize: 13,
-                    minHeight: 38,
+                    minHeight: 40,
                   }}
                 />
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -631,7 +619,7 @@ export default function ManualOrderModal({
                     type="button"
                     className="chip"
                     onClick={addCustomLineItem}
-                    style={{ color: 'var(--accent, #c89f65)', fontWeight: 600, minHeight: 36 }}
+                    style={{ color: 'var(--accent, #c89f65)', fontWeight: 600, minHeight: 38 }}
                   >
                     Add Custom Item
                   </button>
@@ -639,7 +627,7 @@ export default function ManualOrderModal({
                     type="button"
                     className="chip"
                     onClick={() => setIsAddingCustom(false)}
-                    style={{ minHeight: 36 }}
+                    style={{ minHeight: 38 }}
                   >
                     Cancel
                   </button>
@@ -660,81 +648,83 @@ export default function ManualOrderModal({
               </p>
             ) : (
               <div style={{ border: '1px solid var(--line, #3d2d24)', borderRadius: 8, overflow: 'hidden' }}>
-                {items.map((item, idx) => (
-                  <div
-                    key={idx}
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      padding: '10px 12px',
-                      borderBottom: idx < items.length - 1 ? '1px solid var(--line, #3d2d24)' : 'none',
-                      fontSize: 13,
-                      gap: 8,
-                      flexWrap: 'wrap',
-                    }}
-                  >
-                    <div style={{ flex: '1 1 140px', minWidth: 0 }}>
-                      <div style={{ fontWeight: 600, wordBreak: 'break-word' }}>{item.name}</div>
-                      {item.isCustom && (
-                        <span className="chip" style={{ fontSize: 9, marginLeft: 0, marginTop: 2, display: 'inline-block' }}>
-                          Custom
-                        </span>
-                      )}
-                      {item.note && (
-                        <div className="muted" style={{ fontSize: 11, wordBreak: 'break-word' }}>
-                          Note: {item.note}
-                        </div>
-                      )}
-                      <div className="muted" style={{ fontSize: 11 }}>₹{item.unitPriceRupees.toFixed(2)} each</div>
-                    </div>
+                <div style={{ maxHeight: 240, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+                  {items.map((item, idx) => (
+                    <div
+                      key={idx}
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        padding: '10px 12px',
+                        borderBottom: idx < items.length - 1 ? '1px solid var(--line, #3d2d24)' : 'none',
+                        fontSize: 13,
+                        gap: 8,
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      <div style={{ flex: '1 1 140px', minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, wordBreak: 'break-word' }}>{item.name}</div>
+                        {item.isCustom && (
+                          <span className="chip" style={{ fontSize: 9, marginLeft: 0, marginTop: 2, display: 'inline-block' }}>
+                            Custom
+                          </span>
+                        )}
+                        {item.note && (
+                          <div className="muted" style={{ fontSize: 11, wordBreak: 'break-word' }}>
+                            Note: {item.note}
+                          </div>
+                        )}
+                        <div className="muted" style={{ fontSize: 11 }}>₹{item.unitPriceRupees.toFixed(2)} each</div>
+                      </div>
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                      <button
-                        type="button"
-                        className="chip"
-                        onClick={() => updateQuantity(idx, -1)}
-                        style={{
-                          minWidth: 36,
-                          minHeight: 36,
-                          padding: 0,
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: 16,
-                          cursor: 'pointer',
-                        }}
-                        aria-label="Decrease quantity"
-                      >
-                        -
-                      </button>
-                      <span style={{ fontWeight: 700, minWidth: 24, textAlign: 'center' }}>
-                        {item.quantity}
-                      </span>
-                      <button
-                        type="button"
-                        className="chip"
-                        onClick={() => updateQuantity(idx, 1)}
-                        style={{
-                          minWidth: 36,
-                          minHeight: 36,
-                          padding: 0,
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: 16,
-                          cursor: 'pointer',
-                        }}
-                        aria-label="Increase quantity"
-                      >
-                        +
-                      </button>
-                      <span style={{ fontWeight: 700, minWidth: 70, textAlign: 'right' }}>
-                        ₹{(item.unitPriceRupees * item.quantity).toFixed(2)}
-                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                        <button
+                          type="button"
+                          className="chip"
+                          onClick={() => updateQuantity(idx, -1)}
+                          style={{
+                            minWidth: 36,
+                            minHeight: 36,
+                            padding: 0,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: 16,
+                            cursor: 'pointer',
+                          }}
+                          aria-label="Decrease quantity"
+                        >
+                          -
+                        </button>
+                        <span style={{ fontWeight: 700, minWidth: 24, textAlign: 'center' }}>
+                          {item.quantity}
+                        </span>
+                        <button
+                          type="button"
+                          className="chip"
+                          onClick={() => updateQuantity(idx, 1)}
+                          style={{
+                            minWidth: 36,
+                            minHeight: 36,
+                            padding: 0,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: 16,
+                            cursor: 'pointer',
+                          }}
+                          aria-label="Increase quantity"
+                        >
+                          +
+                        </button>
+                        <span style={{ fontWeight: 700, minWidth: 70, textAlign: 'right' }}>
+                          ₹{(item.unitPriceRupees * item.quantity).toFixed(2)}
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
 
                 <div
                   style={{
@@ -744,6 +734,7 @@ export default function ManualOrderModal({
                     background: 'rgba(255,255,255,0.05)',
                     fontWeight: 700,
                     fontSize: 14,
+                    borderTop: '1px solid var(--line, #3d2d24)',
                   }}
                 >
                   <span>Total Amount:</span>
@@ -754,7 +745,7 @@ export default function ManualOrderModal({
           </div>
         </div>
 
-        {/* Submit Actions (Pinned Footer) */}
+        {/* Submit Actions (Footer) */}
         <div
           style={{
             display: 'flex',
@@ -762,9 +753,10 @@ export default function ManualOrderModal({
             justifyContent: 'flex-end',
             alignItems: 'center',
             borderTop: '1px solid var(--line, #3d2d24)',
-            padding: '12px 20px calc(12px + env(safe-area-inset-bottom, 0px))',
+            padding: '14px 18px',
             background: 'var(--card, #1c1512)',
-            flexShrink: 0,
+            borderBottomLeftRadius: 12,
+            borderBottomRightRadius: 12,
           }}
         >
           <button
