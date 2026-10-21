@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { owner } from "@/lib/owner";
 import { friendlyBillingError } from "@/lib/billing";
+import { enforcePreviewWriteGuard } from "@/lib/preview-guard";
 
 const cancelSchema = z.object({
   reason: z.string().max(300).optional().nullable(),
@@ -11,6 +12,9 @@ export async function POST(
   req: NextRequest,
   ctx: { params: Promise<{ billId: string }> }
 ) {
+  const previewGuard = enforcePreviewWriteGuard();
+  if (previewGuard) return previewGuard;
+
   const db = await owner();
   if (!db) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

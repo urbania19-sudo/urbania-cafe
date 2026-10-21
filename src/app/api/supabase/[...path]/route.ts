@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { enforcePreviewWriteGuard } from '@/lib/preview-guard';
 
 const INTERNAL_SUPABASE_URL =
   process.env.SUPABASE_INTERNAL_URL || 'http://127.0.0.1:54321';
@@ -9,6 +10,13 @@ async function handle(
 ) {
   const { path } = await ctx.params;
   const subpath = path.join('/');
+
+  if (req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'OPTIONS') {
+    if (!subpath.startsWith('auth/v1')) {
+      const previewGuard = enforcePreviewWriteGuard();
+      if (previewGuard) return previewGuard;
+    }
+  }
   const search = req.nextUrl.search;
   const targetUrl = `${INTERNAL_SUPABASE_URL}/${subpath}${search}`;
 

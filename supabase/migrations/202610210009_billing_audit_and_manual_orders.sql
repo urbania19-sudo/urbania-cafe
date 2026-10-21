@@ -89,24 +89,24 @@ create index if not exists bill_audit_events_bill_number_idx on public.bill_audi
 create index if not exists bill_audit_events_created_at_idx on public.bill_audit_events(created_at desc);
 create index if not exists bill_audit_events_event_type_idx on public.bill_audit_events(event_type);
 
+-- Revoke all direct modification privileges from authenticated and public roles.
+-- Audit events must be immutable and created ONLY through authorized SECURITY DEFINER functions.
+revoke all on public.bill_audit_events from public, authenticated;
 grant select on public.bill_audit_events to authenticated;
-grant insert on public.bill_audit_events to authenticated;
 grant all on public.bill_audit_events to service_role;
 
 alter table public.bill_audit_events enable row level security;
 
--- Policies for Bill Audit Events
+-- Policies for Bill Audit Events:
+-- Read policy: Authenticated staff and admins may inspect audit events
 drop policy if exists "staff read bill audit events" on public.bill_audit_events;
 create policy "staff read bill audit events" on public.bill_audit_events
   for select using (public.is_staff());
 
+-- Drop any previous direct insert/update/delete policies to guarantee fail-closed immutability.
+-- All event insertion is strictly controlled via SECURITY DEFINER RPCs (generate_bill, record_bill_reprint, cancel_bill).
 drop policy if exists "staff insert bill audit events" on public.bill_audit_events;
-create policy "staff insert bill audit events" on public.bill_audit_events
-  for insert with check (public.is_staff());
-
 drop policy if exists "admins manage bill audit events" on public.bill_audit_events;
-create policy "admins manage bill audit events" on public.bill_audit_events
-  for all using (public.is_admin()) with check (public.is_admin());
 
 -- 5. Updated Atomic Bill Generation Function with Audit Logging & Manual Orders
 create or replace function public.generate_bill(p_order_id uuid)

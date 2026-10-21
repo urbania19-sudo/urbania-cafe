@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { owner } from "@/lib/owner";
 import { isValidFssai, isValidGstin } from "@/lib/billing";
+import { enforcePreviewWriteGuard } from "@/lib/preview-guard";
 
 const schema = z.object({
   cafe_name: z.string().trim().min(2).max(100),
@@ -34,6 +35,9 @@ export async function GET() {
 }
 
 export async function PATCH(req: NextRequest) {
+  const previewGuard = enforcePreviewWriteGuard();
+  if (previewGuard) return previewGuard;
+
   const db = await owner();
   if (!db) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 

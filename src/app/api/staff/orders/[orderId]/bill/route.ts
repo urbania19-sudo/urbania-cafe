@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { authDb } from "@/lib/supabase/auth-server";
 import { friendlyBillingError } from "@/lib/billing";
+import { enforcePreviewWriteGuard } from "@/lib/preview-guard";
 
 export async function GET(
   req: NextRequest,
@@ -35,6 +36,9 @@ export async function POST(
   req: NextRequest,
   ctx: { params: Promise<{ orderId: string }> }
 ) {
+  const previewGuard = enforcePreviewWriteGuard();
+  if (previewGuard) return previewGuard;
+
   const { orderId } = await ctx.params;
   if (!z.string().uuid().safeParse(orderId).success) {
     return NextResponse.json({ error: "Invalid order ID" }, { status: 400 });

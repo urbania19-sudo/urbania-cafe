@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { staffDb } from "@/lib/owner";
+import { enforcePreviewWriteGuard } from "@/lib/preview-guard";
 
 export async function POST(
   req: NextRequest,
   ctx: { params: Promise<{ billId: string }> }
 ) {
+  const previewGuard = enforcePreviewWriteGuard();
+  if (previewGuard) return previewGuard;
+
   const db = await staffDb();
   if (!db) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

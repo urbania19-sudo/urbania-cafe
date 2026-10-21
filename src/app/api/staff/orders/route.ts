@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { staffDb } from "@/lib/owner";
 import { friendlyBillingError } from "@/lib/billing";
+import { enforcePreviewWriteGuard } from "@/lib/preview-guard";
 
 const manualOrderSchema = z.object({
   serviceMode: z.enum(["dine_in", "takeaway", "counter", "delivery"]).default("dine_in"),
@@ -27,6 +28,9 @@ const manualOrderSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
+  const previewGuard = enforcePreviewWriteGuard();
+  if (previewGuard) return previewGuard;
+
   const db = await staffDb();
   if (!db) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
