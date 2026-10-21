@@ -1,4 +1,42 @@
-import { NextRequest,NextResponse } from 'next/server'; import { z } from 'zod'; import { owner } from '@/lib/owner';
-const schema=z.object({id:z.string().uuid().optional(),category_id:z.string().uuid(),name:z.string().trim().min(2).max(120),description:z.string().trim().max(500).nullable(),price_paise:z.number().int().min(0),is_veg:z.boolean(),is_available:z.boolean()});
-export async function POST(req:NextRequest){const data=schema.omit({id:true}).safeParse(await req.json().catch(()=>null));const db=await owner();if(!db||!data.success)return NextResponse.json({error:'Invalid request'},{status:400});const {error}=await db.from('menu_items').insert(data.data);return error?NextResponse.json({error:'Could not add item'},{status:400}):NextResponse.json({ok:true},{status:201})}
-export async function PATCH(req:NextRequest){const data=schema.required({id:true}).safeParse(await req.json().catch(()=>null));const db=await owner();if(!db||!data.success)return NextResponse.json({error:'Invalid request'},{status:400});const {id,...item}=data.data;const {error}=await db.from('menu_items').update(item).eq('id',id);return error?NextResponse.json({error:'Could not update item'},{status:400}):NextResponse.json({ok:true})}
+import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+import { owner } from '@/lib/owner';
+import { enforcePreviewWriteGuard } from '@/lib/preview-guard';
+
+const schema = z.object({
+  id: z.string().uuid().optional(),
+  category_id: z.string().uuid(),
+  name: z.string().trim().min(2).max(120),
+  description: z.string().trim().max(500).nullable().optional(),
+  price_paise: z.number().int().min(0),
+  is_veg: z.boolean(),
+  is_available: z.boolean(),
+  image_url: z.string().trim().nullable().optional(),
+});
+
+export async function POST(req: NextRequest) {
+  const previewGuard = enforcePreviewWriteGuard();
+  if (previewGuard) return previewGuard;
+
+  const data = schema.omit({ id: true }).safeParse(await req.json().catch(() => null));
+  const db = await owner();
+  if (!db || !data.success) return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
+  const { error } = await db.from('menu_items').insert(data.data);
+  return error
+    ? NextResponse.json({ error: 'Could not add item' }, { status: 400 })
+    : NextResponse.json({ ok: true }, { status: 201 });
+}
+
+export async function PATCH(req: NextRequest) {
+  const previewGuard = enforcePreviewWriteGuard();
+  if (previewGuard) return previewGuard;
+
+  const data = schema.required({ id: true }).safeParse(await req.json().catch(() => null));
+  const db = await owner();
+  if (!db || !data.success) return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
+  const { id, ...item } = data.data;
+  const { error } = await db.from('menu_items').update(item).eq('id', id);
+  return error
+    ? NextResponse.json({ error: 'Could not update item' }, { status: 400 })
+    : NextResponse.json({ ok: true });
+}
