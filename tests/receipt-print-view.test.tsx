@@ -80,21 +80,23 @@ describe('ReceiptPrintView Dedicated Print-Only Component', () => {
     expect(receiptImg.getAttribute('src')).toMatch(/^data:image\/png;base64,/);
   });
 
-  it('excludes instructional banners and action cards, displaying only the receipt and back button', () => {
+  it('excludes instructional banners, action cards, and back buttons, displaying strictly the receipt image', () => {
     render(<ReceiptPrintView bill={sampleBill} isReprint={true} />);
 
     expect(screen.queryByText(/Fun Print on Android/i)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Print Dialog/i })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Back/i })).toBeInTheDocument();
+    // Receipt page must NOT render on-screen buttons so Fun Print screenshot captures exclusively the receipt
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 
-  it('includes 58mm thermal @page and @media print CSS rules to hide UI chrome on print', () => {
+  it('includes 58mm thermal @page, @media print, and Vercel toolbar suppression CSS rules', () => {
     const { container } = render(<ReceiptPrintView bill={sampleBill} />);
     const styleEl = container.querySelector('style');
     expect(styleEl).not.toBeNull();
     expect(styleEl?.innerHTML).toContain('58mm auto');
     expect(styleEl?.innerHTML).toContain('.no-print');
     expect(styleEl?.innerHTML).toContain('display: none !important');
+    expect(styleEl?.innerHTML).toContain('vercel-live-feedback');
   });
 
   it('renders SAMPLE_BILL cleanly for instant printer testing without auth or DB query', () => {

@@ -229,6 +229,52 @@ describe('Thermal Canvas Receipt Generator (384px for Fun Print / MX11)', () => 
     expect(canvas.height).toBeGreaterThan(maxTextY + 20);
   });
 
+  it('correctly suppresses GST row for unconfirmed status and formats inclusive GST when registered', () => {
+    const filledTexts: string[] = [];
+    const origGetContext = HTMLCanvasElement.prototype.getContext;
+    (HTMLCanvasElement.prototype as unknown as { getContext: unknown }).getContext = function () {
+      const ctx = origGetContext.call(this, '2d') as unknown as Record<string, unknown>;
+      return {
+        ...ctx,
+        fillText: (text: string) => {
+          filledTexts.push(text);
+        },
+      };
+    };
+
+    // Case 1: Unconfirmed GST status must NEVER print GST row even if tax_paise > 0
+    filledTexts.length = 0;
+    renderReceiptToCanvas({
+      ...mockBill,
+      tax_rate: 0.05,
+      tax_paise: 2800,
+      business_snapshot: {
+        ...mockBill.business_snapshot,
+        gst_status: 'unconfirmed',
+      },
+    });
+    expect(filledTexts.some((t) => t.includes('GST (5%):') || t.includes('Incl. GST'))).toBe(false);
+    expect(filledTexts).toContain('Subtotal:');
+    expect(filledTexts).toContain('TOTAL AMOUNT:');
+
+    // Case 2: Registered GST status with inclusive tax prints "Incl. GST (5%):"
+    filledTexts.length = 0;
+    renderReceiptToCanvas({
+      ...mockBill,
+      tax_rate: 0.05,
+      tax_paise: 2800,
+      business_snapshot: {
+        ...mockBill.business_snapshot,
+        gst_status: 'registered',
+        gstin: '08AAAAA0000A1Z5',
+        tax_treatment: 'inclusive',
+      },
+    });
+    expect(filledTexts.some((t) => t.includes('Incl. GST (5%):'))).toBe(true);
+
+    (HTMLCanvasElement.prototype as unknown as { getContext: unknown }).getContext = origGetContext;
+  });
+
   it('suppresses placeholder taglines like "Your Café" and renders genuine taglines only', () => {
     const filledTexts: string[] = [];
     const origGetContext = HTMLCanvasElement.prototype.getContext;

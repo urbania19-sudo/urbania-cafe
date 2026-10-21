@@ -183,7 +183,7 @@ describe('ThermalBillModal Component (Mobile Fun Print Workflow)', () => {
     });
   });
 
-  it('switches to clean in-page print view without window.open or external navigation', () => {
+  it('switches to clean in-page print view without window.open, external navigation, or on-screen buttons', () => {
     const windowOpenSpy = vi.spyOn(window, 'open');
     const onClose = vi.fn();
     render(<ThermalBillModal bill={mockBill} onClose={onClose} isReprint={false} />);
@@ -192,21 +192,23 @@ describe('ThermalBillModal Component (Mobile Fun Print Workflow)', () => {
     const viewBtn = screen.getByRole('button', { name: /View Full PNG/i });
     fireEvent.click(viewBtn);
     expect(windowOpenSpy).not.toHaveBeenCalled();
-    const backBtn = screen.getByRole('button', { name: /Back to bill/i });
-    expect(backBtn).toBeInTheDocument();
+    // In-page print view must NOT have on-screen buttons that could leak into Fun Print capture
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
 
-    // Tapping Back to Bill returns to the standard bill modal
-    fireEvent.click(backBtn);
+    // Tapping the print view returns to the standard bill modal
+    const printDialog = screen.getByRole('dialog', { name: /Print Receipt/i });
+    fireEvent.click(printDialog);
     expect(screen.getByText(/Target:/i)).toBeInTheDocument();
 
     // Primary Print Bill with Fun Print button also opens clean in-page print view directly
     const printBtn = screen.getByRole('button', { name: /Print Bill with Fun Print/i });
     fireEvent.click(printBtn);
     expect(windowOpenSpy).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: /Back to bill/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
 
-    // Return again
-    fireEvent.click(screen.getByRole('button', { name: /Back to bill/i }));
+    // Return again by tapping the view
+    fireEvent.click(screen.getByRole('dialog', { name: /Print Receipt/i }));
+    expect(screen.getByText(/Target:/i)).toBeInTheDocument();
 
     // Fun Print info link must NOT use target="_blank"
     const link = screen.getByRole('link', { name: /Open Fun Print|Fun Print App/i });

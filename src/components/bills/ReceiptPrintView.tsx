@@ -61,7 +61,7 @@ export default function ReceiptPrintView({
         margin: 0,
       }}
     >
-      {/* 58mm Thermal Printer CSS: 0mm margins, pure white, hide any .no-print elements */}
+      {/* 58mm Thermal Printer CSS: 0mm margins, pure white, hide any .no-print elements, suppress Vercel toolbar */}
       <style
         dangerouslySetInnerHTML={{
           __html: `
@@ -85,43 +85,29 @@ export default function ReceiptPrintView({
                 print-color-adjust: exact;
               }
             }
+            /* Exclude Vercel Preview Toolbar and overlay widgets from print and view */
+            vercel-live-feedback,
+            [data-vercel-toolbar],
+            [class*="vercel-toolbar"],
+            #vercel-live-feedback,
+            #vercel-toolbar,
+            #vercel-toolbar-container {
+              display: none !important;
+              opacity: 0 !important;
+              visibility: hidden !important;
+              pointer-events: none !important;
+              width: 0 !important;
+              height: 0 !important;
+              overflow: hidden !important;
+            }
           `,
         }}
       />
 
-      {/* Subtle back navigation button (hidden on print) */}
-      <nav
-        className="no-print"
-        style={{
-          position: 'fixed',
-          top: 12,
-          left: 12,
-          zIndex: 50,
-        }}
-      >
-        <button
-          onClick={() => window.history.back()}
-          aria-label="Back"
-          style={{
-            background: 'rgba(0, 0, 0, 0.08)',
-            border: '1px solid rgba(0, 0, 0, 0.15)',
-            borderRadius: '50%',
-            width: 38,
-            height: 38,
-            display: 'grid',
-            placeItems: 'center',
-            cursor: 'pointer',
-            fontSize: 18,
-            color: '#18181b',
-          }}
-          title="Back"
-        >
-          ←
-        </button>
-      </nav>
-
-      {/* Clean Receipt Container: ONLY the genuine 384px PNG receipt on white */}
+      {/* Clean Receipt Container: ONLY the genuine 384px PNG receipt on pure white */}
       <main
+        onClick={() => window.history.back()}
+        title="Tap to return"
         style={{
           width: '100%',
           maxWidth: 384,
@@ -131,6 +117,7 @@ export default function ReceiptPrintView({
           flexDirection: 'column',
           alignItems: 'center',
           padding: 0,
+          cursor: 'pointer',
         }}
       >
         {receiptMeta && (

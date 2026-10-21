@@ -156,6 +156,7 @@ export function renderReceiptToCanvas(
   const addressParts = [
     biz.address_line1 || "17/456, Chopasni Housing Board",
     biz.city || "Jodhpur",
+    biz.state || "Rajasthan",
     biz.pincode ? `PIN: ${biz.pincode}` : "",
   ].filter(Boolean);
   const addressLines = wrapText(ctx, addressParts.join(", "), maxContentWidth);
@@ -221,7 +222,7 @@ export function renderReceiptToCanvas(
   // Divider + Totals
   y += 6 + 20; // divider gap (26)
   y += 24;     // Subtotal (17px mono)
-  if (bill.tax_paise > 0) y += 24; // GST (17px mono)
+  if (bill.tax_paise > 0 && biz.gst_status === "registered") y += 24; // GST (17px mono)
   y += 8 + 22; // divider gap (30)
   y += 32;     // TOTAL AMOUNT (22px bold mono)
   y += 12 + 24; // divider gap (36)
@@ -489,9 +490,13 @@ export function renderReceiptToCanvas(
   renderCtx.fillText(`₹${(subtotalPaise / 100).toFixed(2)}`, rightX, curY);
   curY += 24;
 
-  if (taxPaise > 0) {
+  if (taxPaise > 0 && biz.gst_status === "registered") {
     renderCtx.textAlign = "left";
-    const taxLabel = bill.tax_rate ? `GST (${(bill.tax_rate * 100).toFixed(0)}%):` : "Tax:";
+    const taxLabel = bill.tax_rate
+      ? biz.tax_treatment === "inclusive"
+        ? `Incl. GST (${(bill.tax_rate * 100).toFixed(0)}%):`
+        : `GST (${(bill.tax_rate * 100).toFixed(0)}%):`
+      : "Tax:";
     renderCtx.fillText(taxLabel, leftX, curY);
     renderCtx.textAlign = "right";
     renderCtx.fillText(`₹${(taxPaise / 100).toFixed(2)}`, rightX, curY);

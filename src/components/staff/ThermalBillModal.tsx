@@ -163,6 +163,8 @@ export default function ThermalBillModal({
         role="dialog"
         aria-modal="true"
         aria-label={`Print Receipt Bill #${bill.bill_number}`}
+        onClick={() => setInPagePrintView(false)}
+        title="Tap receipt to return"
         style={{
           position: 'fixed',
           inset: 0,
@@ -176,6 +178,7 @@ export default function ThermalBillModal({
           alignItems: 'center',
           padding: 0,
           margin: 0,
+          cursor: 'pointer',
         }}
       >
         <style
@@ -190,48 +193,33 @@ export default function ThermalBillModal({
                 color: #000000 !important;
                 margin: 0 !important;
                 padding: 0 !important;
+                width: 100% !important;
               }
               @media print {
                 .no-print {
                   display: none !important;
                 }
               }
+              /* Exclude Vercel Preview Toolbar and overlay widgets from print and view */
+              vercel-live-feedback,
+              [data-vercel-toolbar],
+              [class*="vercel-toolbar"],
+              #vercel-live-feedback,
+              #vercel-toolbar,
+              #vercel-toolbar-container {
+                display: none !important;
+                opacity: 0 !important;
+                visibility: hidden !important;
+                pointer-events: none !important;
+                width: 0 !important;
+                height: 0 !important;
+                overflow: hidden !important;
+              }
             `,
           }}
         />
 
-        {/* Subtle back navigation button (hidden on print) */}
-        <nav
-          className="no-print"
-          style={{
-            position: 'fixed',
-            top: 12,
-            left: 12,
-            zIndex: 10000,
-          }}
-        >
-          <button
-            onClick={() => setInPagePrintView(false)}
-            aria-label="Back to bill"
-            style={{
-              background: 'rgba(0, 0, 0, 0.08)',
-              border: '1px solid rgba(0, 0, 0, 0.15)',
-              borderRadius: '50%',
-              width: 38,
-              height: 38,
-              display: 'grid',
-              placeItems: 'center',
-              cursor: 'pointer',
-              fontSize: 18,
-              color: '#18181b',
-            }}
-            title="Back to bill"
-          >
-            ←
-          </button>
-        </nav>
-
-        {/* Clean Receipt Container: ONLY the genuine 384px PNG receipt on white */}
+        {/* Clean Receipt Container: ONLY the genuine 384px PNG receipt on pure white */}
         <main
           style={{
             width: '100%',
@@ -545,9 +533,9 @@ export default function ThermalBillModal({
                 <span>Subtotal:</span>
                 <span>₹{(subtotal / 100).toFixed(2)}</span>
               </div>
-              {tax > 0 && (
+              {tax > 0 && biz.gst_status === 'registered' && (
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>GST:</span>
+                  <span>{biz.tax_treatment === 'inclusive' ? `Incl. GST (${((bill.tax_rate ?? 0) * 100).toFixed(0)}%):` : 'GST:'}</span>
                   <span>₹{(tax / 100).toFixed(2)}</span>
                 </div>
               )}
