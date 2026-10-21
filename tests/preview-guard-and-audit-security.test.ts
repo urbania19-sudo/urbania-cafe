@@ -40,18 +40,8 @@ describe('Preview Write Isolation Guard', () => {
     expect(enforcePreviewWriteGuard()).toBeNull();
   });
 
-  it('allows operational testing writes in Vercel Preview by default', () => {
+  it('blocks writes in Vercel Preview by default (fail-closed policy)', () => {
     process.env.VERCEL_ENV = 'preview';
-    process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://rexeyagnvssvjlukjcbd.supabase.co';
-
-    const result = isPreviewWriteBlocked();
-    expect(result.blocked).toBe(false);
-    expect(enforcePreviewWriteGuard()).toBeNull();
-  });
-
-  it('blocks writes in Vercel Preview when BLOCK_PREVIEW_WRITES=true', () => {
-    process.env.VERCEL_ENV = 'preview';
-    process.env.BLOCK_PREVIEW_WRITES = 'true';
     process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://rexeyagnvssvjlukjcbd.supabase.co';
 
     const result = isPreviewWriteBlocked();
@@ -64,26 +54,68 @@ describe('Preview Write Isolation Guard', () => {
     expect(response?.status).toBe(403);
   });
 
-  it('blocks writes in Vercel Preview when ALLOW_PREVIEW_WRITES=false', () => {
+  it('blocks writes in Vercel Preview when database targets production even if ALLOW_PREVIEW_WRITES=true', () => {
     process.env.VERCEL_ENV = 'preview';
-    process.env.ALLOW_PREVIEW_WRITES = 'false';
+    process.env.ALLOW_PREVIEW_WRITES = 'true';
     process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://rexeyagnvssvjlukjcbd.supabase.co';
 
     const result = isPreviewWriteBlocked();
     expect(result.blocked).toBe(true);
     expect(result.code).toBe('PREVIEW_READ_ONLY');
   });
+
+  it('blocks writes in Vercel Preview when ALLOW_PREVIEW_WRITES=true but ISOLATED_STAGING_DB is not verified', () => {
+    process.env.VERCEL_ENV = 'preview';
+    process.env.ALLOW_PREVIEW_WRITES = 'true';
+    process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://some-other-ref.supabase.co';
+
+    const result = isPreviewWriteBlocked();
+    expect(result.blocked).toBe(true);
+    expect(result.code).toBe('PREVIEW_READ_ONLY');
+  });
+
+  it('blocks writes in Vercel Preview when candidate URL matches explicit PRODUCTION_SUPABASE_URL', () => {
+    process.env.VERCEL_ENV = 'preview';
+    process.env.ALLOW_PREVIEW_WRITES = 'true';
+    process.env.ISOLATED_STAGING_DB = 'true';
+    process.env.PRODUCTION_SUPABASE_URL = 'https://prod-cafe-db.supabase.co';
+    process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://prod-cafe-db.supabase.co';
+
+    const result = isPreviewWriteBlocked();
+    expect(result.blocked).toBe(true);
+    expect(result.code).toBe('PREVIEW_READ_ONLY');
+  });
+
+  it('blocks writes in Vercel Preview when BLOCK_PREVIEW_WRITES=true', () => {
+    process.env.VERCEL_ENV = 'preview';
+    process.env.BLOCK_PREVIEW_WRITES = 'true';
+    process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://rexeyagnvssvjlukjcbd.supabase.co';
+
+    const result = isPreviewWriteBlocked();
+    expect(result.blocked).toBe(true);
+    expect(result.code).toBe('PREVIEW_READ_ONLY');
+  });
+
+  it('allows writes in Vercel Preview ONLY when verified isolated staging DB is configured', () => {
+    process.env.VERCEL_ENV = 'preview';
+    process.env.ALLOW_PREVIEW_WRITES = 'true';
+    process.env.ISOLATED_STAGING_DB = 'true';
+    process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://staging-isolated-ref123.supabase.co';
+
+    const result = isPreviewWriteBlocked();
+    expect(result.blocked).toBe(false);
+    expect(enforcePreviewWriteGuard()).toBeNull();
+  });
 });
 
-describe('API Route Preview Write Protection (Direct Invocations when blocked)', () => {
+describe('API Route Preview Write Protection (Direct Invocations in Preview)', () => {
   const originalEnv = process.env;
 
   beforeEach(() => {
     vi.resetModules();
     process.env = { ...originalEnv };
-    // Simulate blocked preview environment
+    // Simulate standard Vercel preview deployment sharing production database
     process.env.VERCEL_ENV = 'preview';
-    process.env.BLOCK_PREVIEW_WRITES = 'true';
     process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://rexeyagnvssvjlukjcbd.supabase.co';
   });
 
@@ -91,7 +123,7 @@ describe('API Route Preview Write Protection (Direct Invocations when blocked)',
     process.env = originalEnv;
   });
 
-  it('rejects POST /api/staff/orders in preview mode with HTTP 403 when blocked', async () => {
+  it('rejects POST /api/staff/orders in preview mode with HTTP 403', async () => {
     const req = new NextRequest('http://localhost/api/staff/orders', {
       method: 'POST',
       body: JSON.stringify({ items: [{ name: 'Test', quantity: 1, unitPricePaise: 1000, isCustom: true }] }),
@@ -103,7 +135,7 @@ describe('API Route Preview Write Protection (Direct Invocations when blocked)',
     expect(data.code).toBe('PREVIEW_READ_ONLY');
   });
 
-  it('rejects POST /api/staff/orders/[orderId]/bill in preview mode with HTTP 403 when blocked', async () => {
+  it('rejects POST /api/staff/orders/[orderId]/bill in preview mode with HTTP 403', async () => {
     const req = new NextRequest('http://localhost/api/staff/orders/123/bill', { method: 'POST' });
     const res = await generateBill(req, { params: Promise.resolve({ orderId: '00000000-0000-0000-0000-000000000001' }) });
     expect(res.status).toBe(403);
@@ -111,7 +143,7 @@ describe('API Route Preview Write Protection (Direct Invocations when blocked)',
     expect(data.code).toBe('PREVIEW_READ_ONLY');
   });
 
-  it('rejects POST /api/admin/bills/[billId]/cancel in preview mode with HTTP 403 when blocked', async () => {
+  it('rejects POST /api/admin/bills/[billId]/cancel in preview mode with HTTP 403', async () => {
     const req = new NextRequest('http://localhost/api/admin/bills/123/cancel', {
       method: 'POST',
       body: JSON.stringify({ reason: 'Test cancel' }),
@@ -122,7 +154,7 @@ describe('API Route Preview Write Protection (Direct Invocations when blocked)',
     expect(data.code).toBe('PREVIEW_READ_ONLY');
   });
 
-  it('rejects POST /api/staff/bills/[billId]/reprint in preview mode with HTTP 403 when blocked', async () => {
+  it('rejects POST /api/staff/bills/[billId]/reprint in preview mode with HTTP 403', async () => {
     const req = new NextRequest('http://localhost/api/staff/bills/123/reprint', { method: 'POST' });
     const res = await reprintBill(req, { params: Promise.resolve({ billId: '00000000-0000-0000-0000-000000000001' }) });
     expect(res.status).toBe(403);
@@ -130,7 +162,7 @@ describe('API Route Preview Write Protection (Direct Invocations when blocked)',
     expect(data.code).toBe('PREVIEW_READ_ONLY');
   });
 
-  it('rejects POST /api/orders in preview mode with HTTP 403 when blocked', async () => {
+  it('rejects POST /api/orders in preview mode with HTTP 403', async () => {
     const req = new NextRequest('http://localhost/api/orders', {
       method: 'POST',
       body: JSON.stringify({}),
@@ -141,7 +173,7 @@ describe('API Route Preview Write Protection (Direct Invocations when blocked)',
     expect(data.code).toBe('PREVIEW_READ_ONLY');
   });
 
-  it('rejects POST and PATCH /api/admin/menu in preview mode with HTTP 403 when blocked', async () => {
+  it('rejects POST and PATCH /api/admin/menu in preview mode with HTTP 403', async () => {
     const reqPost = new NextRequest('http://localhost/api/admin/menu', { method: 'POST', body: JSON.stringify({}) });
     const resPost = await createMenuItem(reqPost);
     expect(resPost.status).toBe(403);
@@ -151,13 +183,13 @@ describe('API Route Preview Write Protection (Direct Invocations when blocked)',
     expect(resPatch.status).toBe(403);
   });
 
-  it('rejects POST /api/admin/categories in preview mode with HTTP 403 when blocked', async () => {
+  it('rejects POST /api/admin/categories in preview mode with HTTP 403', async () => {
     const req = new NextRequest('http://localhost/api/admin/categories', { method: 'POST', body: JSON.stringify({ name: 'Juices' }) });
     const res = await createCategory(req);
     expect(res.status).toBe(403);
   });
 
-  it('rejects PATCH /api/admin/settings in preview mode with HTTP 403 when blocked', async () => {
+  it('rejects PATCH /api/admin/settings in preview mode with HTTP 403', async () => {
     const req = new NextRequest('http://localhost/api/admin/settings', { method: 'PATCH', body: JSON.stringify({ cafe_name: 'Test' }) });
     const res = await updateSettings(req);
     expect(res.status).toBe(403);
