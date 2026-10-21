@@ -233,7 +233,7 @@ export function renderReceiptToCanvas(
     y += footerLines.length * 20;
   }
   y += 22; // FSSAI Licence No (14px bold mono)
-  y += 32; // Generous bottom tear-off margin
+  y += 10; // Clean, minimal bottom margin to avoid wasting thermal paper
 
   const totalHeight = Math.ceil(y);
   canvas.height = totalHeight * scale;
@@ -526,6 +526,20 @@ export function renderReceiptToCanvas(
 
   renderCtx.font = `bold 14px ${fontMono}`;
   renderCtx.fillText(`FSSAI LICENCE NO. ${biz.fssai_number || "12226032000212"}`, centerX, curY);
+  curY += 10; // Clean 10px bottom margin below last printed line
+
+  // Trim excess canvas height so printer does not waste blank thermal paper
+  const contentHeight = Math.ceil(curY);
+  if (contentHeight < totalHeight) {
+    const trimmedCanvas = document.createElement("canvas");
+    trimmedCanvas.width = baseWidth * scale;
+    trimmedCanvas.height = contentHeight * scale;
+    const tCtx = trimmedCanvas.getContext("2d");
+    if (tCtx && typeof tCtx.drawImage === "function") {
+      tCtx.drawImage(canvas, 0, 0);
+      return trimmedCanvas;
+    }
+  }
 
   return canvas;
 }

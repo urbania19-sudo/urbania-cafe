@@ -3,6 +3,7 @@
 import { useState, useMemo } from 'react';
 import type { Bill } from '@/lib/billing';
 import {
+  renderReceiptToCanvas,
   downloadReceiptImage,
   copyReceiptImage,
   shareOrDownloadReceipt,
@@ -33,14 +34,21 @@ export default function ThermalBillModal({
   const capabilities = useMemo(() => getSharingCapabilities(), []);
   const meaningfulTagline = useMemo(() => getMeaningfulTagline(biz), [biz]);
 
-  // Pre-render the 384px dot-pitch PNG data URL for native <img> display
-  const receiptDataUrl = useMemo(() => {
+  // Pre-render the 384px dot-pitch PNG data URL and exact dimensions for <img> display
+  const receiptMeta = useMemo(() => {
     try {
-      return exportReceiptDataUrl(bill, { scale: 1, isReprint });
+      const canvas = renderReceiptToCanvas(bill, { scale: 1, isReprint });
+      return {
+        dataUrl: canvas.toDataURL('image/png'),
+        width: canvas.width,
+        height: canvas.height,
+      };
     } catch {
       return null;
     }
   }, [bill, isReprint]);
+
+  const receiptDataUrl = receiptMeta?.dataUrl ?? null;
 
   const formattedDate = new Date(bill.issued_at).toLocaleDateString('en-IN', {
     day: '2-digit',
@@ -62,7 +70,20 @@ export default function ThermalBillModal({
     }).catch(() => {});
   };
 
+  const printViewUrl = `/staff/bills/${bill.id}/print${isReprint ? '?reprint=true' : ''}`;
+
   const handlePrintWithFunPrint = async () => {
+    recordReprint('open_fun_print_view');
+    // On Android / in Fun Print's built-in browser, navigate directly to the clean receipt print view
+    // so Fun Print's "Print Current Page" prints the exact 384px thermal receipt
+    if (!capabilities.isIOS) {
+      if (typeof window !== 'undefined') {
+        /* eslint-disable-next-line @next/next/no-location-assign-relative-destination */
+        window.location.assign(printViewUrl);
+      }
+      return;
+    }
+
     try {
       setProcessing(true);
       const res = await shareOrDownloadReceipt(bill, {
@@ -80,24 +101,22 @@ export default function ThermalBillModal({
         return;
       } else if (res.action === 'downloaded') {
         recordReprint('download');
-        if (capabilities.isIOS && !capabilities.isSecureContext) {
-          setStatusMessage(
-            'Native Web Share requires HTTPS. On this local HTTP connection, tap & hold the receipt image below to choose "Save to Photos", then open Fun Print.'
-          );
-        } else {
-          setStatusMessage(
-            'Receipt image downloaded (384px). Open Fun Print and tap "Print Image" to print via Bluetooth.'
-          );
-        }
-      } else if (res.action === 'failed') {
         setStatusMessage(
-          'Could not export receipt image. Please tap "Download Receipt Image" directly.'
+          'Receipt image downloaded (384px). Tap "View Full PNG" or use Fun Print "Print Image".'
         );
+      } else if (res.action === 'failed') {
+        if (typeof window !== 'undefined') {
+          /* eslint-disable-next-line @next/next/no-location-assign-relative-destination */
+          window.location.assign(printViewUrl);
+        }
       }
     } catch (err: unknown) {
       if (isAbortError(err)) return;
       console.error('Fun Print workflow error:', err);
-      setStatusMessage('Sharing unavailable. Tap "Download Receipt Image" instead.');
+      if (typeof window !== 'undefined') {
+        /* eslint-disable-next-line @next/next/no-location-assign-relative-destination */
+        window.location.assign(printViewUrl);
+      }
     } finally {
       setProcessing(false);
     }
@@ -114,7 +133,7 @@ export default function ThermalBillModal({
         );
       } else {
         setStatusMessage(
-          'Receipt image saved (384px). Open the Fun Print app, select "Print Image", and print via Bluetooth.'
+          `Receipt image saved (Bill-${bill.bill_number}-384px.png). You can print it via Fun Print app > "Print Image", or use "Print Bill with Fun Print" directly.`
         );
       }
     } catch (err) {
@@ -126,14 +145,8 @@ export default function ThermalBillModal({
   };
 
   const handleViewFullImage = () => {
-    if (!receiptDataUrl) return;
-    const win = window.open();
-    if (win) {
-      win.document.write(
-        `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Bill #${bill.bill_number}</title></head><body style="margin:0;padding:20px;background:#18181b;display:grid;place-items:center;min-height:100vh;"><p style="color:#f4f4f5;font-family:system-ui,-apple-system,sans-serif;font-size:14px;margin:0 0 16px;text-align:center;">📱 iPhone: <b>Tap &amp; hold</b> image below to <b>&ldquo;Save to Photos&rdquo;</b></p><img src="${receiptDataUrl}" alt="Receipt" style="background:#fff;max-width:384px;width:100%;box-shadow:0 8px 30px rgba(0,0,0,0.6);border-radius:4px;display:block;"/></body></html>`
-      );
-      win.document.close();
-    }
+    recordReprint('view_full_png');
+    window.open(printViewUrl, '_blank');
   };
 
   const handleCopyImage = async () => {
@@ -249,33 +262,62 @@ export default function ThermalBillModal({
           </div>
         )}
 
+        {/* Android Fun Print Guide Banner */}
+        {!capabilities.isIOS && (
+          <div
+            style={{
+              background: 'rgba(213, 168, 75, 0.12)',
+              borderLeft: '3px solid var(--accent)',
+              borderRadius: 8,
+              padding: '10px 12px',
+              fontSize: 12,
+              lineHeight: 1.45,
+            }}
+          >
+            <strong style={{ color: 'var(--accent)', display: 'block', marginBottom: 2 }}>
+              🖨️ Fun Print on Android (MX11 Printer):
+            </strong>
+            1. Tap <b>&ldquo;{isReprint ? 'Reprint with Fun Print' : 'Print Bill with Fun Print'}&rdquo;</b> below to open the clean receipt print view.<br />
+            2. In Fun Print&rsquo;s browser, tap menu (<b>⋮</b>) &gt; <b>&ldquo;Print Current Page&rdquo;</b> to print directly to your MX11.
+          </div>
+        )}
+
         {/* Actual 384px Dot-Pitch PNG Image (Ready for Long-Press Save on iOS) */}
-        {receiptDataUrl && (
+        {receiptMeta && (
           <div
             style={{
               background: '#ffffff',
               borderRadius: 8,
-              padding: '8px',
+              padding: '12px 8px',
               textAlign: 'center',
               boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
-              maxHeight: '38vh',
+              border: '1px solid var(--line)',
+              maxHeight: '44vh',
               overflowY: 'auto',
+              WebkitOverflowScrolling: 'touch',
             }}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={receiptDataUrl}
+              src={receiptMeta.dataUrl}
+              width={receiptMeta.width}
+              height={receiptMeta.height}
               alt={`Receipt Bill #${bill.bill_number}`}
+              onClick={handleViewFullImage}
               style={{
-                width: 384,
-                maxWidth: '100%',
+                width: '100%',
+                maxWidth: 384,
                 height: 'auto',
                 display: 'block',
                 margin: '0 auto',
+                background: '#ffffff',
                 cursor: 'pointer',
               }}
-              title="Tap and hold on iPhone to Save to Photos"
+              title="Tap to open clean full receipt print view"
             />
+            <div style={{ marginTop: 8, fontSize: 11, color: '#6b7280', fontWeight: 500 }}>
+              58 mm Thermal Printhead Preview (384 px) • Tap image to open full print view
+            </div>
           </div>
         )}
 
