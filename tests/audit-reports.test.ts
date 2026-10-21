@@ -20,6 +20,15 @@ describe('Audit & Reports Business Logic & Validation', () => {
         'An order must contain between 1 and 25 items.'
       );
     });
+
+    it('translates schema mismatch errors to clear migration messages', () => {
+      expect(friendlyBillingError(new Error('column "order_source" of relation "orders" does not exist'))).toBe(
+        'This operation requires database Migration 0009 to be applied to the database first.'
+      );
+      expect(friendlyBillingError(new Error('relation "bill_audit_events" does not exist'))).toBe(
+        'This operation requires database Migration 0009 to be applied to the database first.'
+      );
+    });
   });
 
   describe('Manual order input validation rules', () => {

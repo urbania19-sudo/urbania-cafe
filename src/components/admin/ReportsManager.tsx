@@ -63,6 +63,7 @@ export default function ReportsManager({
   const [cancelReason, setCancelReason] = useState('');
   const [cancelling, setCancelling] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [isLegacySchema, setIsLegacySchema] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -92,6 +93,7 @@ export default function ReportsManager({
         setBills(data.bills || []);
         setTotalCount(data.totalCount || 0);
         setSummary(data.summary || null);
+        setIsLegacySchema(Boolean(data.isLegacySchema));
       })
       .catch((err) => {
         if (!active) return;
@@ -218,6 +220,34 @@ export default function ReportsManager({
           </button>
         </div>
       </div>
+
+      {/* Database Schema Compatibility Notice */}
+      {isLegacySchema && (
+        <section
+          role="status"
+          className="card"
+          style={{
+            padding: '14px 18px',
+            borderLeft: '4px solid var(--accent)',
+            background: 'rgba(213, 168, 75, 0.08)',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: 12,
+          }}
+        >
+          <div>
+            <b style={{ color: 'var(--accent)' }}>Database Compatibility Mode Active (Migration 0009 Pending)</b>
+            <p className="muted" style={{ margin: '4px 0 0', fontSize: 13 }}>
+              Historical bills and sales revenue are loaded in backward-compatible mode. Manual orders, reprint audit logs, and cancellation reasons will become fully active once Migration 0009 is applied to this database.
+            </p>
+          </div>
+          <span className="chip" style={{ fontSize: 11, borderColor: 'var(--accent)', color: 'var(--accent)' }}>
+            Migration 0009 Pending
+          </span>
+        </section>
+      )}
 
       {/* KPI Summary Cards */}
       {summary && (

@@ -103,6 +103,9 @@ export function friendlyBillingError(err: unknown): string {
   if (msg.includes("already_cancelled")) return "This bill has already been cancelled.";
   if (msg.includes("invalid quantity")) return "Item quantity must be between 1 and 20.";
   if (msg.includes("invalid item count")) return "An order must contain between 1 and 25 items.";
+  if (msg.includes("order_source") || msg.includes("service_mode") || msg.includes("cancelled_at") || msg.includes("bill_audit_events")) {
+    return "This operation requires database Migration 0009 to be applied to the database first.";
+  }
   return msg || "An unexpected billing error occurred.";
 }
 

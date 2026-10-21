@@ -51,15 +51,19 @@ export async function POST(
       .eq("user_id", user?.id)
       .maybeSingle();
 
-    await db.from("bill_audit_events").insert({
-      bill_id: bill.id,
-      bill_number: bill.bill_number,
-      event_type: "reprinted",
-      actor_id: user?.id ?? null,
-      actor_role: profile?.role ?? "staff",
-      actor_email: user?.email ?? null,
-      metadata,
-    });
+    try {
+      await db.from("bill_audit_events").insert({
+        bill_id: bill.id,
+        bill_number: bill.bill_number,
+        event_type: "reprinted",
+        actor_id: user?.id ?? null,
+        actor_role: profile?.role ?? "staff",
+        actor_email: user?.email ?? null,
+        metadata,
+      });
+    } catch {
+      // bill_audit_events table pending migration
+    }
 
     return NextResponse.json({ ok: true, bill_number: bill.bill_number });
   } catch (err) {

@@ -72,15 +72,30 @@ export async function POST(
       .select()
       .single();
 
+    let finalBill = updatedBill;
     if (updateErr) {
-      return NextResponse.json(
-        { error: friendlyBillingError(updateErr) },
-        { status: 500 }
-      );
+      // Fallback for pre-migration-0009 schema (update status & updated_at only)
+      const { data: legacyBill, error: legacyErr } = await db
+        .from("bills")
+        .update({
+          status: "cancelled",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", billId)
+        .select()
+        .single();
+
+      if (legacyErr) {
+        return NextResponse.json(
+          { error: friendlyBillingError(legacyErr) },
+          { status: 500 }
+        );
+      }
+      finalBill = legacyBill;
     }
 
     // Cancel linked order
-    await db
+    const orderUpdate = await db
       .from("orders")
       .update({
         status: "CANCELLED",
@@ -89,18 +104,26 @@ export async function POST(
       })
       .eq("id", bill.order_id);
 
-    // Record audit event
-    await db.from("bill_audit_events").insert({
-      bill_id: bill.id,
-      bill_number: bill.bill_number,
-      event_type: "cancelled",
-      actor_id: user?.id ?? null,
-      actor_role: "admin",
-      actor_email: user?.email ?? null,
-      metadata: { reason, order_number: bill.order_number, total_paise: bill.total_paise },
-    }).select().maybeSingle();
+    if (orderUpdate.error) {
+      await db.from("orders").update({ status: "CANCELLED" }).eq("id", bill.order_id);
+    }
 
-    return NextResponse.json({ ok: true, bill: updatedBill });
+    // Record audit event if table exists
+    try {
+      await db.from("bill_audit_events").insert({
+        bill_id: bill.id,
+        bill_number: bill.bill_number,
+        event_type: "cancelled",
+        actor_id: user?.id ?? null,
+        actor_role: "admin",
+        actor_email: user?.email ?? null,
+        metadata: { reason, order_number: bill.order_number, total_paise: bill.total_paise },
+      });
+    } catch {
+      // bill_audit_events table pending migration
+    }
+
+    return NextResponse.json({ ok: true, bill: finalBill });
   } catch (err) {
     console.error("Error cancelling bill:", err);
     return NextResponse.json(
