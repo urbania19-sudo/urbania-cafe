@@ -312,7 +312,7 @@ export default function ReportsManager({
 
       {/* Filter and Search Bar */}
       <section className="card" style={{ padding: 16 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, alignItems: 'end' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12, alignItems: 'end' }}>
           <div>
             <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Search Bills</label>
             <input
@@ -546,9 +546,9 @@ export default function ReportsManager({
                       type="button"
                       className="chip"
                       onClick={() => setThermalBill({ bill, isReprint: true })}
-                      style={{ cursor: 'pointer', color: 'var(--accent)' }}
+                      style={{ cursor: 'pointer', color: 'var(--accent)', fontWeight: 600 }}
                     >
-                      🖨️ Thermal Receipt / Reprint
+                      View Image
                     </button>
                     {!isCancelled && (
                       <button
@@ -645,7 +645,7 @@ export default function ReportsManager({
               </button>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 13, marginBottom: 16, padding: 12, background: '#ffffff08', borderRadius: 8 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8, fontSize: 13, marginBottom: 16, padding: 12, background: '#ffffff08', borderRadius: 8 }}>
               <div><strong>Status:</strong> {selectedBill.status.toUpperCase()}</div>
               <div><strong>Service Mode:</strong> {selectedBill.service_mode || 'dine_in'}</div>
               <div><strong>Order Source:</strong> {selectedBill.order_source || 'qr'}</div>
@@ -656,8 +656,8 @@ export default function ReportsManager({
 
             {/* Line Items Table */}
             <h3 style={{ fontSize: 14, margin: '16px 0 8px' }}>Immutable Line Items Snapshot</h3>
-            <div style={{ border: '1px solid var(--line)', borderRadius: 8, overflow: 'hidden', marginBottom: 16 }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <div style={{ border: '1px solid var(--line)', borderRadius: 8, overflowX: 'auto', WebkitOverflowScrolling: 'touch', marginBottom: 16 }}>
+              <table style={{ width: '100%', minWidth: 320, borderCollapse: 'collapse', fontSize: 13 }}>
                 <thead>
                   <tr style={{ background: '#ffffff0f', borderBottom: '1px solid var(--line)', textAlign: 'left' }}>
                     <th style={{ padding: '8px 12px' }}>Item</th>
@@ -730,9 +730,9 @@ export default function ReportsManager({
                 type="button"
                 className="chip"
                 onClick={() => setThermalBill({ bill: selectedBill, isReprint: true })}
-                style={{ color: 'var(--accent)' }}
+                style={{ color: 'var(--accent)', fontWeight: 600 }}
               >
-                🖨️ View Thermal Receipt
+                View Image
               </button>
             </div>
           </div>

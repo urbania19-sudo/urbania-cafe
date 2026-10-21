@@ -68,6 +68,60 @@ export interface BillAuditEvent {
   created_at: string;
 }
 
+export const SAMPLE_BILL: Bill = {
+  id: "sample",
+  order_id: "00000000-0000-0000-0000-000000000000",
+  bill_number: "UB-TEST-0001",
+  bill_seq: 1,
+  order_number: 101,
+  table_number: 3,
+  table_label: "Table 3",
+  order_source: "manual",
+  service_mode: "dine_in",
+  customer_name: "Test Customer",
+  status: "issued",
+  document_type: "bill",
+  business_snapshot: {
+    cafe_name: "Urbania Café",
+    legal_name: "URBANIA CAFE AND JUICE BAR",
+    fssai_number: "12226032000212",
+    fssai_validity_date: "2027-02-22",
+    address_line1: "17/456, Chopasni Housing Board",
+    city: "Jodhpur",
+    state: "Rajasthan",
+    pincode: "342008",
+    pincode_verified: false,
+    phone: null,
+    gst_status: "unconfirmed",
+    gstin: null,
+    tax_treatment: "inclusive",
+    bill_header_text: null,
+    bill_footer_text: "Thank you for visiting Urbania Café!",
+  },
+  items_snapshot: [
+    {
+      id: "item-sample-1",
+      name: "Cappuccino",
+      unit_price_paise: 15000,
+      quantity: 1,
+      line_total_paise: 15000,
+    },
+    {
+      id: "item-sample-2",
+      name: "Blueberry Muffin",
+      unit_price_paise: 20000,
+      quantity: 1,
+      line_total_paise: 20000,
+    },
+  ],
+  subtotal_paise: 35000,
+  tax_rate: 0,
+  tax_paise: 0,
+  total_paise: 35000,
+  notes: "Test thermal print for MX11 Fun Print alignment",
+  issued_at: new Date().toISOString(),
+};
+
 export interface ManualOrderItemInput {
   menuItemId?: string;
   name?: string;

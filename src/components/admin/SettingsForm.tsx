@@ -106,7 +106,7 @@ export default function SettingsForm({ initial }: { initial: Settings | null }) 
         <h2 style={{ fontFamily: 'Georgia, serif', margin: 0, fontSize: '1.3rem' }}>
           Business Identity & Legal Entity
         </h2>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
           <label style={{ display: 'grid', gap: 6, fontSize: 13, fontWeight: 700 }}>
             Trade Name (Café Name)
             <input
@@ -148,7 +148,7 @@ export default function SettingsForm({ initial }: { initial: Settings | null }) 
           )}
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
           <label style={{ display: 'grid', gap: 6, fontSize: 13, fontWeight: 700 }}>
             FSSAI 14-Digit Licence Number
             <input
@@ -181,7 +181,7 @@ export default function SettingsForm({ initial }: { initial: Settings | null }) 
               style={fieldStyle}
             />
           </label>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))', gap: 8 }}>
             <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
               City
               <input
@@ -254,7 +254,7 @@ export default function SettingsForm({ initial }: { initial: Settings | null }) 
         <h2 style={{ fontFamily: 'Georgia, serif', margin: 0, fontSize: '1.3rem' }}>
           GST Status & Billing Classification
         </h2>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
           <label style={{ display: 'grid', gap: 6, fontSize: 13, fontWeight: 700 }}>
             GST Registration Status
             <select
@@ -296,7 +296,7 @@ export default function SettingsForm({ initial }: { initial: Settings | null }) 
         <h2 style={{ fontFamily: 'Georgia, serif', margin: 0, fontSize: '1.3rem' }}>
           Thermal Receipt (58mm / MX11) Layout
         </h2>
-        <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 12 }}>
           <label style={{ display: 'grid', gap: 6, fontSize: 13, fontWeight: 700 }}>
             Bill Prefix
             <input

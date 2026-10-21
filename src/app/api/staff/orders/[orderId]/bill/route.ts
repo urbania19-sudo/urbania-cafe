@@ -29,7 +29,7 @@ export async function GET(
     return NextResponse.json({ error: friendlyBillingError(error) }, { status: 400 });
   }
 
-  return NextResponse.json({ bill });
+  return NextResponse.json({ ok: true, bill });
 }
 
 export async function POST(
