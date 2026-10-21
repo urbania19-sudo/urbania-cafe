@@ -23,14 +23,14 @@ const field = {
   color: 'var(--ink)',
 };
 
-export const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/avif'];
+export const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 export const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
 
 export function validateImageFile(file: File): { valid: boolean; error?: string } {
   if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
     return {
       valid: false,
-      error: `Unsupported image format (${file.type || 'unknown'}). Please upload a JPEG, PNG, WebP, or AVIF image.`,
+      error: `Unsupported image format (${file.type || 'unknown'}). Please upload a JPEG, PNG, or WebP image.`,
     };
   }
   if (file.size > MAX_IMAGE_SIZE_BYTES) {

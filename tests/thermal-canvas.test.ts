@@ -5,6 +5,8 @@ import {
   getFunPrintLaunchInfo,
   isAbortError,
   shareOrDownloadReceipt,
+  exportReceiptDataUrl,
+  getSharingCapabilities,
   FUN_PRINT_PACKAGE_ID,
   FUN_PRINT_ANDROID_INTENT,
 } from '../src/lib/thermal-canvas';
@@ -118,6 +120,240 @@ describe('Thermal Canvas Receipt Generator (384px for Fun Print / MX11)', () => 
     (HTMLCanvasElement.prototype as unknown as { getContext: unknown }).getContext = origGetContext;
   });
 
+  it('renders receipt with substantially enlarged typography (20-30%) and multi-line item layout', () => {
+    interface TextCall {
+      text: string;
+      x: number;
+      y: number;
+      font: string;
+      textAlign: string;
+    }
+    const calls: TextCall[] = [];
+    const origGetContext = HTMLCanvasElement.prototype.getContext;
+
+    (HTMLCanvasElement.prototype as unknown as { getContext: unknown }).getContext = function () {
+      const ctx = origGetContext.call(this, '2d') as unknown as Record<string, unknown>;
+      let currentFont = '';
+      let currentAlign = 'left';
+      return {
+        ...ctx,
+        set font(f: string) {
+          currentFont = f;
+        },
+        get font() {
+          return currentFont;
+        },
+        set textAlign(a: string) {
+          currentAlign = a;
+        },
+        get textAlign() {
+          return currentAlign;
+        },
+        fillText: (text: string, x: number, y: number) => {
+          calls.push({ text, x, y, font: currentFont, textAlign: currentAlign });
+        },
+      };
+    };
+
+    const canvas = renderReceiptToCanvas(mockBill, { scale: 1 });
+    (HTMLCanvasElement.prototype as unknown as { getContext: unknown }).getContext = origGetContext;
+
+    // 1. Verify Cafe name uses 22px bold font
+    const legalNameCall = calls.find((c) => c.text.includes('URBANIA CAFE AND JUICE BAR'));
+    expect(legalNameCall).toBeDefined();
+    expect(legalNameCall?.font).toContain('22px');
+    expect(legalNameCall?.textAlign).toBe('center');
+
+    // 2. Verify Document title uses prominent 21px bold font
+    const docTitleCall = calls.find((c) => c.text === 'BILL / CASH RECEIPT');
+    expect(docTitleCall).toBeDefined();
+    expect(docTitleCall?.font).toContain('21px');
+
+    // 3. Verify Metadata rows use 15px mono
+    const billNoCall = calls.find((c) => c.text.includes('Bill No:'));
+    expect(billNoCall).toBeDefined();
+    expect(billNoCall?.font).toContain('15px');
+    expect(billNoCall?.x).toBe(14);
+
+    // 4. Verify Column headers alignment (15px bold mono)
+    const itemHeader = calls.find((c) => c.text === 'ITEM');
+    const qtyHeader = calls.find((c) => c.text === 'QTY');
+    const rateHeader = calls.find((c) => c.text === 'RATE');
+    const amtHeader = calls.find((c) => c.text === 'AMOUNT');
+
+    expect(itemHeader).toBeDefined();
+    expect(itemHeader?.x).toBe(14);
+    expect(itemHeader?.font).toContain('15px');
+
+    expect(qtyHeader).toBeDefined();
+    expect(qtyHeader?.x).toBe(150);
+    expect(qtyHeader?.textAlign).toBe('center');
+
+    expect(rateHeader).toBeDefined();
+    expect(rateHeader?.x).toBe(260);
+    expect(rateHeader?.textAlign).toBe('right');
+
+    expect(amtHeader).toBeDefined();
+    expect(amtHeader?.x).toBe(370);
+    expect(amtHeader?.textAlign).toBe('right');
+
+    // 5. Verify Multi-line item layout: dish name is 18px bold mono, pricing row is 16px mono
+    const latteCall = calls.find((c) => c.text.includes('Iced Spanish Latte'));
+    expect(latteCall).toBeDefined();
+    expect(latteCall?.font).toContain('18px');
+    expect(latteCall?.x).toBe(14);
+
+    // Rate & Amount on pricing row
+    const rateCall = calls.find((c) => c.text === '240.00' && c.x === 260);
+    expect(rateCall).toBeDefined();
+    expect(rateCall?.font).toContain('16px');
+
+    // 6. Verify Subtotal (17px) and prominent 22px bold TOTAL AMOUNT
+    const subtotalCall = calls.find((c) => c.text === 'Subtotal:');
+    expect(subtotalCall).toBeDefined();
+    expect(subtotalCall?.font).toContain('17px');
+
+    const totalCall = calls.find((c) => c.text === 'TOTAL AMOUNT:');
+    expect(totalCall).toBeDefined();
+    expect(totalCall?.font).toContain('22px');
+    expect(totalCall?.x).toBe(14);
+
+    // 7. Verify bottom FSSAI licence uses 14px bold mono
+    const fssaiBottomCall = calls.find((c) => c.text.includes('FSSAI LICENCE NO.'));
+    expect(fssaiBottomCall).toBeDefined();
+    expect(fssaiBottomCall?.font).toContain('14px');
+    expect(fssaiBottomCall?.textAlign).toBe('center');
+
+    // 8. Verify canvas height accommodates all text plus bottom margin
+    const maxTextY = Math.max(...calls.map((c) => c.y));
+    expect(canvas.height).toBeGreaterThan(maxTextY + 20);
+  });
+
+  it('suppresses placeholder taglines like "Your Café" and renders genuine taglines only', () => {
+    const filledTexts: string[] = [];
+    const origGetContext = HTMLCanvasElement.prototype.getContext;
+    (HTMLCanvasElement.prototype as unknown as { getContext: unknown }).getContext = function () {
+      const ctx = origGetContext.call(this, '2d') as unknown as Record<string, unknown>;
+      return {
+        ...ctx,
+        fillText: (text: string) => {
+          filledTexts.push(text);
+        },
+      };
+    };
+
+    // 1. With placeholder "Your Café"
+    filledTexts.length = 0;
+    renderReceiptToCanvas({
+      ...mockBill,
+      business_snapshot: {
+        ...mockBill.business_snapshot,
+        cafe_name: 'Your Café',
+      },
+    });
+    expect(filledTexts.some((t) => t.toLowerCase().includes('your café') || t.toLowerCase().includes('your cafe'))).toBe(false);
+
+    // 2. With redundant "Urbania Café" (when legal name is URBANIA CAFE AND JUICE BAR)
+    filledTexts.length = 0;
+    renderReceiptToCanvas({
+      ...mockBill,
+      business_snapshot: {
+        ...mockBill.business_snapshot,
+        cafe_name: 'Urbania Café',
+      },
+    });
+    expect(filledTexts.some((t) => t === '(Urbania Café)')).toBe(false);
+
+    // 3. With meaningful distinct tagline
+    filledTexts.length = 0;
+    renderReceiptToCanvas({
+      ...mockBill,
+      business_snapshot: {
+        ...mockBill.business_snapshot,
+        cafe_name: 'Artisan Roastery & Bakehouse',
+      },
+    });
+    expect(filledTexts).toContain('(Artisan Roastery & Bakehouse)');
+
+    (HTMLCanvasElement.prototype as unknown as { getContext: unknown }).getContext = origGetContext;
+  });
+
+  it('wraps long dish names across multiple lines with full printable width', () => {
+    interface TextCall {
+      text: string;
+      x: number;
+      y: number;
+    }
+    const calls: TextCall[] = [];
+    const origGetContext = HTMLCanvasElement.prototype.getContext;
+
+    (HTMLCanvasElement.prototype as unknown as { getContext: unknown }).getContext = function () {
+      const ctx = origGetContext.call(this, '2d') as unknown as Record<string, unknown>;
+      return {
+        ...ctx,
+        measureText: (text: string) => ({ width: text.length * 10 }),
+        fillText: (text: string, x: number, y: number) => {
+          calls.push({ text, x, y });
+        },
+      };
+    };
+
+    const longBill: Bill = {
+      ...mockBill,
+      items_snapshot: [
+        {
+          id: 'long-item-1',
+          name: 'Artisanal Multigrain Sourdough with Wild Truffle Mushroom and Poached Organic Egg',
+          unit_price_paise: 45000,
+          quantity: 2,
+          line_total_paise: 90000,
+          selected_options: [
+            { name: 'Extra Truffle Oil', price_delta_paise: 5000 },
+            { name: 'Gluten-Free', price_delta_paise: 3000 },
+          ],
+          note: 'Crispy edges please',
+        },
+      ],
+      subtotal_paise: 90000,
+      total_paise: 90000,
+    };
+
+    renderReceiptToCanvas(longBill, { scale: 1 });
+    (HTMLCanvasElement.prototype as unknown as { getContext: unknown }).getContext = origGetContext;
+
+    // Check that multiple lines were produced for the dish name
+    const itemCalls = calls.filter(
+      (c) =>
+        c.text.includes('Artisanal') ||
+        c.text.includes('Multigrain') ||
+        c.text.includes('Sourdough') ||
+        c.text.includes('Truffle') ||
+        c.text.includes('Organic')
+    );
+    expect(itemCalls.length).toBeGreaterThan(1);
+
+    // First line starts at leftX = 14
+    expect(itemCalls[0]?.x).toBe(14);
+
+    // Wrapped lines must be indented at leftX + 8 = 22
+    const wrappedLine = itemCalls.find((c) => c.x === 22);
+    expect(wrappedLine).toBeDefined();
+
+    // Modifiers and notes must be rendered indented beneath the item
+    const optionCall = calls.find((c) => c.text.includes('Extra Truffle Oil'));
+    expect(optionCall).toBeDefined();
+    expect(optionCall?.x).toBe(22);
+
+    const noteCall = calls.find((c) => c.text.includes('Crispy edges please'));
+    expect(noteCall).toBeDefined();
+    expect(noteCall?.x).toBe(22);
+
+    // Quantity (2) is centered at 150 on the pricing row
+    const qtyCall = calls.find((c) => c.text === '2');
+    expect(qtyCall).toBeDefined();
+    expect(qtyCall?.x).toBe(150);
+  });
+
   it('returns valid intent URL targeting com.fun.mxw package on Android', () => {
     const origUserAgent = navigator.userAgent;
     Object.defineProperty(navigator, 'userAgent', {
@@ -189,5 +425,52 @@ describe('Thermal Canvas Receipt Generator (384px for Fun Print / MX11)', () => 
 
     const result = await shareOrDownloadReceipt(mockBill, { scale: 1 });
     expect(result.action).toBe('downloaded');
+  });
+
+  it('generates a valid PNG data URL starting with data:image/png;base64,', () => {
+    const dataUrl = exportReceiptDataUrl(mockBill, { scale: 1 });
+    expect(dataUrl).toMatch(/^data:image\/png;base64,/);
+  });
+
+  it('detects iOS platform and insecure context in getSharingCapabilities', () => {
+    const origUA = navigator.userAgent;
+    Object.defineProperty(navigator, 'userAgent', {
+      value: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0.6099.119 Mobile/15E148 Safari/604.1',
+      configurable: true,
+    });
+    Object.defineProperty(window, 'isSecureContext', {
+      value: false,
+      configurable: true,
+    });
+
+    const cap = getSharingCapabilities();
+    expect(cap.isIOS).toBe(true);
+    expect(cap.isSecureContext).toBe(false);
+
+    Object.defineProperty(navigator, 'userAgent', {
+      value: origUA,
+      configurable: true,
+    });
+    Object.defineProperty(window, 'isSecureContext', {
+      value: true,
+      configurable: true,
+    });
+  });
+
+  it('falls back to download when navigator.share rejects with a network or unexpected error', async () => {
+    const networkErr = new Error('Failed to share file');
+    const shareMock = vi.fn().mockRejectedValue(networkErr);
+    Object.defineProperty(navigator, 'canShare', {
+      writable: true,
+      value: vi.fn().mockReturnValue(true),
+    });
+    Object.defineProperty(navigator, 'share', {
+      writable: true,
+      value: shareMock,
+    });
+
+    const result = await shareOrDownloadReceipt(mockBill, { scale: 1 });
+    expect(result.action).toBe('downloaded');
+    expect(shareMock).toHaveBeenCalledTimes(1);
   });
 });

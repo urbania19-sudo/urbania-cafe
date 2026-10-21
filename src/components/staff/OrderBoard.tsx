@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Bill } from '@/lib/billing';
 import ThermalBillModal from '@/components/staff/ThermalBillModal';
+import ManualOrderModal from '@/components/staff/ManualOrderModal';
 
 type Order = {
   id: string;
@@ -14,6 +15,8 @@ type Order = {
   total_paise: number;
   created_at: string;
   billed_at?: string | null;
+  service_mode?: string | null;
+  order_source?: string | null;
   cafe_tables: { label: string } | null;
   order_items: { menu_item_id: string | null; item_name_snapshot: string; quantity: number }[];
 };
@@ -23,6 +26,12 @@ type MenuItem = {
   name: string;
   price_paise: number;
   is_available: boolean;
+};
+
+type TableOption = {
+  id: string;
+  table_number: number;
+  label: string;
 };
 
 const next: Record<string, string | undefined> = {
@@ -42,9 +51,11 @@ const action: Record<string, string> = {
 export default function OrderBoard({
   initial,
   menu,
+  tables = [],
 }: {
   initial: Order[];
   menu: MenuItem[];
+  tables?: TableOption[];
 }) {
   const router = useRouter();
   const [statusById, setStatusById] = useState<Record<string, string>>({});
@@ -53,6 +64,7 @@ export default function OrderBoard({
   const [editing, setEditing] = useState<{ id: string; qty: Record<string, number> } | null>(null);
   const [adding, setAdding] = useState('');
   const [activeBill, setActiveBill] = useState<{ bill: Bill; isReprint: boolean } | null>(null);
+  const [showManualModal, setShowManualModal] = useState(false);
 
   const nameOf = (id: string, o?: Order) =>
     menu.find((m) => m.id === id)?.name ??
@@ -179,22 +191,102 @@ export default function OrderBoard({
     }
   }
 
+  async function billOrderDirectly(orderId: string) {
+    setBusy(orderId);
+    setError('');
+    try {
+      const res = await fetch(`/api/staff/orders/${orderId}/bill`, {
+        method: 'POST',
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || 'Failed to generate bill');
+      }
+      setActiveBill({
+        bill: data.bill,
+        isReprint: Boolean(data.already_issued),
+      });
+    } catch (err) {
+      console.error('Billing error:', err);
+      setError(err instanceof Error ? err.message : 'Could not generate bill.');
+    } finally {
+      setBusy(undefined);
+    }
+  }
+
   if (!orders.length) {
     return (
-      <section className="card" style={{ padding: 'clamp(28px,6vw,52px)', textAlign: 'center' }}>
-        <div aria-hidden style={{ fontSize: 34, marginBottom: 8 }}>
-          ☕
-        </div>
-        <h2 style={{ fontFamily: 'Georgia, serif', margin: '0 0 8px' }}>Waiting for the first order</h2>
-        <p className="muted" style={{ maxWidth: 420, margin: 'auto' }}>
-          This queue checks for new table orders every 15 seconds.
-        </p>
-      </section>
+      <>
+        <section className="card" style={{ padding: 'clamp(28px,6vw,52px)', textAlign: 'center' }}>
+          <div aria-hidden style={{ fontSize: 34, marginBottom: 8 }}>
+            ☕
+          </div>
+          <h2 style={{ fontFamily: 'Georgia, serif', margin: '0 0 8px' }}>Waiting for orders</h2>
+          <p className="muted" style={{ maxWidth: 420, margin: 'auto' }}>
+            This queue checks for new table and counter orders every 15 seconds.
+          </p>
+          <div style={{ marginTop: 20 }}>
+            <button
+              className="btn"
+              onClick={() => setShowManualModal(true)}
+              style={{ padding: '10px 20px', fontSize: 14 }}
+            >
+              + Create Counter / Takeaway Order
+            </button>
+          </div>
+        </section>
+
+        {showManualModal && (
+          <ManualOrderModal
+            tables={tables}
+            menuItems={menu}
+            onClose={() => setShowManualModal(false)}
+            onSuccess={async (newOrder) => {
+              setShowManualModal(false);
+              router.refresh();
+              await billOrderDirectly(newOrder.order_id);
+            }}
+          />
+        )}
+
+        {activeBill && (
+          <ThermalBillModal
+            bill={activeBill.bill}
+            isReprint={activeBill.isReprint}
+            onClose={() => {
+              setActiveBill(null);
+              router.refresh();
+            }}
+          />
+        )}
+      </>
     );
   }
 
   return (
     <>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: 12,
+          marginBottom: 12,
+          flexWrap: 'wrap',
+        }}
+      >
+        <span className="muted" style={{ fontSize: 13 }}>
+          {orders.length} active {orders.length === 1 ? 'ticket' : 'tickets'} in queue
+        </span>
+        <button
+          className="btn"
+          onClick={() => setShowManualModal(true)}
+          style={{ fontSize: 13, padding: '8px 16px' }}
+        >
+          + Counter / Takeaway Order
+        </button>
+      </div>
+
       <section style={{ display: 'grid', gap: 12 }}>
         {error && (
           <p role="alert" style={{ padding: 12, borderLeft: '3px solid #df6d5d', margin: 0 }}>
@@ -209,8 +301,10 @@ export default function OrderBoard({
             <article className="card" key={o.id} style={{ padding: 18 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'start' }}>
                 <div>
-                  <span style={{ color: 'var(--accent)', fontSize: 12, letterSpacing: '.12em' }}>
-                    TABLE · {o.cafe_tables?.label ?? 'Unknown'}
+                  <span style={{ color: 'var(--accent)', fontSize: 12, letterSpacing: '.12em', fontWeight: 600 }}>
+                    {o.cafe_tables?.label
+                      ? `TABLE · ${o.cafe_tables.label}`
+                      : (o.service_mode ? o.service_mode.toUpperCase().replace('_', ' ') : 'COUNTER / TAKEAWAY')}
                   </span>
                   <h2 style={{ fontFamily: 'Georgia, serif', margin: '5px 0' }}>Order #{o.order_number}</h2>
                   <p className="muted" style={{ margin: '0 0 4px' }}>
@@ -343,6 +437,19 @@ export default function OrderBoard({
           );
         })}
       </section>
+
+      {showManualModal && (
+        <ManualOrderModal
+          tables={tables}
+          menuItems={menu}
+          onClose={() => setShowManualModal(false)}
+          onSuccess={async (newOrder) => {
+            setShowManualModal(false);
+            router.refresh();
+            await billOrderDirectly(newOrder.order_id);
+          }}
+        />
+      )}
 
       {activeBill && (
         <ThermalBillModal

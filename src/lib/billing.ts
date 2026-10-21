@@ -7,6 +7,7 @@ export interface BillItemSnapshot {
   note?: string | null;
   selected_options?: { name: string; price_delta_paise: number }[];
   modifiers?: { name: string; price_delta_cents: number }[];
+  is_custom?: boolean;
 }
 
 export interface BillBusinessSnapshot {
@@ -36,6 +37,9 @@ export interface Bill {
   order_number: number;
   table_number: number;
   table_label?: string;
+  order_source?: "qr" | "manual";
+  service_mode?: "dine_in" | "takeaway" | "counter" | "delivery";
+  customer_name?: string | null;
   status: "issued" | "cancelled";
   document_type: "bill" | "tax_invoice";
   business_snapshot: BillBusinessSnapshot;
@@ -46,7 +50,41 @@ export interface Bill {
   total_paise: number;
   notes: string | null;
   issued_at: string;
-  issued_by: string | null;
+  issued_by?: string | null;
+  cancelled_at?: string | null;
+  cancelled_by?: string | null;
+  cancellation_reason?: string | null;
+}
+
+export interface BillAuditEvent {
+  id: string;
+  bill_id: string;
+  bill_number: string;
+  event_type: "issued" | "reprinted" | "cancelled" | "viewed";
+  actor_id: string | null;
+  actor_role: string | null;
+  actor_email: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ManualOrderItemInput {
+  menuItemId?: string;
+  name?: string;
+  quantity: number;
+  unitPricePaise?: number;
+  optionIds?: string[];
+  note?: string;
+  isCustom?: boolean;
+}
+
+export interface CreateManualOrderInput {
+  serviceMode: "dine_in" | "takeaway" | "counter" | "delivery";
+  tableId?: string;
+  customerName?: string;
+  customerNote?: string;
+  guestCount?: number;
+  items: ManualOrderItemInput[];
 }
 
 export function friendlyBillingError(err: unknown): string {
@@ -59,6 +97,12 @@ export function friendlyBillingError(err: unknown): string {
   if (msg.includes("URB:tax_invoice_not_configured")) {
     return "GST Tax Invoices are not yet enabled pending itemized tax calculation. Please keep GST status as Pending Registration or Not Registered in Settings.";
   }
+  if (msg.includes("custom item name required")) return "Please enter a name for each custom line item.";
+  if (msg.includes("invalid custom price")) return "Custom item price must be a valid non-negative amount.";
+  if (msg.includes("invalid service mode")) return "Please select a valid service mode (Dine-in, Takeaway, Counter, or Delivery).";
+  if (msg.includes("already_cancelled")) return "This bill has already been cancelled.";
+  if (msg.includes("invalid quantity")) return "Item quantity must be between 1 and 20.";
+  if (msg.includes("invalid item count")) return "An order must contain between 1 and 25 items.";
   return msg || "An unexpected billing error occurred.";
 }
 

@@ -49,6 +49,12 @@ export default async function Staff() {
     .select('id,name,price_paise,is_available')
     .order('name');
 
+  const { data: tables } = await db
+    .from('cafe_tables')
+    .select('id,table_number,label')
+    .eq('is_active', true)
+    .order('table_number');
+
   return (
     <main className="shell" style={{ maxWidth: 1060, paddingTop: 32 }}>
       <header
@@ -133,7 +139,7 @@ export default async function Staff() {
           </p>
         </section>
       ) : (
-        <OrderBoard initial={orders} menu={menu ?? []} />
+        <OrderBoard initial={orders} menu={menu ?? []} tables={tables ?? []} />
       )}
     </main>
   );

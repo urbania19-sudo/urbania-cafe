@@ -49,6 +49,9 @@ if (typeof window !== 'undefined') {
     HTMLCanvasElement.prototype.toBlob = function (cb) {
       cb(new Blob(['mock-png'], { type: 'image/png' }));
     };
+    HTMLCanvasElement.prototype.toDataURL = function () {
+      return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+    };
   }
 
   // Anchor click mocking

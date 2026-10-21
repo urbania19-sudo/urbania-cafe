@@ -136,4 +136,39 @@ describe('ThermalBillModal Component (Mobile Fun Print Workflow)', () => {
     // Should remain in bill preview without triggering download message
     expect(screen.queryByText(/Receipt image downloaded/i)).not.toBeInTheDocument();
   });
+
+  it('renders the 384px receipt image element ready for native tap-and-hold saving', () => {
+    const onClose = vi.fn();
+    render(<ThermalBillModal bill={mockBill} onClose={onClose} isReprint={false} />);
+
+    const receiptImg = screen.getByRole('img', { name: /Receipt Bill #UB-01050/i });
+    expect(receiptImg).toBeInTheDocument();
+    expect(receiptImg.getAttribute('src')).toMatch(/^data:image\/png;base64,/);
+  });
+
+  it('renders the View Full PNG action button for direct browser preview', () => {
+    const onClose = vi.fn();
+    render(<ThermalBillModal bill={mockBill} onClose={onClose} isReprint={false} />);
+
+    expect(screen.getByRole('button', { name: /View Full PNG/i })).toBeInTheDocument();
+  });
+
+  it('displays iPhone guidance card when on iOS user agent', () => {
+    const origUA = navigator.userAgent;
+    Object.defineProperty(navigator, 'userAgent', {
+      value: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0.6099.119 Mobile/15E148 Safari/604.1',
+      configurable: true,
+    });
+
+    const onClose = vi.fn();
+    render(<ThermalBillModal bill={mockBill} onClose={onClose} isReprint={false} />);
+
+    expect(screen.getByText(/iPhone \(Chrome for iOS\) Print Guide/i)).toBeInTheDocument();
+    expect(screen.getByText(/Save to Photos/i)).toBeInTheDocument();
+
+    Object.defineProperty(navigator, 'userAgent', {
+      value: origUA,
+      configurable: true,
+    });
+  });
 });
