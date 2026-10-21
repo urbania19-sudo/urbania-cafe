@@ -35,7 +35,20 @@ export async function PATCH(
     p_order_id: orderId,
     p_items: body.data.items,
   });
-  return error
-    ? NextResponse.json({ error: error.message }, { status: 400 })
-    : NextResponse.json({ ok: true });
+
+  if (error) {
+    console.error(`Error editing order items for order ${orderId}:`, error.message);
+    if (
+      error.message?.includes('function public.edit_order_items') ||
+      error.message?.includes('does not exist')
+    ) {
+      return NextResponse.json(
+        { error: 'Order item editing is temporarily unavailable (database function pending migration).' },
+        { status: 503 }
+      );
+    }
+    return NextResponse.json({ error: error.message }, { status: 400 });
+  }
+
+  return NextResponse.json({ ok: true });
 }
