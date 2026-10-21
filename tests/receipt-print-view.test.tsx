@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import ReceiptPrintView from '../src/components/bills/ReceiptPrintView';
 import { renderReceiptToCanvas } from '../src/lib/thermal-canvas';
-import type { Bill } from '../src/lib/billing';
+import { SAMPLE_BILL, type Bill } from '../src/lib/billing';
 
 const sampleBill: Bill = {
   id: 'bill-print-1',
@@ -96,5 +96,12 @@ describe('ReceiptPrintView Dedicated Print-Only Component', () => {
     expect(styleEl?.innerHTML).toContain('58mm auto');
     expect(styleEl?.innerHTML).toContain('.no-print');
     expect(styleEl?.innerHTML).toContain('display: none !important');
+  });
+
+  it('renders SAMPLE_BILL cleanly for instant printer testing without auth or DB query', () => {
+    render(<ReceiptPrintView bill={SAMPLE_BILL} isReprint={false} />);
+    const receiptImg = screen.getByRole('img', { name: new RegExp(`Bill #${SAMPLE_BILL.bill_number}`, 'i') });
+    expect(receiptImg).toBeInTheDocument();
+    expect(receiptImg.getAttribute('width')).toBe('384');
   });
 });

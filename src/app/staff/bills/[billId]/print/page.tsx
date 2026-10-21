@@ -1,7 +1,7 @@
 import { redirect, notFound } from 'next/navigation';
 import { authDb } from '@/lib/supabase/auth-server';
 import ReceiptPrintView from '@/components/bills/ReceiptPrintView';
-import type { Bill } from '@/lib/billing';
+import { SAMPLE_BILL, type Bill } from '@/lib/billing';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,6 +15,11 @@ export default async function BillPrintPage({
   const { billId } = await params;
   const { reprint } = await searchParams;
   const isReprint = reprint === 'true';
+
+  // Sample receipt for thermal printer testing (e.g. Fun Print MX11) without requiring auth or DB
+  if (billId === 'sample') {
+    return <ReceiptPrintView bill={SAMPLE_BILL} isReprint={isReprint} />;
+  }
 
   const db = await authDb();
   const {

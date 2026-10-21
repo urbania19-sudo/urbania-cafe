@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import type { Bill } from '@/lib/billing';
+import { SAMPLE_BILL, type Bill } from '@/lib/billing';
 import ThermalBillModal from '@/components/staff/ThermalBillModal';
 import ManualOrderModal from '@/components/staff/ManualOrderModal';
 
@@ -172,11 +172,29 @@ export default function OrderBoard({
     setBusy(o.id);
     setError('');
     try {
+      // If the order has already been billed, fetch the existing bill (read-only query)
+      // This works seamlessly in both preview and production environments
+      if (o.billed_at) {
+        const res = await fetch(`/api/staff/orders/${o.id}/bill`);
+        const data = await res.json();
+        if (!res.ok || !data.bill) {
+          throw new Error(data.error || 'Failed to load existing bill');
+        }
+        setActiveBill({
+          bill: data.bill,
+          isReprint: true,
+        });
+        return;
+      }
+
       const res = await fetch(`/api/staff/orders/${o.id}/bill`, {
         method: 'POST',
       });
       const data = await res.json();
       if (!res.ok || !data.ok) {
+        if (data.code === 'PREVIEW_READ_ONLY') {
+          throw new Error('Preview mode is read-only to protect live café data. Use "🖨️ Test Print" to test Fun Print thermal printing!');
+        }
         throw new Error(data.error || 'Failed to generate bill');
       }
       setActiveBill({
@@ -225,7 +243,16 @@ export default function OrderBoard({
           <p className="muted" style={{ maxWidth: 420, margin: 'auto' }}>
             This queue checks for new table and counter orders every 15 seconds.
           </p>
-          <div style={{ marginTop: 20 }}>
+          <div style={{ marginTop: 20, display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="chip"
+              onClick={() => setActiveBill({ bill: SAMPLE_BILL, isReprint: false })}
+              style={{ padding: '10px 18px', fontSize: 14, borderColor: '#d5a84b88' }}
+              title="Test Fun Print 58mm thermal receipt printing"
+            >
+              🖨️ Test Thermal Print
+            </button>
             <button
               className="btn"
               onClick={() => setShowManualModal(true)}
@@ -278,13 +305,24 @@ export default function OrderBoard({
         <span className="muted" style={{ fontSize: 13 }}>
           {orders.length} active {orders.length === 1 ? 'ticket' : 'tickets'} in queue
         </span>
-        <button
-          className="btn"
-          onClick={() => setShowManualModal(true)}
-          style={{ fontSize: 13, padding: '8px 16px' }}
-        >
-          + Counter / Takeaway Order
-        </button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button
+            type="button"
+            className="chip"
+            onClick={() => setActiveBill({ bill: SAMPLE_BILL, isReprint: false })}
+            style={{ fontSize: 13, borderColor: '#d5a84b88' }}
+            title="Open test receipt for thermal printer calibration"
+          >
+            🖨️ Test Print
+          </button>
+          <button
+            className="btn"
+            onClick={() => setShowManualModal(true)}
+            style={{ fontSize: 13, padding: '8px 16px' }}
+          >
+            + Counter / Takeaway Order
+          </button>
+        </div>
       </div>
 
       <section style={{ display: 'grid', gap: 12 }}>

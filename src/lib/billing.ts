@@ -68,6 +68,56 @@ export interface BillAuditEvent {
   created_at: string;
 }
 
+export const SAMPLE_BILL: Bill = {
+  id: "00000000-0000-0000-0000-000000000000",
+  order_id: "00000000-0000-0000-0000-000000000000",
+  bill_number: "URB-TEST-0001",
+  bill_seq: 1,
+  order_number: 101,
+  table_number: 3,
+  table_label: "Table 3",
+  order_source: "manual",
+  service_mode: "dine_in",
+  customer_name: "Test Customer",
+  status: "issued",
+  document_type: "bill",
+  business_snapshot: {
+    cafe_name: "Urbania Café",
+    legal_name: "Urbania Café",
+    fssai_number: "12345678901234",
+    address_line1: "Near City Center",
+    city: "New Delhi",
+    state: "Delhi",
+    pincode: "110001",
+    phone: "+91 98765 43210",
+    tax_treatment: "inclusive",
+    bill_header_text: "Welcome to Urbania Café",
+    bill_footer_text: "Thank you for dining with us!",
+  },
+  items_snapshot: [
+    {
+      id: "item-sample-1",
+      name: "Cappuccino",
+      unit_price_paise: 15000,
+      quantity: 1,
+      line_total_paise: 15000,
+    },
+    {
+      id: "item-sample-2",
+      name: "Blueberry Muffin",
+      unit_price_paise: 20000,
+      quantity: 1,
+      line_total_paise: 20000,
+    },
+  ],
+  subtotal_paise: 35000,
+  tax_rate: 0.05,
+  tax_paise: 1750,
+  total_paise: 35000,
+  notes: "Test thermal print for MX11 Fun Print alignment",
+  issued_at: new Date().toISOString(),
+};
+
 export interface ManualOrderItemInput {
   menuItemId?: string;
   name?: string;
