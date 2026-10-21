@@ -3,6 +3,7 @@
 import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Bill } from '@/lib/billing';
+import { HtmlReceipt } from '@/components/bills/ReceiptPrintView';
 import {
   renderReceiptToCanvas,
   downloadReceiptImage,
@@ -25,6 +26,7 @@ export default function ThermalBillModal({
   isReprint?: boolean;
 }) {
   const router = useRouter();
+  const [inPagePrintView, setInPagePrintView] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [copying, setCopying] = useState(false);
@@ -76,8 +78,8 @@ export default function ThermalBillModal({
 
   const handlePrintWithFunPrint = () => {
     recordReprint('open_fun_print_view');
-    // Navigate in same tab via client-side routing to avoid triggering Android's "Open with" app chooser
-    router.push(printViewUrl);
+    // Open full-screen print view directly in-page to avoid any Android WebView URL intercepts or "Open with" dialogue
+    setInPagePrintView(true);
   };
 
   const handleDownloadImage = async () => {
@@ -104,8 +106,8 @@ export default function ThermalBillModal({
 
   const handleViewFullImage = () => {
     recordReprint('view_full_png');
-    // Navigate in same tab rather than window.open('_blank') to prevent Android OS "Open with" dialogue
-    router.push(printViewUrl);
+    // Open in-page clean print view directly to prevent Android OS "Open with" dialogue
+    setInPagePrintView(true);
   };
 
   const handleCopyImage = async () => {
@@ -130,6 +132,149 @@ export default function ThermalBillModal({
   const subtotal = bill.subtotal_paise ?? 0;
   const tax = bill.tax_paise ?? 0;
   const total = bill.total_paise ?? 0;
+
+  if (inPagePrintView) {
+    return (
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Print Receipt Bill #${bill.bill_number}`}
+        style={{
+          position: 'fixed',
+          inset: 0,
+          background: '#ffffff',
+          color: '#000000',
+          zIndex: 9999,
+          overflowY: 'auto',
+          WebkitOverflowScrolling: 'touch',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          padding: 0,
+          margin: 0,
+        }}
+      >
+        <style
+          dangerouslySetInnerHTML={{
+            __html: `
+              @page {
+                size: 58mm auto;
+                margin: 0mm;
+              }
+              html, body {
+                background: #ffffff !important;
+                color: #000000 !important;
+                margin: 0 !important;
+                padding: 0 !important;
+              }
+              @media print {
+                .no-print {
+                  display: none !important;
+                }
+              }
+            `,
+          }}
+        />
+
+        <main
+          style={{
+            width: '100%',
+            maxWidth: 384,
+            margin: '0 auto',
+            background: '#ffffff',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            padding: '10px 8px 80px',
+          }}
+        >
+          {receiptMeta ? (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img
+              src={receiptMeta.dataUrl}
+              width={receiptMeta.width}
+              height={receiptMeta.height}
+              alt={`Receipt Bill #${bill.bill_number}`}
+              style={{
+                width: '100%',
+                maxWidth: 384,
+                height: 'auto',
+                display: 'block',
+                margin: '0 auto',
+                background: '#ffffff',
+              }}
+            />
+          ) : (
+            <HtmlReceipt bill={bill} isReprint={isReprint} />
+          )}
+        </main>
+
+        <footer
+          className="no-print"
+          style={{
+            position: 'fixed',
+            bottom: 16,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            width: 'min(92%, 420px)',
+            background: '#18181b',
+            color: '#ffffff',
+            borderRadius: 12,
+            padding: '12px 16px',
+            boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 8,
+            zIndex: 10000,
+            fontSize: 13,
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontWeight: 700, color: '#f59e0b' }}>
+              🖨️ Fun Print on Android:
+            </span>
+            <button
+              onClick={() => setInPagePrintView(false)}
+              style={{
+                background: '#f59e0b',
+                color: '#000000',
+                border: 'none',
+                borderRadius: 6,
+                padding: '5px 12px',
+                fontWeight: 700,
+                fontSize: 12,
+                cursor: 'pointer',
+              }}
+            >
+              ← Back to Bill
+            </button>
+          </div>
+          <div style={{ fontSize: 12, color: '#d1d5db', lineHeight: 1.4 }}>
+            In Fun Print&rsquo;s browser, tap menu (<b>⋮</b>) &gt; <b>&ldquo;Print Current Page&rdquo;</b> to print directly to your MX11.
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, borderTop: '1px solid #27272a', paddingTop: 6 }}>
+            <button
+              onClick={() => {
+                setInPagePrintView(false);
+                onClose();
+              }}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: '#9ca3af',
+                fontSize: 12,
+                cursor: 'pointer',
+                textDecoration: 'underline',
+                padding: 0,
+              }}
+            >
+              Close &amp; Return to Queue
+            </button>
+          </div>
+        </footer>
+      </div>
+    );
+  }
 
   return (
     <div

@@ -17,7 +17,7 @@ export default async function BillPrintPage({
   const isReprint = reprint === 'true';
 
   // Sample receipt for thermal printer testing (e.g. Fun Print MX11) without requiring auth or DB
-  if (billId === 'sample') {
+  if (billId === 'sample' || billId === '00000000-0000-0000-0000-000000000000') {
     return <ReceiptPrintView bill={SAMPLE_BILL} isReprint={isReprint} />;
   }
 

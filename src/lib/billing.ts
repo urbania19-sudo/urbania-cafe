@@ -69,7 +69,7 @@ export interface BillAuditEvent {
 }
 
 export const SAMPLE_BILL: Bill = {
-  id: "00000000-0000-0000-0000-000000000000",
+  id: "sample",
   order_id: "00000000-0000-0000-0000-000000000000",
   bill_number: "URB-TEST-0001",
   bill_seq: 1,

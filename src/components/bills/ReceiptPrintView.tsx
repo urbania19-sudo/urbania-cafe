@@ -1,9 +1,139 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useSyncExternalStore } from 'react';
 import Link from 'next/link';
 import type { Bill } from '@/lib/billing';
 import { renderReceiptToCanvas } from '@/lib/thermal-canvas';
+
+const emptySubscribe = () => () => {};
+
+export function HtmlReceipt({ bill, isReprint = false }: { bill: Bill; isReprint?: boolean }) {
+  const biz = bill.business_snapshot;
+  const formattedDate = new Date(bill.issued_at).toLocaleDateString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
+  const formattedTime = new Date(bill.issued_at).toLocaleTimeString('en-IN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  });
+  const subtotal = bill.subtotal_paise ?? 0;
+  const tax = bill.tax_paise ?? 0;
+  const total = bill.total_paise ?? 0;
+
+  return (
+    <div
+      style={{
+        width: '100%',
+        maxWidth: 384,
+        background: '#ffffff',
+        color: '#000000',
+        padding: '16px 14px',
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+        fontSize: 13,
+        lineHeight: 1.4,
+        margin: '0 auto',
+      }}
+    >
+      <div style={{ textAlign: 'center', marginBottom: 8 }}>
+        <strong style={{ fontSize: 18, display: 'block', letterSpacing: '.03em', fontWeight: 900 }}>
+          {(biz.legal_name || 'URBANIA CAFE AND JUICE BAR').toUpperCase()}
+        </strong>
+        <div style={{ fontSize: 12, marginTop: 4, color: '#374151' }}>
+          {biz.address_line1 || '17/456, Chopasni Housing Board'}, {biz.city || 'Jodhpur'}, PIN: {biz.pincode || '342008'}
+        </div>
+        {biz.phone && <div style={{ fontSize: 12, color: '#374151' }}>Tel: {biz.phone}</div>}
+        {biz.fssai_number && (
+          <div style={{ fontSize: 12, fontWeight: 700, marginTop: 2 }}>
+            FSSAI Lic No: {biz.fssai_number}
+          </div>
+        )}
+      </div>
+
+      <div style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
+
+      <div style={{ textAlign: 'center', fontWeight: 800, fontSize: 16 }}>
+        {bill.document_type === 'tax_invoice' && biz.gst_status === 'registered'
+          ? 'TAX INVOICE'
+          : 'BILL / CASH RECEIPT'}
+      </div>
+      {isReprint && (
+        <div style={{ textAlign: 'center', fontSize: 13, fontWeight: 700, marginTop: 2 }}>
+          *** DUPLICATE / REPRINT ***
+        </div>
+      )}
+
+      <div style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, fontSize: 13 }}>
+        <div>Bill: {bill.bill_number}</div>
+        <div style={{ textAlign: 'right' }}>Order: #{bill.order_number}</div>
+        <div>Date: {formattedDate}</div>
+        <div style={{ textAlign: 'right' }}>Time: {formattedTime}</div>
+        <div>Table: {bill.table_label || `Table ${bill.table_number}`}</div>
+        <div style={{ textAlign: 'right' }}>{bill.service_mode ? bill.service_mode.toUpperCase() : 'Dine-in'}</div>
+      </div>
+
+      <div style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.6fr 0.8fr 0.9fr', fontWeight: 700, fontSize: 13, paddingBottom: 2 }}>
+        <div>ITEM</div>
+        <div style={{ textAlign: 'center' }}>QTY</div>
+        <div style={{ textAlign: 'right' }}>RATE</div>
+        <div style={{ textAlign: 'right' }}>AMOUNT</div>
+      </div>
+      <div style={{ borderTop: '1px dashed #000', marginBottom: 6 }} />
+
+      <div style={{ display: 'grid', gap: 8 }}>
+        {bill.items_snapshot.map((item, idx) => {
+          const unitPaise = item.unit_price_paise ?? (item as unknown as { unit_price_cents: number }).unit_price_cents ?? 0;
+          const linePaise = item.line_total_paise ?? (item as unknown as { line_total_cents: number }).line_total_cents ?? (unitPaise * item.quantity);
+          return (
+            <div key={idx} style={{ display: 'grid', gap: 2 }}>
+              <div style={{ fontWeight: 700, fontSize: 14 }}>{item.name}</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.6fr 0.8fr 0.9fr', fontSize: 13 }}>
+                <div />
+                <div style={{ textAlign: 'center' }}>{item.quantity}</div>
+                <div style={{ textAlign: 'right' }}>{(unitPaise / 100).toFixed(2)}</div>
+                <div style={{ textAlign: 'right' }}>{(linePaise / 100).toFixed(2)}</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
+
+      <div style={{ display: 'grid', gap: 4, fontSize: 14 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+          <span>Subtotal:</span>
+          <span>₹{(subtotal / 100).toFixed(2)}</span>
+        </div>
+        {tax > 0 && (
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span>GST:</span>
+            <span>₹{(tax / 100).toFixed(2)}</span>
+          </div>
+        )}
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900, fontSize: 16, marginTop: 4 }}>
+          <span>TOTAL:</span>
+          <span>₹{(total / 100).toFixed(2)}</span>
+        </div>
+      </div>
+
+      <div style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
+
+      <div style={{ textAlign: 'center', fontSize: 12, fontStyle: 'italic' }}>
+        {biz.bill_footer_text || 'Thank you for visiting Urbania Café!'}
+      </div>
+      <div style={{ textAlign: 'center', fontSize: 12, fontWeight: 700, marginTop: 3 }}>
+        FSSAI LICENCE NO. {biz.fssai_number || '12226032000212'}
+      </div>
+    </div>
+  );
+}
 
 export default function ReceiptPrintView({
   bill,
@@ -12,7 +142,14 @@ export default function ReceiptPrintView({
   bill: Bill;
   isReprint?: boolean;
 }) {
+  const isClient = useSyncExternalStore(
+    emptySubscribe,
+    () => true,
+    () => false
+  );
+
   const receiptMeta = useMemo(() => {
+    if (!isClient) return null;
     try {
       const canvas = renderReceiptToCanvas(bill, { scale: 1, isReprint });
       return {
@@ -24,7 +161,7 @@ export default function ReceiptPrintView({
       console.error('Error rendering receipt canvas:', err);
       return null;
     }
-  }, [bill, isReprint]);
+  }, [bill, isReprint, isClient]);
 
   return (
     <div
@@ -76,6 +213,7 @@ export default function ReceiptPrintView({
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
+          paddingBottom: 80,
         }}
       >
         {receiptMeta ? (
@@ -95,9 +233,7 @@ export default function ReceiptPrintView({
             }}
           />
         ) : (
-          <div style={{ padding: 40, color: '#6b7280', fontSize: 14 }}>
-            Rendering receipt…
-          </div>
+          <HtmlReceipt bill={bill} isReprint={isReprint} />
         )}
       </main>
 
