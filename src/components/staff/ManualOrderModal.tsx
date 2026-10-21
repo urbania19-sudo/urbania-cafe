@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 interface TableOption {
   id: string;
@@ -130,6 +130,16 @@ export default function ManualOrderModal({
 
   const totalPaise = items.reduce((acc, i) => acc + Math.round(i.unitPriceRupees * 100) * i.quantity, 0);
 
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape' && !submitting) {
+        onClose();
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose, submitting]);
+
   async function handleSubmit(autoBill: boolean = true) {
     if (items.length === 0) {
       setError('Please add at least one item to the order.');
@@ -180,356 +190,590 @@ export default function ManualOrderModal({
     <div
       role="dialog"
       aria-modal="true"
+      aria-labelledby="manual-order-modal-title"
       onClick={(e) => {
         if (e.target === e.currentTarget && !submitting) onClose();
       }}
       style={{
         position: 'fixed',
-        inset: 0,
-        backgroundColor: 'rgba(0,0,0,0.8)',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        width: '100vw',
+        height: '100%',
+        minHeight: '100dvh',
+        backgroundColor: 'rgba(0,0,0,0.85)',
         backdropFilter: 'blur(4px)',
-        display: 'grid',
-        placeItems: 'center',
-        padding: 16,
+        WebkitBackdropFilter: 'blur(4px)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 'calc(12px + env(safe-area-inset-top, 0px)) 12px calc(12px + env(safe-area-inset-bottom, 0px)) 12px',
         zIndex: 1001,
+        boxSizing: 'border-box',
+        overflowY: 'auto',
+        WebkitOverflowScrolling: 'touch',
       }}
     >
       <div
         className="card"
         style={{
+          width: 'min(calc(100vw - 24px), 580px)',
           maxWidth: 580,
-          width: '100%',
-          maxHeight: '92vh',
-          overflowY: 'auto',
-          padding: 24,
+          maxHeight: 'min(92vh, 92dvh)',
+          display: 'flex',
+          flexDirection: 'column',
+          backgroundColor: 'var(--card, #1c1512)',
+          border: '1px solid var(--line, #3d2d24)',
           borderRadius: 12,
+          boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
+          overflow: 'hidden',
+          boxSizing: 'border-box',
+          margin: 'auto',
         }}
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <h2 style={{ fontFamily: 'Georgia,serif', margin: 0, fontSize: '1.6rem' }}>
+        {/* Pinned Header */}
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            padding: '16px 20px',
+            borderBottom: '1px solid var(--line, #3d2d24)',
+            flexShrink: 0,
+            background: 'var(--card, #1c1512)',
+            gap: 12,
+          }}
+        >
+          <h2
+            id="manual-order-modal-title"
+            style={{
+              fontFamily: 'Georgia, serif',
+              margin: 0,
+              fontSize: '1.25rem',
+              lineHeight: 1.25,
+              fontWeight: 700,
+            }}
+          >
             New Counter / Custom Order
           </h2>
-          <button type="button" className="chip" onClick={onClose} disabled={submitting}>
+          <button
+            type="button"
+            className="chip"
+            onClick={onClose}
+            disabled={submitting}
+            style={{
+              minHeight: 36,
+              padding: '6px 14px',
+              cursor: 'pointer',
+              flexShrink: 0,
+              fontWeight: 600,
+            }}
+            aria-label="Close dialog"
+          >
             ✕ Cancel
           </button>
         </div>
 
-        {error && (
-          <div role="alert" style={{ padding: 10, borderLeft: '3px solid #ef4444', marginBottom: 14, fontSize: 13 }}>
-            {error}
-          </div>
-        )}
+        {/* Scrollable Form Body */}
+        <div
+          style={{
+            flex: 1,
+            overflowY: 'auto',
+            WebkitOverflowScrolling: 'touch',
+            overscrollBehavior: 'contain',
+            padding: '16px 20px',
+            minHeight: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 14,
+          }}
+        >
+          {error && (
+            <div
+              role="alert"
+              style={{
+                padding: '10px 14px',
+                borderLeft: '4px solid #ef4444',
+                background: 'rgba(239, 68, 68, 0.1)',
+                fontSize: 13,
+                borderRadius: 4,
+              }}
+            >
+              {error}
+            </div>
+          )}
 
-        {/* Service Mode Selection */}
-        <div style={{ marginBottom: 14 }}>
-          <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
-            Service Mode
-          </label>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {(
-              [
-                ['dine_in', '🪑 Dine-in'],
-                ['takeaway', '🥡 Takeaway'],
-                ['counter', '🛎️ Counter'],
-                ['delivery', '🛵 Delivery'],
-              ] as const
-            ).map(([mode, label]) => (
-              <button
-                key={mode}
-                type="button"
-                className="chip"
-                onClick={() => setServiceMode(mode)}
-                style={{
-                  background: serviceMode === mode ? 'var(--accent)' : 'transparent',
-                  color: serviceMode === mode ? '#ffffff' : 'inherit',
-                  borderColor: serviceMode === mode ? 'var(--accent)' : 'var(--line)',
-                  fontWeight: serviceMode === mode ? 700 : 500,
-                  cursor: 'pointer',
-                }}
-              >
-                {label}
-              </button>
-            ))}
+          {/* Service Mode Selection (2x2 Grid) */}
+          <div>
+            <label
+              style={{
+                display: 'block',
+                fontSize: 12,
+                fontWeight: 600,
+                marginBottom: 8,
+                letterSpacing: '0.04em',
+                textTransform: 'uppercase',
+                color: 'var(--muted, #d7c3ab)',
+              }}
+            >
+              Service Mode
+            </label>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(2, 1fr)',
+                gap: 8,
+                width: '100%',
+              }}
+            >
+              {(
+                [
+                  ['dine_in', '🪑 Dine-in'],
+                  ['takeaway', '🥡 Takeaway'],
+                  ['counter', '🛎️ Counter'],
+                  ['delivery', '🛵 Delivery'],
+                ] as const
+              ).map(([mode, label]) => {
+                const isActive = serviceMode === mode;
+                return (
+                  <button
+                    key={mode}
+                    type="button"
+                    className="chip"
+                    onClick={() => setServiceMode(mode)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      minHeight: 44,
+                      width: '100%',
+                      padding: '8px 12px',
+                      borderRadius: 8,
+                      background: isActive ? 'var(--accent, #c89f65)' : 'rgba(255,255,255,0.04)',
+                      color: isActive ? '#2b1b16' : 'inherit',
+                      borderColor: isActive ? 'var(--accent, #c89f65)' : 'var(--line, #3d2d24)',
+                      fontWeight: isActive ? 700 : 500,
+                      cursor: 'pointer',
+                      fontSize: 13,
+                      boxSizing: 'border-box',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
 
-        {/* Table Selection for Dine-in */}
-        {serviceMode === 'dine_in' && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 10, marginBottom: 14 }}>
+          {/* Table Selection for Dine-in */}
+          {serviceMode === 'dine_in' && (
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+                gap: 10,
+              }}
+            >
+              <div>
+                <label style={{ display: 'block', fontSize: 12, marginBottom: 4, fontWeight: 500 }}>
+                  Select Table
+                </label>
+                <select
+                  value={tableId}
+                  onChange={(e) => setTableId(e.target.value)}
+                  style={{
+                    width: '100%',
+                    minHeight: 42,
+                    padding: '8px 10px',
+                    borderRadius: 6,
+                    border: '1px solid var(--line, #3d2d24)',
+                    background: '#1a1a1a',
+                    color: 'inherit',
+                    boxSizing: 'border-box',
+                    fontSize: 13,
+                  }}
+                >
+                  {tables.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.label} (Table {t.table_number})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: 12, marginBottom: 4, fontWeight: 500 }}>
+                  Guest Count
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={guestCount}
+                  onChange={(e) => setGuestCount(parseInt(e.target.value, 10) || 1)}
+                  style={{
+                    width: '100%',
+                    minHeight: 42,
+                    padding: '8px 10px',
+                    borderRadius: 6,
+                    border: '1px solid var(--line, #3d2d24)',
+                    background: 'transparent',
+                    color: 'inherit',
+                    boxSizing: 'border-box',
+                    fontSize: 13,
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Customer Details */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+              gap: 10,
+            }}
+          >
             <div>
-              <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Select Table</label>
-              <select
-                value={tableId}
-                onChange={(e) => setTableId(e.target.value)}
+              <label style={{ display: 'block', fontSize: 12, marginBottom: 4, fontWeight: 500 }}>
+                Customer Name (Optional)
+              </label>
+              <input
+                type="text"
+                placeholder={serviceMode === 'takeaway' ? 'e.g. Priya (Takeaway)' : 'e.g. Walk-in Guest'}
+                value={customerName}
+                onChange={(e) => setCustomerName(e.target.value)}
                 style={{
                   width: '100%',
+                  minHeight: 42,
                   padding: '8px 10px',
                   borderRadius: 6,
-                  border: '1px solid var(--line)',
+                  border: '1px solid var(--line, #3d2d24)',
+                  background: 'transparent',
+                  color: 'inherit',
+                  boxSizing: 'border-box',
+                  fontSize: 13,
+                }}
+              />
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: 12, marginBottom: 4, fontWeight: 500 }}>
+                Order Note (Optional)
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. Parcel box / Less ice"
+                value={customerNote}
+                onChange={(e) => setCustomerNote(e.target.value)}
+                style={{
+                  width: '100%',
+                  minHeight: 42,
+                  padding: '8px 10px',
+                  borderRadius: 6,
+                  border: '1px solid var(--line, #3d2d24)',
+                  background: 'transparent',
+                  color: 'inherit',
+                  boxSizing: 'border-box',
+                  fontSize: 13,
+                }}
+              />
+            </div>
+          </div>
+
+          {/* Item Selection Section */}
+          <div style={{ borderTop: '1px solid var(--line, #3d2d24)', paddingTop: 14 }}>
+            <strong style={{ display: 'block', fontSize: 13, marginBottom: 8 }}>
+              Add Items to Order
+            </strong>
+
+            {/* Quick Catalogue Item Picker */}
+            <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+              <select
+                value={selectedMenuItemId}
+                onChange={(e) => setSelectedMenuItemId(e.target.value)}
+                style={{
+                  flex: '1 1 200px',
+                  minHeight: 42,
+                  padding: '8px 10px',
+                  borderRadius: 6,
+                  border: '1px solid var(--line, #3d2d24)',
                   background: '#1a1a1a',
                   color: 'inherit',
+                  boxSizing: 'border-box',
+                  fontSize: 13,
                 }}
               >
-                {tables.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.label} (Table {t.table_number})
+                {menuItems.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name} — ₹{(m.price_paise / 100).toFixed(2)}
                   </option>
                 ))}
               </select>
+              <button
+                type="button"
+                className="btn"
+                onClick={addCatalogueItem}
+                style={{ minHeight: 42, whiteSpace: 'nowrap', flex: '0 0 auto' }}
+              >
+                + Add Item
+              </button>
             </div>
 
-            <div>
-              <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Guest Count</label>
-              <input
-                type="number"
-                min={1}
-                max={20}
-                value={guestCount}
-                onChange={(e) => setGuestCount(parseInt(e.target.value, 10) || 1)}
+            {/* Custom Line Item Toggle / Form */}
+            {!isAddingCustom ? (
+              <button
+                type="button"
+                className="chip"
+                onClick={() => setIsAddingCustom(true)}
+                style={{ fontSize: 12, color: 'var(--accent, #c89f65)', padding: '6px 12px' }}
+              >
+                + Add Permitted Custom Line Item (Non-Catalogue)
+              </button>
+            ) : (
+              <div
                 style={{
-                  width: '100%',
-                  padding: '8px 10px',
-                  borderRadius: 6,
-                  border: '1px solid var(--line)',
-                  background: 'transparent',
-                  color: 'inherit',
+                  padding: 12,
+                  background: 'rgba(255,255,255,0.04)',
+                  borderRadius: 8,
+                  marginTop: 8,
+                  border: '1px solid var(--line, #3d2d24)',
                 }}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Customer Details */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 10, marginBottom: 14 }}>
-          <div>
-            <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Customer Name (Optional)</label>
-            <input
-              type="text"
-              placeholder={serviceMode === 'takeaway' ? 'e.g. Priya (Takeaway)' : 'e.g. Walk-in Guest'}
-              value={customerName}
-              onChange={(e) => setCustomerName(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '8px 10px',
-                borderRadius: 6,
-                border: '1px solid var(--line)',
-                background: 'transparent',
-                color: 'inherit',
-              }}
-            />
-          </div>
-
-          <div>
-            <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Order Note (Optional)</label>
-            <input
-              type="text"
-              placeholder="e.g. Parcel box / Less ice"
-              value={customerNote}
-              onChange={(e) => setCustomerNote(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '8px 10px',
-                borderRadius: 6,
-                border: '1px solid var(--line)',
-                background: 'transparent',
-                color: 'inherit',
-              }}
-            />
-          </div>
-        </div>
-
-        {/* Item Selection Section */}
-        <div style={{ borderTop: '1px solid var(--line)', paddingTop: 14, marginBottom: 14 }}>
-          <strong style={{ display: 'block', fontSize: 13, marginBottom: 8 }}>Add Items to Order</strong>
-
-          {/* Quick Catalogue Item Picker */}
-          <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
-            <select
-              value={selectedMenuItemId}
-              onChange={(e) => setSelectedMenuItemId(e.target.value)}
-              style={{
-                flex: 1,
-                padding: '8px 10px',
-                borderRadius: 6,
-                border: '1px solid var(--line)',
-                background: '#1a1a1a',
-                color: 'inherit',
-              }}
-            >
-              {menuItems.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name} — ₹{(m.price_paise / 100).toFixed(2)}
-                </option>
-              ))}
-            </select>
-            <button type="button" className="btn" onClick={addCatalogueItem}>
-              + Add Item
-            </button>
-          </div>
-
-          {/* Custom Line Item Toggle / Form */}
-          {!isAddingCustom ? (
-            <button
-              type="button"
-              className="chip"
-              onClick={() => setIsAddingCustom(true)}
-              style={{ fontSize: 11, color: 'var(--accent)' }}
-            >
-              + Add Permitted Custom Line Item (Non-Catalogue)
-            </button>
-          ) : (
-            <div style={{ padding: 12, background: '#ffffff08', borderRadius: 8, marginTop: 8 }}>
-              <strong style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>Custom Dish or Charge</strong>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))', gap: 8, marginBottom: 8 }}>
+              >
+                <strong style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+                  Custom Dish or Charge
+                </strong>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))',
+                    gap: 8,
+                    marginBottom: 8,
+                  }}
+                >
+                  <input
+                    type="text"
+                    placeholder="Custom Item Name"
+                    value={customName}
+                    onChange={(e) => setCustomName(e.target.value)}
+                    style={{
+                      padding: '8px 10px',
+                      borderRadius: 6,
+                      border: '1px solid var(--line, #3d2d24)',
+                      background: 'transparent',
+                      color: 'inherit',
+                      boxSizing: 'border-box',
+                      fontSize: 13,
+                      minHeight: 38,
+                    }}
+                  />
+                  <input
+                    type="number"
+                    step="1"
+                    min="0"
+                    placeholder="Price (₹)"
+                    value={customPriceRupees}
+                    onChange={(e) => setCustomPriceRupees(e.target.value)}
+                    style={{
+                      padding: '8px 10px',
+                      borderRadius: 6,
+                      border: '1px solid var(--line, #3d2d24)',
+                      background: 'transparent',
+                      color: 'inherit',
+                      boxSizing: 'border-box',
+                      fontSize: 13,
+                      minHeight: 38,
+                    }}
+                  />
+                  <input
+                    type="number"
+                    min="1"
+                    max="20"
+                    placeholder="Qty"
+                    value={customQty}
+                    onChange={(e) => setCustomQty(parseInt(e.target.value, 10) || 1)}
+                    style={{
+                      padding: '8px 10px',
+                      borderRadius: 6,
+                      border: '1px solid var(--line, #3d2d24)',
+                      background: 'transparent',
+                      color: 'inherit',
+                      boxSizing: 'border-box',
+                      fontSize: 13,
+                      minHeight: 38,
+                    }}
+                  />
+                </div>
                 <input
                   type="text"
-                  placeholder="Custom Item Name"
-                  value={customName}
-                  onChange={(e) => setCustomName(e.target.value)}
+                  placeholder="Optional Note for custom item"
+                  value={customNote}
+                  onChange={(e) => setCustomNote(e.target.value)}
                   style={{
-                    padding: '6px 8px',
+                    width: '100%',
+                    padding: '8px 10px',
                     borderRadius: 6,
-                    border: '1px solid var(--line)',
+                    border: '1px solid var(--line, #3d2d24)',
                     background: 'transparent',
                     color: 'inherit',
+                    marginBottom: 8,
+                    boxSizing: 'border-box',
+                    fontSize: 13,
+                    minHeight: 38,
                   }}
                 />
-                <input
-                  type="number"
-                  step="1"
-                  min="0"
-                  placeholder="Price (₹)"
-                  value={customPriceRupees}
-                  onChange={(e) => setCustomPriceRupees(e.target.value)}
-                  style={{
-                    padding: '6px 8px',
-                    borderRadius: 6,
-                    border: '1px solid var(--line)',
-                    background: 'transparent',
-                    color: 'inherit',
-                  }}
-                />
-                <input
-                  type="number"
-                  min="1"
-                  max="20"
-                  placeholder="Qty"
-                  value={customQty}
-                  onChange={(e) => setCustomQty(parseInt(e.target.value, 10) || 1)}
-                  style={{
-                    padding: '6px 8px',
-                    borderRadius: 6,
-                    border: '1px solid var(--line)',
-                    background: 'transparent',
-                    color: 'inherit',
-                  }}
-                />
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className="chip"
+                    onClick={addCustomLineItem}
+                    style={{ color: 'var(--accent, #c89f65)', fontWeight: 600, minHeight: 36 }}
+                  >
+                    Add Custom Item
+                  </button>
+                  <button
+                    type="button"
+                    className="chip"
+                    onClick={() => setIsAddingCustom(false)}
+                    style={{ minHeight: 36 }}
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
-              <input
-                type="text"
-                placeholder="Optional Note for custom item"
-                value={customNote}
-                onChange={(e) => setCustomNote(e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '6px 8px',
-                  borderRadius: 6,
-                  border: '1px solid var(--line)',
-                  background: 'transparent',
-                  color: 'inherit',
-                  marginBottom: 8,
-                }}
-              />
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button type="button" className="chip" onClick={addCustomLineItem} style={{ color: 'var(--accent)' }}>
-                  Add Custom Item
-                </button>
-                <button type="button" className="chip" onClick={() => setIsAddingCustom(false)}>
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
 
-        {/* Selected Items List */}
-        <div style={{ marginBottom: 16 }}>
-          <strong style={{ display: 'block', fontSize: 13, marginBottom: 6 }}>
-            Selected Items ({items.length})
-          </strong>
+          {/* Selected Items List */}
+          <div>
+            <strong style={{ display: 'block', fontSize: 13, marginBottom: 6 }}>
+              Selected Items ({items.length})
+            </strong>
 
-          {items.length === 0 ? (
-            <p className="muted" style={{ fontSize: 12, margin: '8px 0' }}>
-              No items added yet. Select a catalogue item above or create a custom line item.
-            </p>
-          ) : (
-            <div style={{ border: '1px solid var(--line)', borderRadius: 8, overflow: 'hidden' }}>
-              {items.map((item, idx) => (
+            {items.length === 0 ? (
+              <p className="muted" style={{ fontSize: 12, margin: '8px 0' }}>
+                No items added yet. Select a catalogue item above or create a custom line item.
+              </p>
+            ) : (
+              <div style={{ border: '1px solid var(--line, #3d2d24)', borderRadius: 8, overflow: 'hidden' }}>
+                {items.map((item, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '10px 12px',
+                      borderBottom: idx < items.length - 1 ? '1px solid var(--line, #3d2d24)' : 'none',
+                      fontSize: 13,
+                      gap: 8,
+                      flexWrap: 'wrap',
+                    }}
+                  >
+                    <div style={{ flex: '1 1 140px', minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, wordBreak: 'break-word' }}>{item.name}</div>
+                      {item.isCustom && (
+                        <span className="chip" style={{ fontSize: 9, marginLeft: 0, marginTop: 2, display: 'inline-block' }}>
+                          Custom
+                        </span>
+                      )}
+                      {item.note && (
+                        <div className="muted" style={{ fontSize: 11, wordBreak: 'break-word' }}>
+                          Note: {item.note}
+                        </div>
+                      )}
+                      <div className="muted" style={{ fontSize: 11 }}>₹{item.unitPriceRupees.toFixed(2)} each</div>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                      <button
+                        type="button"
+                        className="chip"
+                        onClick={() => updateQuantity(idx, -1)}
+                        style={{
+                          minWidth: 36,
+                          minHeight: 36,
+                          padding: 0,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: 16,
+                          cursor: 'pointer',
+                        }}
+                        aria-label="Decrease quantity"
+                      >
+                        -
+                      </button>
+                      <span style={{ fontWeight: 700, minWidth: 24, textAlign: 'center' }}>
+                        {item.quantity}
+                      </span>
+                      <button
+                        type="button"
+                        className="chip"
+                        onClick={() => updateQuantity(idx, 1)}
+                        style={{
+                          minWidth: 36,
+                          minHeight: 36,
+                          padding: 0,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: 16,
+                          cursor: 'pointer',
+                        }}
+                        aria-label="Increase quantity"
+                      >
+                        +
+                      </button>
+                      <span style={{ fontWeight: 700, minWidth: 70, textAlign: 'right' }}>
+                        ₹{(item.unitPriceRupees * item.quantity).toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+
                 <div
-                  key={idx}
                   style={{
                     display: 'flex',
                     justifyContent: 'space-between',
-                    alignItems: 'center',
-                    padding: '8px 12px',
-                    borderBottom: idx < items.length - 1 ? '1px solid var(--line)' : 'none',
-                    fontSize: 13,
-                    gap: 8,
-                    flexWrap: 'wrap',
+                    padding: '10px 12px',
+                    background: 'rgba(255,255,255,0.05)',
+                    fontWeight: 700,
+                    fontSize: 14,
                   }}
                 >
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <strong>{item.name}</strong>
-                    {item.isCustom && <span className="chip" style={{ fontSize: 9, marginLeft: 6 }}>Custom</span>}
-                    {item.note && <div className="muted" style={{ fontSize: 11 }}>Note: {item.note}</div>}
-                    <div className="muted" style={{ fontSize: 11 }}>₹{item.unitPriceRupees.toFixed(2)} each</div>
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <button
-                      type="button"
-                      className="chip"
-                      onClick={() => updateQuantity(idx, -1)}
-                      style={{ padding: '2px 8px' }}
-                    >
-                      -
-                    </button>
-                    <span style={{ fontWeight: 700, minWidth: 20, textAlign: 'center' }}>{item.quantity}</span>
-                    <button
-                      type="button"
-                      className="chip"
-                      onClick={() => updateQuantity(idx, 1)}
-                      style={{ padding: '2px 8px' }}
-                    >
-                      +
-                    </button>
-                    <span style={{ fontWeight: 700, minWidth: 65, textAlign: 'right' }}>
-                      ₹{(item.unitPriceRupees * item.quantity).toFixed(2)}
-                    </span>
-                  </div>
+                  <span>Total Amount:</span>
+                  <span>₹{(totalPaise / 100).toFixed(2)}</span>
                 </div>
-              ))}
-
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  padding: '10px 12px',
-                  background: '#ffffff08',
-                  fontWeight: 700,
-                  fontSize: 15,
-                }}
-              >
-                <span>Total Amount:</span>
-                <span>₹{(totalPaise / 100).toFixed(2)}</span>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
-        {/* Submit Actions */}
-        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', borderTop: '1px solid var(--line)', paddingTop: 14 }}>
-          <button type="button" className="chip" onClick={onClose} disabled={submitting}>
+        {/* Submit Actions (Pinned Footer) */}
+        <div
+          style={{
+            display: 'flex',
+            gap: 10,
+            justifyContent: 'flex-end',
+            alignItems: 'center',
+            borderTop: '1px solid var(--line, #3d2d24)',
+            padding: '12px 20px calc(12px + env(safe-area-inset-bottom, 0px))',
+            background: 'var(--card, #1c1512)',
+            flexShrink: 0,
+          }}
+        >
+          <button
+            type="button"
+            className="chip"
+            onClick={onClose}
+            disabled={submitting}
+            style={{ minHeight: 44, padding: '10px 16px', fontWeight: 600 }}
+          >
             Cancel
           </button>
           <button
@@ -537,7 +781,14 @@ export default function ManualOrderModal({
             className="btn"
             disabled={submitting || items.length === 0}
             onClick={() => handleSubmit(true)}
-            style={{ backgroundColor: 'var(--accent)', color: '#fff' }}
+            style={{
+              backgroundColor: 'var(--accent, #c89f65)',
+              color: '#2b1b16',
+              minHeight: 44,
+              padding: '10px 20px',
+              fontWeight: 800,
+              opacity: submitting || items.length === 0 ? 0.5 : 1,
+            }}
           >
             {submitting ? 'Creating...' : 'Create & Generate Bill'}
           </button>

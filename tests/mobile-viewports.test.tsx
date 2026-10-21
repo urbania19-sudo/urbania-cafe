@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import MenuClient from '@/components/menu/MenuClient';
 import OrderBoard from '@/components/staff/OrderBoard';
 import ThermalBillModal from '@/components/staff/ThermalBillModal';
@@ -113,18 +113,82 @@ describe('Mobile Viewports (320px, 360px, 375px, 390px, 414px) Responsiveness', 
         expect(img.style.maxWidth).toBe('384px');
       });
 
-      it(`renders ManualOrderModal cleanly within ${width}px viewport`, () => {
+      it(`renders ManualOrderModal cleanly within ${width}px viewport with full service modes and actions`, () => {
+        const onClose = vi.fn();
+        const onSuccess = vi.fn();
+
         render(
           <ManualOrderModal
             tables={mockTables}
             menuItems={mockMenu}
-            onClose={vi.fn()}
-            onSuccess={vi.fn()}
+            onClose={onClose}
+            onSuccess={onSuccess}
           />
         );
 
-        expect(screen.getByRole('dialog')).toBeInTheDocument();
+        const dialog = screen.getByRole('dialog');
+        expect(dialog).toBeInTheDocument();
+        // Overlay must use flex centering rather than grid to prevent mobile webview collapse
+        expect(dialog.style.display).toBe('flex');
+        expect(dialog.style.alignItems).toBe('center');
+
         expect(screen.getByText('New Counter / Custom Order')).toBeInTheDocument();
+
+        // All 4 service mode buttons must be present and fully visible
+        const dineInBtn = screen.getByRole('button', { name: /🪑 Dine-in/i });
+        const takeawayBtn = screen.getByRole('button', { name: /🥡 Takeaway/i });
+        const counterBtn = screen.getByRole('button', { name: /🛎️ Counter/i });
+        const deliveryBtn = screen.getByRole('button', { name: /🛵 Delivery/i });
+
+        expect(dineInBtn).toBeInTheDocument();
+        expect(takeawayBtn).toBeInTheDocument();
+        expect(counterBtn).toBeInTheDocument();
+        expect(deliveryBtn).toBeInTheDocument();
+
+        // In Dine-in mode, Table selection is visible
+        expect(screen.getByText('Select Table')).toBeInTheDocument();
+
+        // Switch to Counter mode
+        fireEvent.click(counterBtn);
+        // Table selection is hidden in Counter mode
+        expect(screen.queryByText('Select Table')).not.toBeInTheDocument();
+
+        // Switch to Takeaway mode
+        fireEvent.click(takeawayBtn);
+        expect(screen.queryByText('Select Table')).not.toBeInTheDocument();
+
+        // Switch back to Dine-in
+        fireEvent.click(dineInBtn);
+        expect(screen.getByText('Select Table')).toBeInTheDocument();
+
+        // Add an item from catalogue
+        const addBtn = screen.getByRole('button', { name: '+ Add Item' });
+        fireEvent.click(addBtn);
+
+        // Verify item is added to Selected Items
+        expect(screen.getByText('Selected Items (1)')).toBeInTheDocument();
+        expect(screen.getByText(/₹280.00 each/i)).toBeInTheDocument();
+        expect(screen.getByText('Total Amount:')).toBeInTheDocument();
+
+        // Test increment
+        const plusBtn = screen.getByRole('button', { name: 'Increase quantity' });
+        fireEvent.click(plusBtn);
+        expect(screen.getAllByText(/₹560.00/i).length).toBeGreaterThanOrEqual(1);
+
+        // Test decrement
+        const minusBtn = screen.getByRole('button', { name: 'Decrease quantity' });
+        fireEvent.click(minusBtn);
+        expect(screen.queryByText(/₹560.00/i)).not.toBeInTheDocument();
+
+        // Verify Create & Generate Bill is enabled and styled
+        const submitBtn = screen.getByRole('button', { name: 'Create & Generate Bill' });
+        expect(submitBtn).toBeInTheDocument();
+        expect(submitBtn).not.toBeDisabled();
+
+        // Verify Close dialog button triggers onClose
+        const cancelBtn = screen.getByRole('button', { name: 'Close dialog' });
+        fireEvent.click(cancelBtn);
+        expect(onClose).toHaveBeenCalled();
       });
     });
   });
