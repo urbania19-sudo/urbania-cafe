@@ -473,4 +473,23 @@ describe('Thermal Canvas Receipt Generator (384px for Fun Print / MX11)', () => 
     expect(result.action).toBe('downloaded');
     expect(shareMock).toHaveBeenCalledTimes(1);
   });
+
+  it('downloads receipt image without target="_blank" to prevent Android OS app chooser dialog', async () => {
+    let createdAnchor: HTMLAnchorElement | null = null;
+    const origCreateElement = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation((tagName: string) => {
+      const el = origCreateElement(tagName);
+      if (tagName.toLowerCase() === 'a') {
+        createdAnchor = el as HTMLAnchorElement;
+      }
+      return el;
+    });
+
+    const { downloadReceiptImage } = await import('../src/lib/thermal-canvas');
+    await downloadReceiptImage(mockBill, { scale: 1 });
+
+    expect(createdAnchor as HTMLAnchorElement | null).not.toBeNull();
+    expect((createdAnchor as unknown as HTMLAnchorElement)?.getAttribute('download')).toBe('Bill-UB-01001-384px.png');
+    expect((createdAnchor as unknown as HTMLAnchorElement)?.getAttribute('target')).toBeNull();
+  });
 });

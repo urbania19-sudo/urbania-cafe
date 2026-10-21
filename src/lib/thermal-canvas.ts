@@ -627,8 +627,8 @@ export async function downloadReceiptImage(
   const link = document.createElement("a");
   link.href = url;
   link.download = fileName;
-  link.target = "_blank";
-  link.rel = "noopener noreferrer";
+  // Omit target="_blank": setting target="_blank" in Android WebViews causes
+  // the OS to intercept the download as an external window, invoking the "Open with" app chooser
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
@@ -660,12 +660,12 @@ export async function copyReceiptImage(
 
 export const FUN_PRINT_PACKAGE_ID = "com.fun.mxw";
 
-export const FUN_PRINT_ANDROID_INTENT =
-  "intent:#Intent;package=com.fun.mxw;S.browser_fallback_url=https%3A%2F%2Fplay.google.com%2Fstore%2Fapps%2Fdetails%3Fid%3Dcom.fun.mxw;end";
-
 export const FUN_PRINT_PLAY_STORE_URL = "https://play.google.com/store/apps/details?id=com.fun.mxw";
 
 export const FUN_PRINT_APP_STORE_URL = "https://apps.apple.com/app/fun-print/id1573516086";
+
+// Standard web link rather than intent:// scheme to avoid triggering Android OS "Open with" app chooser
+export const FUN_PRINT_ANDROID_INTENT = FUN_PRINT_PLAY_STORE_URL;
 
 export function getFunPrintLaunchInfo(): {
   url: string;

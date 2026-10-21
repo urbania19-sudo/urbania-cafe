@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import type { Bill } from '@/lib/billing';
 import {
   renderReceiptToCanvas,
@@ -23,6 +24,7 @@ export default function ThermalBillModal({
   onClose: () => void;
   isReprint?: boolean;
 }) {
+  const router = useRouter();
   const [processing, setProcessing] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [copying, setCopying] = useState(false);
@@ -72,54 +74,10 @@ export default function ThermalBillModal({
 
   const printViewUrl = `/staff/bills/${bill.id}/print${isReprint ? '?reprint=true' : ''}`;
 
-  const handlePrintWithFunPrint = async () => {
+  const handlePrintWithFunPrint = () => {
     recordReprint('open_fun_print_view');
-    // On Android / in Fun Print's built-in browser, navigate directly to the clean receipt print view
-    // so Fun Print's "Print Current Page" prints the exact 384px thermal receipt
-    if (!capabilities.isIOS) {
-      if (typeof window !== 'undefined') {
-        /* eslint-disable-next-line @next/next/no-location-assign-relative-destination */
-        window.location.assign(printViewUrl);
-      }
-      return;
-    }
-
-    try {
-      setProcessing(true);
-      const res = await shareOrDownloadReceipt(bill, {
-        scale: 1,
-        isReprint,
-      });
-
-      if (res.action === 'shared') {
-        recordReprint('share');
-        setStatusMessage(
-          'Receipt passed to your device’s share menu. If saving for Fun Print, choose "Save Image" (to Photos), then open Fun Print and tap "Print Image".'
-        );
-      } else if (res.action === 'cancelled') {
-        // User dismissed the share sheet: leave preview intact without error
-        return;
-      } else if (res.action === 'downloaded') {
-        recordReprint('download');
-        setStatusMessage(
-          'Receipt image downloaded (384px). Tap "View Full PNG" or use Fun Print "Print Image".'
-        );
-      } else if (res.action === 'failed') {
-        if (typeof window !== 'undefined') {
-          /* eslint-disable-next-line @next/next/no-location-assign-relative-destination */
-          window.location.assign(printViewUrl);
-        }
-      }
-    } catch (err: unknown) {
-      if (isAbortError(err)) return;
-      console.error('Fun Print workflow error:', err);
-      if (typeof window !== 'undefined') {
-        /* eslint-disable-next-line @next/next/no-location-assign-relative-destination */
-        window.location.assign(printViewUrl);
-      }
-    } finally {
-      setProcessing(false);
-    }
+    // Navigate in same tab via client-side routing to avoid triggering Android's "Open with" app chooser
+    router.push(printViewUrl);
   };
 
   const handleDownloadImage = async () => {
@@ -146,7 +104,8 @@ export default function ThermalBillModal({
 
   const handleViewFullImage = () => {
     recordReprint('view_full_png');
-    window.open(printViewUrl, '_blank');
+    // Navigate in same tab rather than window.open('_blank') to prevent Android OS "Open with" dialogue
+    router.push(printViewUrl);
   };
 
   const handleCopyImage = async () => {
@@ -480,17 +439,15 @@ export default function ThermalBillModal({
             <span className="muted">Target: <b>58 mm / MX11 Mini Printer (384px)</b></span>
             <a
               href={launchInfo.url}
-              target="_blank"
-              rel="noopener noreferrer"
               className="chip"
               style={{ fontSize: 11, padding: '4px 10px', textDecoration: 'none' }}
-              title="Deliberate tap opens Fun Print or app store. Note: hardware intent launch is pending physical device verification."
+              title="Fun Print App info"
             >
               ↗ {launchInfo.label}
             </a>
           </div>
           <small className="muted" style={{ display: 'block', marginTop: 4 }}>
-            * Note: Sending to Fun Print shares or saves the 384px receipt image. Actual Bluetooth printing is performed inside the Fun Print app.
+            * Note: To print on your MX11, tap &ldquo;{isReprint ? 'Reprint with Fun Print' : 'Print Bill with Fun Print'}&rdquo; below, then in Fun Print&rsquo;s browser menu (⋮), tap &ldquo;Print Current Page&rdquo;.
           </small>
         </div>
 

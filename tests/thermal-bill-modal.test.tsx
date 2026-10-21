@@ -4,6 +4,17 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import ThermalBillModal from '../src/components/staff/ThermalBillModal';
 import type { Bill } from '../src/lib/billing';
 
+const mockPush = vi.fn();
+
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({
+    push: mockPush,
+    replace: vi.fn(),
+    prefetch: vi.fn(),
+    back: vi.fn(),
+  }),
+}));
+
 const mockBill: Bill = {
   id: 'b-999',
   order_id: 'ord-888',
@@ -170,5 +181,30 @@ describe('ThermalBillModal Component (Mobile Fun Print Workflow)', () => {
       value: origUA,
       configurable: true,
     });
+  });
+
+  it('navigates in same tab without window.open or target="_blank" when clicking View Full PNG or image', () => {
+    const windowOpenSpy = vi.spyOn(window, 'open');
+    const onClose = vi.fn();
+    render(<ThermalBillModal bill={mockBill} onClose={onClose} isReprint={false} />);
+
+    // View Full PNG button
+    const viewBtn = screen.getByRole('button', { name: /View Full PNG/i });
+    fireEvent.click(viewBtn);
+    expect(windowOpenSpy).not.toHaveBeenCalled();
+    expect(mockPush).toHaveBeenCalledWith('/staff/bills/b-999/print');
+
+    // Image preview click
+    mockPush.mockClear();
+    const receiptImg = screen.getByRole('img', { name: /Receipt Bill #UB-01050/i });
+    fireEvent.click(receiptImg);
+    expect(windowOpenSpy).not.toHaveBeenCalled();
+    expect(mockPush).toHaveBeenCalledWith('/staff/bills/b-999/print');
+
+    // Fun Print link must NOT use target="_blank"
+    const link = screen.getByRole('link', { name: /Open Fun Print|Fun Print App/i });
+    expect(link.getAttribute('target')).toBeNull();
+
+    windowOpenSpy.mockRestore();
   });
 });
