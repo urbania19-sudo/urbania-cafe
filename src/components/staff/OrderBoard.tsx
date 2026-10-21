@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { SAMPLE_BILL, type Bill } from '@/lib/billing';
+import { type Bill } from '@/lib/billing';
 import ThermalBillModal from '@/components/staff/ThermalBillModal';
 import ManualOrderModal from '@/components/staff/ManualOrderModal';
 
@@ -36,16 +36,17 @@ type TableOption = {
 
 const next: Record<string, string | undefined> = {
   NEW: 'ACCEPTED',
-  ACCEPTED: 'PREPARING',
-  PREPARING: 'READY',
+  ACCEPTED: 'COMPLETED',
+  // Backward compatibility in case existing orders in database have PREPARING or READY status
+  PREPARING: 'COMPLETED',
   READY: 'COMPLETED',
 };
 
 const action: Record<string, string> = {
-  NEW: 'Accept order',
-  ACCEPTED: 'Start preparing',
-  PREPARING: 'Mark ready',
-  READY: 'Mark completed',
+  NEW: 'Accept Order',
+  ACCEPTED: 'Completed',
+  PREPARING: 'Completed',
+  READY: 'Completed',
 };
 
 export default function OrderBoard({
@@ -65,6 +66,7 @@ export default function OrderBoard({
   const [adding, setAdding] = useState('');
   const [activeBill, setActiveBill] = useState<{ bill: Bill; isReprint: boolean } | null>(null);
   const [showManualModal, setShowManualModal] = useState(false);
+  const [filterTab, setFilterTab] = useState<'all' | 'active' | 'completed'>('all');
 
   const nameOf = (id: string, o?: Order) =>
     menu.find((m) => m.id === id)?.name ??
@@ -75,6 +77,16 @@ export default function OrderBoard({
     ...order,
     status: statusById[order.id] ?? order.status,
   }));
+
+  const activeOrders = orders.filter((o) => ['NEW', 'ACCEPTED', 'PREPARING', 'READY'].includes(o.status));
+  const completedOrders = orders.filter((o) => o.status === 'COMPLETED');
+
+  const visibleOrders =
+    filterTab === 'active'
+      ? activeOrders
+      : filterTab === 'completed'
+      ? completedOrders
+      : [...activeOrders, ...completedOrders];
 
   useEffect(() => {
     const timer = window.setInterval(() => router.refresh(), 15000);
@@ -166,14 +178,12 @@ export default function OrderBoard({
 
   async function openBill(o: Order) {
     if (o.status === 'NEW') {
-      setError(`Please accept Order #${o.order_number} before generating its bill.`);
+      setError(`Please accept Order #${o.order_number} before viewing receipt.`);
       return;
     }
     setBusy(o.id);
     setError('');
     try {
-      // If the order has already been billed, fetch the existing bill (read-only query)
-      // This works seamlessly in both preview and production environments
       if (o.billed_at) {
         const res = await fetch(`/api/staff/orders/${o.id}/bill`);
         const data = await res.json();
@@ -193,17 +203,17 @@ export default function OrderBoard({
       const data = await res.json();
       if (!res.ok || !data.ok) {
         if (data.code === 'PREVIEW_READ_ONLY') {
-          throw new Error('Preview mode is read-only to protect live café data. Use "🖨️ Test Print" to test Fun Print thermal printing!');
+          throw new Error('Preview mode is read-only to protect live café data.');
         }
-        throw new Error(data.error || 'Failed to generate bill');
+        throw new Error(data.error || 'Failed to load receipt');
       }
       setActiveBill({
         bill: data.bill,
         isReprint: Boolean(data.already_issued || o.billed_at),
       });
     } catch (err) {
-      console.error('Billing error:', err);
-      setError(err instanceof Error ? err.message : 'Could not generate bill.');
+      console.error('Receipt view error:', err);
+      setError(err instanceof Error ? err.message : 'Could not open receipt.');
     } finally {
       setBusy(undefined);
     }
@@ -241,18 +251,9 @@ export default function OrderBoard({
           </div>
           <h2 style={{ fontFamily: 'Georgia, serif', margin: '0 0 8px' }}>Waiting for orders</h2>
           <p className="muted" style={{ maxWidth: 420, margin: 'auto' }}>
-            This queue checks for new table and counter orders every 15 seconds.
+            This queue checks for new table and takeaway orders every 15 seconds.
           </p>
           <div style={{ marginTop: 20, display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
-            <button
-              type="button"
-              className="chip"
-              onClick={() => setActiveBill({ bill: SAMPLE_BILL, isReprint: false })}
-              style={{ padding: '10px 18px', fontSize: 14, borderColor: '#d5a84b88' }}
-              title="Test Fun Print 58mm thermal receipt printing"
-            >
-              🖨️ Test Thermal Print
-            </button>
             <button
               className="btn"
               onClick={() => setShowManualModal(true)}
@@ -298,31 +299,56 @@ export default function OrderBoard({
           justifyContent: 'space-between',
           alignItems: 'center',
           gap: 12,
-          marginBottom: 12,
+          marginBottom: 14,
           flexWrap: 'wrap',
         }}
       >
-        <span className="muted" style={{ fontSize: 13 }}>
-          {orders.length} active {orders.length === 1 ? 'ticket' : 'tickets'} in queue
-        </span>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
           <button
             type="button"
             className="chip"
-            onClick={() => setActiveBill({ bill: SAMPLE_BILL, isReprint: false })}
-            style={{ fontSize: 13, borderColor: '#d5a84b88' }}
-            title="Open test receipt for thermal printer calibration"
+            onClick={() => setFilterTab('all')}
+            style={
+              filterTab === 'all'
+                ? { background: 'var(--accent)', color: '#2b1b16', fontWeight: 700 }
+                : { fontSize: 13 }
+            }
           >
-            🖨️ Test Print
+            All ({orders.length})
           </button>
           <button
-            className="btn"
-            onClick={() => setShowManualModal(true)}
-            style={{ fontSize: 13, padding: '8px 16px' }}
+            type="button"
+            className="chip"
+            onClick={() => setFilterTab('active')}
+            style={
+              filterTab === 'active'
+                ? { background: 'var(--accent)', color: '#2b1b16', fontWeight: 700 }
+                : { fontSize: 13 }
+            }
           >
-            + Counter / Takeaway Order
+            Active ({activeOrders.length})
+          </button>
+          <button
+            type="button"
+            className="chip"
+            onClick={() => setFilterTab('completed')}
+            style={
+              filterTab === 'completed'
+                ? { background: 'var(--accent)', color: '#2b1b16', fontWeight: 700 }
+                : { fontSize: 13 }
+            }
+          >
+            Completed ({completedOrders.length})
           </button>
         </div>
+
+        <button
+          className="btn"
+          onClick={() => setShowManualModal(true)}
+          style={{ fontSize: 13, padding: '8px 16px' }}
+        >
+          + Counter / Takeaway Order
+        </button>
       </div>
 
       <section style={{ display: 'grid', gap: 12 }}>
@@ -331,33 +357,75 @@ export default function OrderBoard({
             {error}
           </p>
         )}
-        {orders.map((o) => {
+        {visibleOrders.map((o) => {
           const following = next[o.status];
-          const isEligibleForBill = o.status !== 'NEW' && o.status !== 'CANCELLED';
+          const isCompleted = o.status === 'COMPLETED';
+          const canViewReceipt = isCompleted || Boolean(o.billed_at);
 
           return (
-            <article className="card" key={o.id} style={{ padding: 18 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'start' }}>
-                <div>
-                  <span style={{ color: 'var(--accent)', fontSize: 12, letterSpacing: '.12em', fontWeight: 600 }}>
+            <article className="card" key={o.id} style={{ padding: 18, minWidth: 0 }}>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  gap: 12,
+                  alignItems: 'start',
+                  flexWrap: 'wrap',
+                }}
+              >
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <span
+                    style={{
+                      color: 'var(--accent)',
+                      fontSize: 12,
+                      letterSpacing: '.12em',
+                      fontWeight: 600,
+                      display: 'block',
+                      overflowWrap: 'break-word',
+                    }}
+                  >
                     {o.cafe_tables?.label
                       ? `TABLE · ${o.cafe_tables.label}`
-                      : (o.service_mode ? o.service_mode.toUpperCase().replace('_', ' ') : 'COUNTER / TAKEAWAY')}
+                      : o.service_mode
+                      ? o.service_mode.toUpperCase().replace('_', ' ')
+                      : 'COUNTER / TAKEAWAY'}
                   </span>
-                  <h2 style={{ fontFamily: 'Georgia, serif', margin: '5px 0' }}>Order #{o.order_number}</h2>
-                  <p className="muted" style={{ margin: '0 0 4px' }}>
+                  <h2
+                    style={{
+                      fontFamily: 'Georgia, serif',
+                      margin: '5px 0',
+                      fontSize: 'clamp(1.2rem, 4vw, 1.5rem)',
+                      overflowWrap: 'break-word',
+                    }}
+                  >
+                    Order #{o.order_number}
+                  </h2>
+                  <p className="muted" style={{ margin: '0 0 4px', overflowWrap: 'break-word' }}>
                     {o.customer_name || 'Guest'} · {o.guest_count ?? 1}{' '}
                     {o.guest_count === 1 ? 'person' : 'people'}
                   </p>
                 </div>
-                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                   {o.billed_at && (
                     <span className="chip" style={{ fontSize: 11, borderColor: '#d5a84b66', color: 'var(--accent)' }}>
                       ✓ Billed
                     </span>
                   )}
-                  <span className="chip" style={{ color: 'var(--accent)' }}>
-                    {o.status}
+                  <span
+                    className="chip"
+                    style={{
+                      color: isCompleted ? '#10b981' : o.status === 'ACCEPTED' ? '#3b82f6' : 'var(--accent)',
+                      borderColor: isCompleted ? '#10b98144' : o.status === 'ACCEPTED' ? '#3b82f644' : 'var(--line)',
+                      fontWeight: 600,
+                    }}
+                  >
+                    {o.status === 'NEW'
+                      ? 'Order Placed'
+                      : o.status === 'ACCEPTED'
+                      ? 'Accepted'
+                      : o.status === 'COMPLETED'
+                      ? 'Completed'
+                      : o.status}
                   </span>
                 </div>
               </div>
@@ -372,14 +440,15 @@ export default function OrderBoard({
                         alignItems: 'center',
                         justifyContent: 'space-between',
                         gap: 8,
+                        flexWrap: 'wrap',
                       }}
                     >
-                      <span>{nameOf(id, o)}</span>
-                      <span>
+                      <span style={{ minWidth: 0, flex: 1, overflowWrap: 'break-word' }}>{nameOf(id, o)}</span>
+                      <span style={{ display: 'flex', alignItems: 'center' }}>
                         <button className="chip" aria-label="Less" onClick={() => setQty(id, -1)}>
                           −
                         </button>
-                        <span style={{ padding: '0 10px' }}>{q}</span>
+                        <span style={{ padding: '0 10px', fontWeight: 700 }}>{q}</span>
                         <button className="chip" aria-label="More" onClick={() => setQty(id, 1)}>
                           +
                         </button>
@@ -400,6 +469,7 @@ export default function OrderBoard({
                       border: '1px solid var(--line)',
                       background: '#ffffff10',
                       color: 'var(--ink)',
+                      width: '100%',
                     }}
                   >
                     <option value="">+ Add an item…</option>
@@ -411,7 +481,7 @@ export default function OrderBoard({
                         </option>
                       ))}
                   </select>
-                  <div style={{ display: 'flex', gap: 8 }}>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                     <button className="btn" disabled={busy === o.id} onClick={saveEdit}>
                       {busy === o.id ? 'Saving…' : 'Save changes'}
                     </button>
@@ -421,9 +491,9 @@ export default function OrderBoard({
                   </div>
                 </div>
               ) : (
-                <ul className="muted" style={{ paddingLeft: 20, lineHeight: 1.7 }}>
+                <ul className="muted" style={{ paddingLeft: 20, margin: '10px 0', lineHeight: 1.6, overflowWrap: 'break-word' }}>
                   {o.order_items.map((i, n) => (
-                    <li key={n}>
+                    <li key={n} style={{ overflowWrap: 'break-word' }}>
                       {i.quantity}× {i.item_name_snapshot}
                     </li>
                   ))}
@@ -441,32 +511,36 @@ export default function OrderBoard({
                   flexWrap: 'wrap',
                 }}
               >
-                <b>₹{(o.total_paise / 100).toFixed(2)}</b>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                <b style={{ fontSize: '1.15rem' }}>₹{(o.total_paise / 100).toFixed(2)}</b>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center' }}>
                   {o.status === 'NEW' && (
                     <button className="chip" disabled={busy === o.id} onClick={() => reject(o)}>
                       Reject
                     </button>
                   )}
-                  {['NEW', 'ACCEPTED', 'PREPARING'].includes(o.status) && editing?.id !== o.id && (
+                  {['NEW', 'ACCEPTED'].includes(o.status) && editing?.id !== o.id && (
                     <button className="chip" onClick={() => startEdit(o)}>
                       Edit items
                     </button>
                   )}
-                  {isEligibleForBill && (
+                  {following && (
                     <button
-                      className="chip"
+                      className="btn"
                       disabled={busy === o.id}
-                      onClick={() => openBill(o)}
-                      style={{ fontWeight: 600, borderColor: '#d5a84b88' }}
-                      title="Generate and print 58mm thermal receipt"
+                      onClick={() => advance(o)}
                     >
-                      {busy === o.id ? 'Loading…' : o.billed_at ? '🧾 Reprint Bill' : '🧾 Print Bill'}
+                      {busy === o.id ? 'Updating…' : action[o.status]}
                     </button>
                   )}
-                  {following && (
-                    <button className="btn" disabled={busy === o.id} onClick={() => advance(o)}>
-                      {busy === o.id ? 'Updating…' : action[o.status]}
+                  {canViewReceipt && (
+                    <button
+                      className="btn"
+                      disabled={busy === o.id}
+                      onClick={() => openBill(o)}
+                      style={{ fontWeight: 700 }}
+                      title="View clean receipt image"
+                    >
+                      {busy === o.id ? 'Loading…' : 'View Image'}
                     </button>
                   )}
                 </div>

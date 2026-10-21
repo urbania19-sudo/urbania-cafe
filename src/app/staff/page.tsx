@@ -18,30 +18,67 @@ export default async function Staff() {
     .maybeSingle();
   if (!profile) redirect('/staff/login');
 
-  let orders: never[] = [];
+  let orders: any[] = [];
   let error: unknown = null;
 
   // Attempt query with billed_at; if column not yet applied via migration, fall back gracefully
-  const resWithBilled = await db
-    .from('orders')
-    .select(
-      'id,order_number,status,customer_name,guest_count,total_paise,created_at,billed_at,cafe_tables(label),order_items(menu_item_id,item_name_snapshot,quantity)'
-    )
-    .in('status', ['NEW', 'ACCEPTED', 'PREPARING', 'READY'])
-    .order('created_at');
-
-  if (resWithBilled.error) {
-    const fallbackRes = await db
+  const [activeRes, completedRes] = await Promise.all([
+    db
       .from('orders')
       .select(
-        'id,order_number,status,customer_name,guest_count,total_paise,created_at,cafe_tables(label),order_items(menu_item_id,item_name_snapshot,quantity)'
+        'id,order_number,status,customer_name,guest_count,total_paise,created_at,billed_at,cafe_tables(label),order_items(menu_item_id,item_name_snapshot,quantity)'
       )
       .in('status', ['NEW', 'ACCEPTED', 'PREPARING', 'READY'])
-      .order('created_at');
-    orders = (fallbackRes.data ?? []) as never[];
-    error = fallbackRes.error;
+      .order('created_at'),
+    db
+      .from('orders')
+      .select(
+        'id,order_number,status,customer_name,guest_count,total_paise,created_at,billed_at,cafe_tables(label),order_items(menu_item_id,item_name_snapshot,quantity)'
+      )
+      .eq('status', 'COMPLETED')
+      .order('created_at', { ascending: false })
+      .limit(15),
+  ]);
+
+  if (activeRes.error || completedRes.error) {
+    const [fallbackActive, fallbackCompleted] = await Promise.all([
+      db
+        .from('orders')
+        .select(
+          'id,order_number,status,customer_name,guest_count,total_paise,created_at,cafe_tables(label),order_items(menu_item_id,item_name_snapshot,quantity)'
+        )
+        .in('status', ['NEW', 'ACCEPTED', 'PREPARING', 'READY'])
+        .order('created_at'),
+      db
+        .from('orders')
+        .select(
+          'id,order_number,status,customer_name,guest_count,total_paise,created_at,cafe_tables(label),order_items(menu_item_id,item_name_snapshot,quantity)'
+        )
+        .eq('status', 'COMPLETED')
+        .order('created_at', { ascending: false })
+        .limit(15),
+    ]);
+
+    const activeList = fallbackActive.data ?? [];
+    const completedList = fallbackCompleted.data ?? [];
+    const combined = [...activeList, ...completedList];
+    const seen = new Set<string>();
+    orders = combined.filter((o) => {
+      if (seen.has(o.id)) return false;
+      seen.add(o.id);
+      return true;
+    });
+    error = fallbackActive.error;
   } else {
-    orders = (resWithBilled.data ?? []) as never[];
+    const activeList = activeRes.data ?? [];
+    const completedList = completedRes.data ?? [];
+    const combined = [...activeList, ...completedList];
+    const seen = new Set<string>();
+    orders = combined.filter((o) => {
+      if (seen.has(o.id)) return false;
+      seen.add(o.id);
+      return true;
+    });
   }
 
   const { data: menu } = await db
@@ -54,6 +91,8 @@ export default async function Staff() {
     .select('id,table_number,label')
     .eq('is_active', true)
     .order('table_number');
+
+  const activeCount = orders.filter((o) => o.status !== 'COMPLETED').length;
 
   return (
     <main className="shell" style={{ maxWidth: 1060, paddingTop: 32 }}>
@@ -88,15 +127,15 @@ export default async function Staff() {
               lineHeight: 0.95,
             }}
           >
-            Orders to prepare
+            Live Order Queue
           </h1>
           <p className="muted" style={{ marginBottom: 0 }}>
-            New table orders arrive here automatically.
+            New table and takeaway orders arrive here automatically.
           </p>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           <span className="chip" style={{ color: 'var(--accent)' }}>
-            {orders.length} active
+            {activeCount} active
           </span>
           <LogoutButton to="/staff/login" />
         </div>
@@ -111,10 +150,9 @@ export default async function Staff() {
         }}
       >
         {[
-          ['1', 'New', 'Accept incoming order'],
-          ['2', 'Preparing', 'Start making it'],
-          ['3', 'Ready', 'Take it to the table'],
-          ['4', 'Completed', 'Close the ticket & bill'],
+          ['1', 'Order Placed', 'Accept incoming order'],
+          ['2', 'Accepted', 'Prepare & fulfill order'],
+          ['3', 'Completed', 'Mark done & View Image'],
         ].map(([n, label, info]) => (
           <div className="card" style={{ padding: 14 }} key={n}>
             <span style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 800 }}>

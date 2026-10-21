@@ -213,7 +213,7 @@ export default function MenuManager({
         style={{ padding: 16, margin: '14px 0', display: 'grid', gap: 12 }}
       >
         <b style={{ fontFamily: 'Georgia, serif', fontSize: '1.2rem' }}>Add new menu dish</b>
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2fr) minmax(120px, 1fr)', gap: 10 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
           <input
             required
             minLength={2}
@@ -348,7 +348,8 @@ export default function MenuManager({
                     padding: 16,
                     display: 'grid',
                     gap: 12,
-                    gridTemplateColumns: 'minmax(0, 1fr) auto',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                    minWidth: 0,
                     alignItems: 'start',
                   }}
                   key={i.id}
@@ -389,7 +390,7 @@ export default function MenuManager({
                           🍽️
                         </div>
                       )}
-                      <div style={{ flex: 1 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
                         <label style={{ display: 'block', fontSize: 11, color: 'var(--accent)', fontWeight: 700 }}>
                           Dish Name
                         </label>
@@ -401,7 +402,7 @@ export default function MenuManager({
                       </div>
                     </div>
 
-                    <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr 1fr', gap: 10, alignItems: 'center' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: 10, alignItems: 'center' }}>
                       <div>
                         <label style={{ display: 'block', fontSize: 11, color: 'var(--accent)', fontWeight: 700 }}>
                           Price (₹)

@@ -255,7 +255,7 @@ export default function ManualOrderModal({
 
         {/* Table Selection for Dine-in */}
         {serviceMode === 'dine_in' && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 10, marginBottom: 14 }}>
             <div>
               <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Select Table</label>
               <select
@@ -300,7 +300,7 @@ export default function ManualOrderModal({
         )}
 
         {/* Customer Details */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 10, marginBottom: 14 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 10, marginBottom: 14 }}>
           <div>
             <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Customer Name (Optional)</label>
             <input
@@ -343,7 +343,7 @@ export default function ManualOrderModal({
           <strong style={{ display: 'block', fontSize: 13, marginBottom: 8 }}>Add Items to Order</strong>
 
           {/* Quick Catalogue Item Picker */}
-          <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
             <select
               value={selectedMenuItemId}
               onChange={(e) => setSelectedMenuItemId(e.target.value)}
@@ -380,7 +380,7 @@ export default function ManualOrderModal({
           ) : (
             <div style={{ padding: 12, background: '#ffffff08', borderRadius: 8, marginTop: 8 }}>
               <strong style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>Custom Dish or Charge</strong>
-              <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 0.8fr', gap: 8, marginBottom: 8 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))', gap: 8, marginBottom: 8 }}>
                 <input
                   type="text"
                   placeholder="Custom Item Name"
@@ -474,9 +474,11 @@ export default function ManualOrderModal({
                     padding: '8px 12px',
                     borderBottom: idx < items.length - 1 ? '1px solid var(--line)' : 'none',
                     fontSize: 13,
+                    gap: 8,
+                    flexWrap: 'wrap',
                   }}
                 >
-                  <div style={{ flex: 1 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
                     <strong>{item.name}</strong>
                     {item.isCustom && <span className="chip" style={{ fontSize: 9, marginLeft: 6 }}>Custom</span>}
                     {item.note && <div className="muted" style={{ fontSize: 11 }}>Note: {item.note}</div>}
