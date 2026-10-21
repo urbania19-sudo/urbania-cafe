@@ -171,7 +171,8 @@ export default function OrderBoard({
       setStatusById((v) => ({ ...v, [o.id]: status }));
       router.refresh();
     } else {
-      setError('Could not update this order. Refresh and try again.');
+      const data = await r.json().catch(() => null);
+      setError(data?.error ?? 'Could not update this order. Refresh and try again.');
     }
     setBusy(undefined);
   }
