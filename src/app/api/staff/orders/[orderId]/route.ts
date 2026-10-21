@@ -85,9 +85,30 @@ export async function PATCH(
     // If direct transition failed due to legacy database transition restriction,
     // bridge through intermediate legacy states (ACCEPTED -> PREPARING -> READY -> COMPLETED)
     const directErrMsg = directRes.error.message || '';
+    const lowerMsg = directErrMsg.toLowerCase();
+
+    // Check for authorization failures: DO NOT attempt bridge
+    if (lowerMsg.includes('unauthorized') || lowerMsg.includes('permission')) {
+      console.error(`Authorization failure updating order ${orderId} to COMPLETED:`, directErrMsg);
+      return NextResponse.json(
+        { error: 'Unauthorized: staff or admin permissions required to complete orders.' },
+        { status: 403 }
+      );
+    }
+
+    // Check for connectivity or temporary service failures: DO NOT attempt bridge
+    if (lowerMsg.includes('connection') || lowerMsg.includes('timeout') || lowerMsg.includes('fetch failed')) {
+      console.error(`Database connectivity error updating order ${orderId} to COMPLETED:`, directErrMsg);
+      return NextResponse.json(
+        { error: 'Database service is temporarily unavailable. Please try again shortly.' },
+        { status: 503 }
+      );
+    }
+
+    // Only attempt the legacy intermediate-state bridge if the actual database error specifically indicates an invalid status transition
     const isTransitionError =
-      directErrMsg.toLowerCase().includes('invalid transition') ||
-      directErrMsg.toLowerCase().includes('invalid order status transition');
+      lowerMsg.includes('invalid transition') ||
+      lowerMsg.includes('invalid order status transition');
 
     if (isTransitionError) {
       console.warn(
@@ -142,7 +163,7 @@ export async function PATCH(
       }
     }
 
-    // Direct transition failed with non-transition error (e.g., unauthorized)
+    // Direct transition failed with non-transition error (e.g., lock conflict, trigger error)
     console.error(`Failed to update order ${orderId} to COMPLETED:`, directErrMsg);
     return NextResponse.json({ error: directErrMsg || 'Unable to complete order' }, { status: 400 });
   }
@@ -156,7 +177,17 @@ export async function PATCH(
 
   if (error) {
     console.error(`Failed to update order ${orderId} status to ${targetStatus}:`, error.message);
-    return NextResponse.json({ error: error.message || 'Unable to update order' }, { status: 400 });
+    const msg = error.message || '';
+    const lower = msg.toLowerCase();
+    const isAuth = lower.includes('unauthorized') || lower.includes('permission');
+    const isConn = lower.includes('connection') || lower.includes('timeout');
+    const httpStatus = isAuth ? 403 : isConn ? 503 : 400;
+    const sanitizedMsg = isAuth
+      ? 'Unauthorized: staff or admin permissions required.'
+      : isConn
+      ? 'Database service is temporarily unavailable. Please try again shortly.'
+      : msg || 'Unable to update order';
+    return NextResponse.json({ error: sanitizedMsg }, { status: httpStatus });
   }
 
   return NextResponse.json({ ok: true, status: targetStatus });

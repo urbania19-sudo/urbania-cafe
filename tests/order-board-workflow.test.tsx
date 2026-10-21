@@ -259,4 +259,122 @@ describe('OrderBoard Simplified Workflow & Clean Interface', () => {
     expect(screen.queryByText('Order #101')).toBeNull();
     expect(screen.getByText('Order #102')).toBeInTheDocument();
   });
+
+  it('renders high-contrast dropdown selector with dark brown text on white options and light color-scheme', () => {
+    const orders = [
+      {
+        id: 'ord-edit-test',
+        order_number: 105,
+        status: 'ACCEPTED',
+        customer_name: 'Priya',
+        guest_count: 2,
+        total_paise: 16000,
+        created_at: new Date().toISOString(),
+        billed_at: null,
+        service_mode: 'dine_in',
+        order_source: 'qr',
+        cafe_tables: { label: 'Table 1' },
+        order_items: [{ menu_item_id: 'item-1', item_name_snapshot: 'Cold Coffee Frappe', quantity: 1 }],
+      },
+    ];
+
+    render(<OrderBoard initial={orders} menu={mockMenu} tables={mockTables} />);
+
+    // Click "Edit items" to show item editor
+    fireEvent.click(screen.getByRole('button', { name: 'Edit items' }));
+
+    // Select element exists with accessible label
+    const select = screen.getByRole('combobox', { name: 'Add an item to order' });
+    expect(select).toBeInTheDocument();
+
+    // Verify select styles: dark-brown and gold theme with light color-scheme
+    expect(select.style.colorScheme).toBe('light');
+    expect(select.style.width).toBe('100%');
+
+    // Verify options: high-contrast dark brown text (#2b1b16) on white background (#ffffff)
+    const options = select.querySelectorAll('option');
+    expect(options.length).toBeGreaterThanOrEqual(2); // placeholder + available item-2
+
+    // Placeholder option
+    expect(options[0].textContent).toBe('+ Add an item…');
+    expect(options[0].style.color).toBe('rgb(109, 84, 69)'); // #6d5445
+    expect(options[0].style.backgroundColor).toBe('rgb(251, 248, 242)'); // #fbf8f2
+
+    // Menu item option (Grilled Sandwich · ₹120.00)
+    expect(options[1].textContent).toContain('Grilled Sandwich · ₹120.00');
+    expect(options[1].style.color).toBe('rgb(43, 27, 22)'); // #2b1b16
+    expect(options[1].style.backgroundColor).toBe('rgb(255, 255, 255)'); // #ffffff
+
+    // Add item by selecting it
+    fireEvent.change(select, { target: { value: 'item-2' } });
+
+    // Item-2 is now in Selected Items list
+    expect(screen.getByText('Grilled Sandwich')).toBeInTheDocument();
+  });
+
+  it('surfaces meaningful backend error when order completion fails', async () => {
+    globalFetch.mockResolvedValueOnce({
+      ok: false,
+      json: async () => ({ error: 'Order #106 has an active bill and cannot be transitioned' }),
+    });
+
+    const orders = [
+      {
+        id: 'ord-fail',
+        order_number: 106,
+        status: 'ACCEPTED',
+        customer_name: 'Priya',
+        guest_count: 2,
+        total_paise: 16000,
+        created_at: new Date().toISOString(),
+        billed_at: null,
+        service_mode: 'dine_in',
+        order_source: 'qr',
+        cafe_tables: { label: 'Table 1' },
+        order_items: [{ menu_item_id: 'item-1', item_name_snapshot: 'Cold Coffee Frappe', quantity: 1 }],
+      },
+    ];
+
+    render(<OrderBoard initial={orders} menu={mockMenu} tables={mockTables} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Completed' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Order #106 has an active bill and cannot be transitioned')).toBeInTheDocument();
+    });
+  });
+
+  it('handles network errors gracefully in a finally block without leaving buttons stuck in busy state', async () => {
+    globalFetch.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+
+    const orders = [
+      {
+        id: 'ord-net-fail',
+        order_number: 107,
+        status: 'ACCEPTED',
+        customer_name: 'Priya',
+        guest_count: 2,
+        total_paise: 16000,
+        created_at: new Date().toISOString(),
+        billed_at: null,
+        service_mode: 'dine_in',
+        order_source: 'qr',
+        cafe_tables: { label: 'Table 1' },
+        order_items: [{ menu_item_id: 'item-1', item_name_snapshot: 'Cold Coffee Frappe', quantity: 1 }],
+      },
+    ];
+
+    render(<OrderBoard initial={orders} menu={mockMenu} tables={mockTables} />);
+
+    const completedBtn = screen.getByRole('button', { name: 'Completed' });
+    fireEvent.click(completedBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Network connection error/i)).toBeInTheDocument();
+    });
+
+    // Button must NOT be stuck in "Updating…" or disabled
+    expect(screen.getByRole('button', { name: 'Completed' })).not.toBeDisabled();
+    expect(screen.queryByText('Updating…')).toBeNull();
+  });
 });

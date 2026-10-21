@@ -255,6 +255,157 @@ describe('Order Status Completion & Edit Items API Routes', () => {
       expect(mockRpc).toHaveBeenCalledTimes(2);
     });
 
+    it('halts and returns error if step 2 (READY) fails during legacy bridge, confirming step 3 is NOT called', async () => {
+      const mockRpc = vi
+        .fn()
+        // 1. Direct transition fails with invalid transition
+        .mockResolvedValueOnce({ data: null, error: { message: 'invalid transition' } })
+        // 2. Step 1: PREPARING succeeds
+        .mockResolvedValueOnce({ data: { status: 'PREPARING' }, error: null })
+        // 3. Step 2: READY fails
+        .mockResolvedValueOnce({ data: null, error: { message: 'Kitchen queue full' } });
+
+      (authDb as any).mockResolvedValue({
+        auth: {
+          getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'staff-user-1' } }, error: null }),
+        },
+        from: vi.fn().mockReturnValue({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { id: mockOrderId, status: 'ACCEPTED', order_number: 107 },
+                error: null,
+              }),
+            }),
+          }),
+        }),
+        rpc: mockRpc,
+      });
+
+      const req = new NextRequest(`http://localhost/api/staff/orders/${mockOrderId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'COMPLETED' }),
+      });
+
+      const res = await updateOrderStatus(req, { params: Promise.resolve({ orderId: mockOrderId }) });
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toContain('Failed to transition order to Ready: Kitchen queue full');
+      // Exactly 3 calls: direct attempt, PREPARING, READY. Must NOT call step 3 (COMPLETED).
+      expect(mockRpc).toHaveBeenCalledTimes(3);
+    });
+
+    it('halts and returns error if step 3 (COMPLETED) fails during legacy bridge', async () => {
+      const mockRpc = vi
+        .fn()
+        // 1. Direct transition fails with invalid transition
+        .mockResolvedValueOnce({ data: null, error: { message: 'invalid transition' } })
+        // 2. Step 1: PREPARING succeeds
+        .mockResolvedValueOnce({ data: { status: 'PREPARING' }, error: null })
+        // 3. Step 2: READY succeeds
+        .mockResolvedValueOnce({ data: { status: 'READY' }, error: null })
+        // 4. Step 3: COMPLETED fails
+        .mockResolvedValueOnce({ data: null, error: { message: 'Database serialization error' } });
+
+      (authDb as any).mockResolvedValue({
+        auth: {
+          getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'staff-user-1' } }, error: null }),
+        },
+        from: vi.fn().mockReturnValue({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { id: mockOrderId, status: 'ACCEPTED', order_number: 108 },
+                error: null,
+              }),
+            }),
+          }),
+        }),
+        rpc: mockRpc,
+      });
+
+      const req = new NextRequest(`http://localhost/api/staff/orders/${mockOrderId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'COMPLETED' }),
+      });
+
+      const res = await updateOrderStatus(req, { params: Promise.resolve({ orderId: mockOrderId }) });
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toContain('Failed to complete order: Database serialization error');
+      expect(mockRpc).toHaveBeenCalledTimes(4);
+    });
+
+    it('does NOT attempt legacy bridge when direct transition fails due to authorization error (returns HTTP 403)', async () => {
+      const mockRpc = vi
+        .fn()
+        .mockResolvedValueOnce({ data: null, error: { message: 'Unauthorized: staff or admin permissions required' } });
+
+      (authDb as any).mockResolvedValue({
+        auth: {
+          getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'unauthorized-user' } }, error: null }),
+        },
+        from: vi.fn().mockReturnValue({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { id: mockOrderId, status: 'ACCEPTED', order_number: 109 },
+                error: null,
+              }),
+            }),
+          }),
+        }),
+        rpc: mockRpc,
+      });
+
+      const req = new NextRequest(`http://localhost/api/staff/orders/${mockOrderId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'COMPLETED' }),
+      });
+
+      const res = await updateOrderStatus(req, { params: Promise.resolve({ orderId: mockOrderId }) });
+      expect(res.status).toBe(403);
+      const data = await res.json();
+      expect(data.error).toContain('Unauthorized: staff or admin permissions required');
+      // Crucial: Must NOT attempt any legacy bridging on permission failures!
+      expect(mockRpc).toHaveBeenCalledTimes(1);
+    });
+
+    it('does NOT attempt legacy bridge when direct transition fails due to unrelated DB error (e.g. lock conflict)', async () => {
+      const mockRpc = vi
+        .fn()
+        .mockResolvedValueOnce({ data: null, error: { message: 'deadlock detected on relation orders' } });
+
+      (authDb as any).mockResolvedValue({
+        auth: {
+          getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'staff-user-1' } }, error: null }),
+        },
+        from: vi.fn().mockReturnValue({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { id: mockOrderId, status: 'ACCEPTED', order_number: 110 },
+                error: null,
+              }),
+            }),
+          }),
+        }),
+        rpc: mockRpc,
+      });
+
+      const req = new NextRequest(`http://localhost/api/staff/orders/${mockOrderId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'COMPLETED' }),
+      });
+
+      const res = await updateOrderStatus(req, { params: Promise.resolve({ orderId: mockOrderId }) });
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toContain('deadlock detected');
+      // Crucial: Must NOT attempt legacy bridging on deadlock/unrelated errors!
+      expect(mockRpc).toHaveBeenCalledTimes(1);
+    });
+
     it('is blocked by fail-closed Preview guard when VERCEL_ENV=preview', async () => {
       process.env.VERCEL_ENV = 'preview';
 
