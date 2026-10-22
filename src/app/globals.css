@@ -111,6 +111,7 @@ button {
 
 .category-scroller {
   display: flex;
+  align-items: center;
   gap: 8px;
   overflow-x: auto;
   overscroll-behavior-inline: contain;
@@ -120,10 +121,20 @@ button {
   touch-action: pan-x;
   width: 100%;
   max-width: 100%;
+  -webkit-overflow-scrolling: touch;
 }
 
 .category-scroller::-webkit-scrollbar {
   display: none;
+}
+
+.category-scroller > .chip {
+  flex: 0 0 auto;
+  width: max-content;
+  max-width: none;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 
 .price {
