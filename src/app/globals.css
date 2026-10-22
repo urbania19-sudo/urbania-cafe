@@ -35,6 +35,20 @@ button, input, textarea, select {
   max-width: 100%;
 }
 
+select {
+  color-scheme: light;
+}
+
+select option {
+  color: #2b1b16;
+  background-color: #ffffff;
+}
+
+select option:disabled {
+  color: #6d5445;
+  background-color: #fbf8f2;
+}
+
 button {
   cursor: pointer;
   min-height: 44px;

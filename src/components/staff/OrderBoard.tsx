@@ -97,18 +97,25 @@ export default function OrderBoard({
     if (!confirm(`Reject order #${o.order_number}? The customer will see it as cancelled.`)) return;
     setBusy(o.id);
     setError('');
-    const r = await fetch(`/api/staff/orders/${o.id}`, {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ status: 'CANCELLED' }),
-    });
-    if (r.ok) {
-      setStatusById((v) => ({ ...v, [o.id]: 'CANCELLED' }));
-      router.refresh();
-    } else {
-      setError('Could not reject this order. Staff can only reject orders that are still new.');
+    try {
+      const r = await fetch(`/api/staff/orders/${o.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ status: 'CANCELLED' }),
+      });
+      const data = await r.json().catch(() => null);
+      if (r.ok && data?.ok) {
+        setStatusById((v) => ({ ...v, [o.id]: 'CANCELLED' }));
+        router.refresh();
+      } else {
+        setError(data?.error || 'Could not reject this order. Staff can only reject orders that are still new.');
+      }
+    } catch (err) {
+      console.error(`Network error rejecting order #${o.order_number}:`, err);
+      setError('Network connection error. Please check your internet connection and try again.');
+    } finally {
+      setBusy(undefined);
     }
-    setBusy(undefined);
   }
 
   function startEdit(o: Order) {
@@ -143,18 +150,25 @@ export default function OrderBoard({
     }
     setBusy(editing.id);
     setError('');
-    const r = await fetch(`/api/staff/orders/${editing.id}/items`, {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ items }),
-    });
-    if (r.ok) {
-      setEditing(null);
-      router.refresh();
-    } else {
-      setError((await r.json().catch(() => null))?.error ?? 'Could not save the changes.');
+    try {
+      const r = await fetch(`/api/staff/orders/${editing.id}/items`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ items }),
+      });
+      const data = await r.json().catch(() => null);
+      if (r.ok && data?.ok) {
+        setEditing(null);
+        router.refresh();
+      } else {
+        setError(data?.error ?? 'Could not save the changes.');
+      }
+    } catch (err) {
+      console.error('Network error saving order edits:', err);
+      setError('Network connection error. Please check your internet connection and try again.');
+    } finally {
+      setBusy(undefined);
     }
-    setBusy(undefined);
   }
 
   async function advance(o: Order) {
@@ -162,18 +176,27 @@ export default function OrderBoard({
     if (!status) return;
     setBusy(o.id);
     setError('');
-    const r = await fetch(`/api/staff/orders/${o.id}`, {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ status }),
-    });
-    if (r.ok) {
-      setStatusById((v) => ({ ...v, [o.id]: status }));
-      router.refresh();
-    } else {
-      setError('Could not update this order. Refresh and try again.');
+    try {
+      const r = await fetch(`/api/staff/orders/${o.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
+      const data = await r.json().catch(() => null);
+      if (r.ok && data?.ok) {
+        const confirmedStatus = data.status || status;
+        setStatusById((v) => ({ ...v, [o.id]: confirmedStatus }));
+        router.refresh();
+      } else {
+        const errorMsg = data?.error || `Could not update order #${o.order_number}. Refresh and try again.`;
+        setError(errorMsg);
+      }
+    } catch (err) {
+      console.error(`Network or unexpected error advancing order #${o.order_number}:`, err);
+      setError('Network connection error. Please check your internet connection and try again.');
+    } finally {
+      setBusy(undefined);
     }
-    setBusy(undefined);
   }
 
   async function openBill(o: Order) {
@@ -456,6 +479,7 @@ export default function OrderBoard({
                     </div>
                   ))}
                   <select
+                    aria-label="Add an item to order"
                     value={adding}
                     onChange={(e) => {
                       if (e.target.value) {
@@ -464,19 +488,42 @@ export default function OrderBoard({
                       setAdding('');
                     }}
                     style={{
-                      padding: 10,
+                      padding: '10px 14px',
                       borderRadius: 8,
-                      border: '1px solid var(--line)',
-                      background: '#ffffff10',
-                      color: 'var(--ink)',
+                      border: '1px solid var(--line, #ffffff24)',
+                      background: 'var(--card, #37241d)',
+                      color: 'var(--ink, #f5ead9)',
                       width: '100%',
+                      fontSize: 14,
+                      fontWeight: 500,
+                      outline: 'none',
+                      cursor: 'pointer',
+                      colorScheme: 'light',
                     }}
                   >
-                    <option value="">+ Add an item…</option>
+                    <option
+                      value=""
+                      style={{
+                        color: '#6d5445',
+                        backgroundColor: '#fbf8f2',
+                        fontWeight: 600,
+                      }}
+                    >
+                      + Add an item…
+                    </option>
                     {menu
                       .filter((m) => m.is_available && !(m.id in editing.qty))
                       .map((m) => (
-                        <option key={m.id} value={m.id}>
+                        <option
+                          key={m.id}
+                          value={m.id}
+                          style={{
+                            color: '#2b1b16',
+                            backgroundColor: '#ffffff',
+                            fontWeight: 500,
+                            padding: '8px 12px',
+                          }}
+                        >
                           {m.name} · ₹{(m.price_paise / 100).toFixed(2)}
                         </option>
                       ))}
