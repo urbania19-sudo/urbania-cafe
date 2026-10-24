@@ -36,6 +36,12 @@ Review RLS in Supabase’s policy tester: anonymous read of `orders` must fail; 
 
 Deploy to Vercel, add the environment variables, set the production domain in `NEXT_PUBLIC_SITE_URL`, and then reseed/retain the generated table tokens. Enable Supabase Realtime for `orders` before adding live dashboard subscriptions. The current dashboard’s browser refresh is its fallback; a production enhancement should add the requested Realtime subscription and status-management UI.
 
+### Staging & Vercel Preview Environments
+
+By default, Vercel Preview deployments enforce a fail-closed write guard (`src/lib/preview-guard.ts`) to prevent accidental modifications to live production café data. To test staff billing workflows (order acceptance, bill generation, thermal receipt printing, reprinting, cancellation) in Vercel Preview, configure an isolated Staging Supabase project.
+
+For step-by-step instructions on setting up an isolated staging database and configuring Preview environment variables, see [docs/staging-preview-guide.md](docs/staging-preview-guide.md).
+
 Supabase and Vercel free tiers, quotas, commercial terms, idle-project suspension, and bandwidth limits can change. Check current terms before use, keep periodic database exports, and retain printed QR cards securely. HTTPS, RLS, owner setup, all five QR links, a complete order, and an unauthenticated `/admin` redirect are the required production checklist.
 
 ## Current limitation
