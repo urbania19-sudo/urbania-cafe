@@ -81,7 +81,7 @@ export default async function AdminSettingsPage() {
         </div>
       </header>
 
-      <nav aria-label="Owner navigation" style={{ display: 'flex', gap: 10, overflowX: 'auto', padding: '16px 0' }}>
+      <nav className="admin-nav" aria-label="Owner navigation">
         <Link className="chip" href="/admin">
           Today’s service
         </Link>
@@ -91,8 +91,11 @@ export default async function AdminSettingsPage() {
         <Link className="chip" href="/admin/tables">
           Table QR codes
         </Link>
-        <Link className="chip" href="/admin/settings" style={{ background: 'var(--accent)', color: '#2b1b16' }}>
+        <Link className="chip" href="/admin/settings" style={{ background: 'var(--accent)', color: '#2b1b16', fontWeight: 700 }}>
           Settings & FSSAI
+        </Link>
+        <Link className="chip" href="/admin/reports">
+          Audit & reports
         </Link>
       </nav>
 

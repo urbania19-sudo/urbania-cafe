@@ -5,6 +5,32 @@ export interface ReceiptCanvasOptions {
   isReprint?: boolean;
 }
 
+export interface KitchenTicketOrderItem {
+  id?: string;
+  name?: string;
+  item_name_snapshot?: string;
+  quantity: number;
+  note?: string | null;
+  item_note?: string | null;
+  is_custom?: boolean;
+  selected_options?: { name: string }[];
+  selected_options_snapshot?: { name: string }[] | unknown;
+}
+
+export interface KitchenTicketOrder {
+  id: string;
+  order_number: number;
+  status?: string;
+  created_at?: string;
+  customer_name?: string | null;
+  guest_count?: number | null;
+  customer_note?: string | null;
+  service_mode?: string | null;
+  table_label?: string | null;
+  cafe_tables?: { label: string } | null;
+  order_items: KitchenTicketOrderItem[];
+}
+
 /**
  * Detects whether a string is an unconfigured template placeholder
  * like "Your Café", "Sample café ordering setup", or empty.
@@ -91,12 +117,11 @@ function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number)
  * Calculates total receipt height and renders the complete bill to an HTML5 canvas.
  * Target: 384 dots (48 mm printable area on 58 mm / 203 DPI mini thermal printers like MX11).
  *
- * Sizing & Layout Strategy:
- * - Substantially increased font sizes (20–30% larger) for maximum readability.
- * - Multi-line item layout gives dish names the full printable width in bold 18px,
- *   with quantity, rate, and amount aligned directly under column headers on the line below.
- * - Suppresses irrelevant placeholder taglines ("Your Café") naturally.
- * - Paper height grows dynamically with content; generous padding and tear-off margins prevent clipping.
+ * Optimizations:
+ * - Wasted blank thermal paper eliminated: tight, clean divider gaps and minimal margins.
+ * - Single FSSAI print: printed only once in top header, duplicate footer FSSAI removed.
+ * - Conditional GST: GST messages hidden when unregistered/pending; zero vertical space reserved.
+ * - Strict parity maintained between Pass 1 (dry-run measurement) and Pass 2 (drawing).
  */
 export function renderReceiptToCanvas(
   bill: Bill,
@@ -121,7 +146,6 @@ export function renderReceiptToCanvas(
   const fontSans = 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
 
   // Layout coordinate markers for 58 mm / 384px printhead
-  // 14px margin gives 356px usable width with comfortable borders
   const leftX = 14;
   const rightX = baseWidth - 14; // 370
   const centerX = baseWidth / 2; // 192
@@ -136,7 +160,7 @@ export function renderReceiptToCanvas(
   // Height dry-run calculation (Pass 1)
   // Keeps exact vertical parity with Pass 2 so canvas height perfectly wraps text
   // ---------------------------------------------------------------------------
-  let y = 18;
+  let y = 14;
 
   // Header height: Café legal name (22px bold)
   ctx.font = `bold 22px ${fontSans}`;
@@ -147,10 +171,10 @@ export function renderReceiptToCanvas(
   if (meaningfulTagline) {
     ctx.font = `italic bold 14px ${fontSans}`;
     const tagLines = wrapText(ctx, `(${meaningfulTagline})`, maxContentWidth);
-    y += tagLines.length * 20;
+    y += tagLines.length * 18;
   }
 
-  y += 6; // gap before address
+  y += 4; // compact gap before address
 
   // Address (14px sans)
   ctx.font = `14px ${fontSans}`;
@@ -161,34 +185,34 @@ export function renderReceiptToCanvas(
     biz.pincode ? `PIN: ${biz.pincode}` : "",
   ].filter(Boolean);
   const addressLines = wrapText(ctx, addressParts.join(", "), maxContentWidth);
-  y += addressLines.length * 20;
+  y += addressLines.length * 18;
 
-  if (biz.phone) y += 20;
+  if (biz.phone) y += 18;
 
-  // Header FSSAI Licence (14px bold mono)
-  if (biz.fssai_number) y += 21;
+  // Single FSSAI Licence Top Header (14px bold mono) — printed only once
+  if (biz.fssai_number) y += 20;
 
-  // GST Info (14px mono / sans)
-  if (biz.gst_status === "registered" && biz.gstin) y += 21;
-  else if (biz.gst_status === "not_registered") y += 20;
-  else if (biz.gst_status === "unconfirmed") y += 20;
+  // Conditional GST Info (14px mono) — ONLY displayed if registered with actual GSTIN
+  if (biz.gst_status === "registered" && biz.gstin) {
+    y += 20;
+  }
 
   // Divider + Document title (21px bold mono)
-  y += 8 + 18; // divider gap (26)
+  y += 6 + 14; // divider gap (20)
   y += 24;     // title font height
   if (bill.status === "cancelled") y += 20;
   if (isReprint) y += 20;
-  y += 6 + 18; // divider gap (24)
+  y += 6 + 14; // divider gap (20)
 
   // Metadata block (3 rows of 15px mono)
-  y += 22; // Bill No & Order No
-  y += 22; // Date & Time
-  y += 22; // Table & Dine-in
-  y += 8 + 20; // divider gap (28)
+  y += 20; // Bill No & Order No
+  y += 20; // Date & Time
+  y += 20; // Table & Dine-in
+  y += 6 + 14; // divider gap (20)
 
   // Table column headers (15px bold mono: ITEM, QTY, RATE, AMOUNT)
-  y += 20;
-  y += 8 + 20; // divider gap (28)
+  y += 18;
+  y += 6 + 14; // divider gap (20)
 
   // Items list (Multi-line item layout: 18px bold dish name + 16px pricing row)
   for (const item of bill.items_snapshot) {
@@ -196,47 +220,47 @@ export function renderReceiptToCanvas(
     const nameLines = wrapText(ctx, item.name, maxContentWidth);
     y += 22; // Line 1: dish name
     if (nameLines.length > 1) {
-      y += (nameLines.length - 1) * 21;
+      y += (nameLines.length - 1) * 20;
     }
 
     // Line 2: QTY, RATE, AMOUNT
-    y += 20;
+    y += 18;
 
     // Modifiers / options (14px italic mono)
     if (item.selected_options && item.selected_options.length > 0) {
       ctx.font = `italic 14px ${fontMono}`;
       const optText = `+ ${item.selected_options.map((m) => m.name).join(", ")}`;
       const optLines = wrapText(ctx, optText, maxContentWidth - 8);
-      y += optLines.length * 18;
+      y += optLines.length * 16;
     }
 
     // Preparation notes (14px italic sans)
     if (item.note) {
       ctx.font = `italic 14px ${fontSans}`;
       const noteLines = wrapText(ctx, `Note: ${item.note}`, maxContentWidth - 8);
-      y += noteLines.length * 18;
+      y += noteLines.length * 16;
     }
 
-    y += 10; // spacing between item blocks
+    y += 8; // spacing between item blocks
   }
 
   // Divider + Totals
-  y += 6 + 20; // divider gap (26)
-  y += 24;     // Subtotal / Bill Total (17px mono)
-  if (bill.tax_paise > 0 && biz.gst_status === "registered") y += 24; // GST (17px mono)
-  if (hasDiscount) y += 24; // Discount row (17px mono)
-  y += 8 + 22; // divider gap (30)
-  y += 32;     // TOTAL AMOUNT / AMOUNT TO PAY (22px bold mono)
-  y += 12 + 24; // divider gap (36)
+  y += 4 + 14; // divider gap (18)
+  y += 22;     // Subtotal / Bill Total (17px mono)
+  if (bill.tax_paise > 0 && biz.gst_status === "registered") y += 22; // GST (17px mono)
+  if (hasDiscount) y += 22; // Discount row (17px mono)
+  y += 6 + 16; // divider gap (22)
+  y += 28;     // TOTAL AMOUNT / AMOUNT TO PAY (22px bold mono)
+  y += 6 + 16; // divider gap (22)
 
-  // Footer & FSSAI declaration
+  // Footer text
   if (biz.bill_footer_text) {
     ctx.font = `italic 14px ${fontSans}`;
     const footerLines = wrapText(ctx, biz.bill_footer_text, maxContentWidth);
-    y += footerLines.length * 20;
+    y += footerLines.length * 18;
   }
-  y += 22; // FSSAI Licence No (14px bold mono)
-  y += 10; // Clean, minimal bottom margin to avoid wasting thermal paper
+  // No duplicate FSSAI in footer — single FSSAI printed in top header only
+  y += 8; // Clean, minimal bottom margin to avoid wasting thermal paper
 
   const totalHeight = Math.ceil(y);
   canvas.height = totalHeight * scale;
@@ -270,7 +294,7 @@ export function renderReceiptToCanvas(
   // ---------------------------------------------------------------------------
   // Drawing pass (Pass 2)
   // ---------------------------------------------------------------------------
-  let curY = 18;
+  let curY = 14;
 
   // 1. Café Legal Name (22px bold — prominent primary branding)
   renderCtx.font = `bold 22px ${fontSans}`;
@@ -287,51 +311,43 @@ export function renderReceiptToCanvas(
     const renderTagLines = wrapText(renderCtx, `(${meaningfulTagline})`, maxContentWidth);
     for (const line of renderTagLines) {
       renderCtx.fillText(line, centerX, curY);
-      curY += 20;
+      curY += 18;
     }
   }
 
-  curY += 6;
+  curY += 4;
 
   // 3. Address (14px sans)
   renderCtx.font = `14px ${fontSans}`;
   const renderAddressLines = wrapText(renderCtx, addressParts.join(", "), maxContentWidth);
   for (const line of renderAddressLines) {
     renderCtx.fillText(line, centerX, curY);
-    curY += 20;
+    curY += 18;
   }
 
   // 4. Phone (14px sans)
   if (biz.phone) {
     renderCtx.fillText(`Tel: ${biz.phone}`, centerX, curY);
-    curY += 20;
+    curY += 18;
   }
 
-  // 5. FSSAI Licence Top Header (14px bold mono)
+  // 5. Single FSSAI Licence Top Header (14px bold mono) — printed once
   if (biz.fssai_number) {
     renderCtx.font = `bold 14px ${fontMono}`;
     renderCtx.fillText(`FSSAI Lic No: ${biz.fssai_number}`, centerX, curY);
-    curY += 21;
+    curY += 20;
   }
 
-  // 6. GST Info (14px mono / sans)
+  // 6. Conditional GST Info (14px mono) — ONLY displayed if registered with actual GSTIN
   if (biz.gst_status === "registered" && biz.gstin) {
     renderCtx.font = `bold 14px ${fontMono}`;
     renderCtx.fillText(`GSTIN: ${biz.gstin}`, centerX, curY);
-    curY += 21;
-  } else if (biz.gst_status === "not_registered") {
-    renderCtx.font = `14px ${fontSans}`;
-    renderCtx.fillText("GST: Not Registered (Not a Tax Invoice)", centerX, curY);
-    curY += 20;
-  } else if (biz.gst_status === "unconfirmed") {
-    renderCtx.font = `14px ${fontSans}`;
-    renderCtx.fillText("GST: Pending Registration (Not a Tax Invoice)", centerX, curY);
     curY += 20;
   }
 
-  curY += 8;
+  curY += 6;
   drawDashedLine(curY);
-  curY += 18;
+  curY += 14;
 
   // 7. Document Title (21px bold mono)
   renderCtx.font = `bold 21px ${fontMono}`;
@@ -356,7 +372,7 @@ export function renderReceiptToCanvas(
 
   curY += 6;
   drawDashedLine(curY);
-  curY += 18;
+  curY += 14;
 
   // 8. Metadata block (15px mono, 2 columns)
   renderCtx.font = `15px ${fontMono}`;
@@ -364,7 +380,7 @@ export function renderReceiptToCanvas(
   renderCtx.fillText(`Bill No:  ${bill.bill_number}`, leftX, curY);
   renderCtx.textAlign = "right";
   renderCtx.fillText(`Order: #${bill.order_number}`, rightX, curY);
-  curY += 22;
+  curY += 20;
 
   const dateObj = new Date(bill.issued_at);
   const dateStr = dateObj.toLocaleDateString("en-IN", {
@@ -382,7 +398,7 @@ export function renderReceiptToCanvas(
   renderCtx.fillText(`Date:     ${dateStr}`, leftX, curY);
   renderCtx.textAlign = "right";
   renderCtx.fillText(`Time:  ${timeStr}`, rightX, curY);
-  curY += 22;
+  curY += 20;
 
   renderCtx.textAlign = "left";
   const isTakeawayOrCounter =
@@ -403,10 +419,10 @@ export function renderReceiptToCanvas(
           ? "Counter"
           : "Dine-in";
   renderCtx.fillText(serviceLabel, rightX, curY);
-  curY += 8;
+  curY += 6;
 
   drawDashedLine(curY);
-  curY += 20;
+  curY += 14;
 
   // 9. Items table column headers (15px bold mono)
   renderCtx.font = `bold 15px ${fontMono}`;
@@ -417,10 +433,10 @@ export function renderReceiptToCanvas(
   renderCtx.textAlign = "right";
   renderCtx.fillText("RATE", colRateRight, curY);
   renderCtx.fillText("AMOUNT", colAmtRight, curY);
-  curY += 8;
+  curY += 6;
 
   drawDashedLine(curY);
-  curY += 20;
+  curY += 14;
 
   // 10. Items list (Multi-line layout: 18px bold dish name + 16px QTY/RATE/AMOUNT)
   for (const item of bill.items_snapshot) {
@@ -437,7 +453,7 @@ export function renderReceiptToCanvas(
     // Subsequent wrapped lines for long names (indented 8px)
     for (let k = 1; k < nameLines.length; k++) {
       renderCtx.fillText(nameLines[k] || "", leftX + 8, curY);
-      curY += 21;
+      curY += 20;
     }
 
     // Line 2: Pricing row (16px mono, clearly aligned with column headers)
@@ -448,7 +464,7 @@ export function renderReceiptToCanvas(
     renderCtx.textAlign = "right";
     renderCtx.fillText((unitPaise / 100).toFixed(2), colRateRight, curY);
     renderCtx.fillText((linePaise / 100).toFixed(2), colAmtRight, curY);
-    curY += 20;
+    curY += 18;
 
     // Selected options / modifiers (14px italic mono, indented 8px)
     if (item.selected_options && item.selected_options.length > 0) {
@@ -458,7 +474,7 @@ export function renderReceiptToCanvas(
       const optLines = wrapText(renderCtx, optText, maxContentWidth - 8);
       for (const line of optLines) {
         renderCtx.fillText(line, leftX + 8, curY);
-        curY += 18;
+        curY += 16;
       }
     }
 
@@ -469,16 +485,16 @@ export function renderReceiptToCanvas(
       const noteLines = wrapText(renderCtx, `Note: ${item.note}`, maxContentWidth - 8);
       for (const line of noteLines) {
         renderCtx.fillText(line, leftX + 8, curY);
-        curY += 18;
+        curY += 16;
       }
     }
 
-    curY += 10; // breathing room between items
+    curY += 8; // compact spacing between items
   }
 
-  curY += 6;
+  curY += 4;
   drawDashedLine(curY);
-  curY += 20;
+  curY += 14;
 
   // 11. Summary totals (17px mono subtotal & tax, 22px bold total)
   const subtotalPaise = bill.subtotal_paise ?? (bill as unknown as { subtotal_cents: number }).subtotal_cents ?? 0;
@@ -493,7 +509,7 @@ export function renderReceiptToCanvas(
   renderCtx.fillText(hasDiscount ? "BILL TOTAL:" : "Subtotal:", leftX, curY);
   renderCtx.textAlign = "right";
   renderCtx.fillText(`₹${((hasDiscount ? subtotalBeforeDiscountPaise : subtotalPaise) / 100).toFixed(2)}`, rightX, curY);
-  curY += 24;
+  curY += 22;
 
   if (taxPaise > 0 && biz.gst_status === "registered") {
     renderCtx.textAlign = "left";
@@ -505,7 +521,7 @@ export function renderReceiptToCanvas(
     renderCtx.fillText(taxLabel, leftX, curY);
     renderCtx.textAlign = "right";
     renderCtx.fillText(`₹${(taxPaise / 100).toFixed(2)}`, rightX, curY);
-    curY += 24;
+    curY += 22;
   }
 
   if (hasDiscount) {
@@ -524,12 +540,12 @@ export function renderReceiptToCanvas(
     renderCtx.fillText(discountLabel, leftX, curY);
     renderCtx.textAlign = "right";
     renderCtx.fillText(`-₹${(discountPaise / 100).toFixed(2)}`, rightX, curY);
-    curY += 24;
+    curY += 22;
   }
 
-  curY += 8;
+  curY += 6;
   drawDashedLine(curY);
-  curY += 22;
+  curY += 16;
 
   // 12. Final Total Amount (22px bold mono — high visual prominence)
   renderCtx.font = `bold 22px ${fontMono}`;
@@ -537,25 +553,23 @@ export function renderReceiptToCanvas(
   renderCtx.fillText(hasDiscount ? "AMOUNT TO PAY:" : "TOTAL AMOUNT:", leftX, curY);
   renderCtx.textAlign = "right";
   renderCtx.fillText(`₹${(totalPaise / 100).toFixed(2)}`, rightX, curY);
-  curY += 12;
+  curY += 6;
 
   drawDashedLine(curY);
-  curY += 24;
+  curY += 16;
 
-  // 13. Footer & FSSAI declaration
+  // 13. Footer (pure customer message, no duplicate FSSAI)
   renderCtx.textAlign = "center";
   if (biz.bill_footer_text) {
     renderCtx.font = `italic 14px ${fontSans}`;
     const renderFooterLines = wrapText(renderCtx, biz.bill_footer_text, maxContentWidth);
     for (const line of renderFooterLines) {
       renderCtx.fillText(line, centerX, curY);
-      curY += 20;
+      curY += 18;
     }
   }
 
-  renderCtx.font = `bold 14px ${fontMono}`;
-  renderCtx.fillText(`FSSAI LICENCE NO. ${biz.fssai_number || "12226032000212"}`, centerX, curY);
-  curY += 10; // Clean 10px bottom margin below last printed line
+  curY += 8; // Clean minimal 8px bottom margin
 
   // Trim excess canvas height so printer does not waste blank thermal paper
   const contentHeight = Math.ceil(curY);
@@ -571,6 +585,295 @@ export function renderReceiptToCanvas(
   }
 
   return canvas;
+}
+
+/**
+ * Calculates total kitchen token height and renders a dedicated Kitchen Order Ticket (KOT)
+ * to an HTML5 canvas. Target: 384 dots (58 mm thermal printers).
+ *
+ * Requirements:
+ * - Large readable order token/number and service mode/table.
+ * - Timestamp, customer name, and customer notes.
+ * - Items list with quantities, dish names, modifiers, and preparation instructions.
+ * - Custom dishes clearly tagged.
+ * - ZERO pricing, subtotal, tax, discounts, totals, GST, or FSSAI information.
+ * - Reusable and re-printable at any time without duplicating orders or mutating bills.
+ */
+export function renderKitchenTicketToCanvas(
+  order: KitchenTicketOrder,
+  options: ReceiptCanvasOptions = {},
+): HTMLCanvasElement {
+  const scale = options.scale ?? 1;
+  const baseWidth = 384;
+  const isReprint = Boolean(options.isReprint);
+
+  const canvas = document.createElement("canvas");
+  canvas.width = baseWidth * scale;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas 2D context not available");
+
+  ctx.scale(scale, scale);
+
+  const fontMono =
+    'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace';
+  const fontSans =
+    'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+
+  const leftX = 14;
+  const rightX = baseWidth - 14; // 370
+  const centerX = baseWidth / 2; // 192
+  const maxContentWidth = rightX - leftX; // 356px
+
+  // ---------------------------------------------------------------------------
+  // Height dry-run calculation (Pass 1)
+  // ---------------------------------------------------------------------------
+  let y = 14;
+
+  // Header banner: KITCHEN ORDER TICKET (15px bold sans)
+  ctx.font = `bold 15px ${fontSans}`;
+  y += 20;
+
+  // Order / Token Number (28px bold mono)
+  ctx.font = `bold 28px ${fontMono}`;
+  y += 32;
+
+  if (isReprint) {
+    ctx.font = `bold 14px ${fontMono}`;
+    y += 18;
+  }
+
+  // Service Mode & Table (18px bold sans)
+  ctx.font = `bold 18px ${fontSans}`;
+  y += 24;
+
+  // Timestamp & Guest Info
+  y += 18; // Date & Time
+  if (order.customer_name) {
+    y += 18; // Customer Name & Guest Count
+  }
+
+  if (order.customer_note) {
+    ctx.font = `italic 14px ${fontSans}`;
+    const noteLines = wrapText(ctx, `Order Note: ${order.customer_note}`, maxContentWidth);
+    y += noteLines.length * 18;
+  }
+
+  // Divider + Items Header (15px bold mono)
+  y += 6 + 14; // divider
+  y += 18;     // ITEMS FOR PREPARATION
+  y += 6 + 14; // divider
+
+  // Items List
+  for (const item of order.order_items) {
+    const rawName = item.item_name_snapshot || item.name || "Dish";
+    const displayName = `${item.quantity}× ${item.is_custom ? `[CUSTOM] ${rawName}` : rawName}`;
+
+    ctx.font = `bold 18px ${fontMono}`;
+    const nameLines = wrapText(ctx, displayName, maxContentWidth);
+    y += 22;
+    if (nameLines.length > 1) {
+      y += (nameLines.length - 1) * 20;
+    }
+
+    // Selected options / modifiers
+    const optionsList = Array.isArray(item.selected_options)
+      ? item.selected_options
+      : Array.isArray(item.selected_options_snapshot)
+      ? (item.selected_options_snapshot as { name: string }[])
+      : [];
+    if (optionsList.length > 0) {
+      ctx.font = `italic 14px ${fontMono}`;
+      const optText = `+ ${optionsList.map((m) => m.name).join(", ")}`;
+      const optLines = wrapText(ctx, optText, maxContentWidth - 12);
+      y += optLines.length * 16;
+    }
+
+    // Preparation notes
+    const noteText = item.note || item.item_note;
+    if (noteText) {
+      ctx.font = `italic 14px ${fontSans}`;
+      const noteLines = wrapText(ctx, `Note: ${noteText}`, maxContentWidth - 12);
+      y += noteLines.length * 16;
+    }
+
+    y += 8; // spacing between item blocks
+  }
+
+  // Divider + Kitchen Copy footer
+  y += 6 + 14; // divider
+  y += 18;     // *** KITCHEN COPY (NOT A BILL) ***
+  y += 8;      // bottom margin
+
+  const totalHeight = Math.ceil(y);
+  canvas.height = totalHeight * scale;
+
+  const renderCtx = canvas.getContext("2d");
+  if (!renderCtx) throw new Error("Canvas 2D context not available");
+
+  renderCtx.scale(scale, scale);
+
+  renderCtx.fillStyle = "#ffffff";
+  renderCtx.fillRect(0, 0, baseWidth, totalHeight);
+
+  renderCtx.fillStyle = "#000000";
+  renderCtx.strokeStyle = "#000000";
+  renderCtx.lineWidth = 1;
+
+  function drawDashedLine(lineY: number) {
+    if (!renderCtx) return;
+    renderCtx.save();
+    renderCtx.setLineDash([4, 3]);
+    renderCtx.beginPath();
+    renderCtx.moveTo(leftX, lineY);
+    renderCtx.lineTo(rightX, lineY);
+    renderCtx.stroke();
+    renderCtx.restore();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Drawing pass (Pass 2)
+  // ---------------------------------------------------------------------------
+  let curY = 14;
+
+  // Header Title
+  renderCtx.font = `bold 15px ${fontSans}`;
+  renderCtx.textAlign = "center";
+  renderCtx.fillText("URBANIA CAFÉ · KITCHEN TOKEN", centerX, curY);
+  curY += 20;
+
+  // Token / Order Number
+  renderCtx.font = `bold 28px ${fontMono}`;
+  renderCtx.fillText(`ORDER #${order.order_number}`, centerX, curY);
+  curY += 32;
+
+  if (isReprint) {
+    renderCtx.font = `bold 14px ${fontMono}`;
+    renderCtx.fillText("*** DUPLICATE KITCHEN TICKET ***", centerX, curY);
+    curY += 18;
+  }
+
+  // Service Mode & Table
+  renderCtx.font = `bold 18px ${fontSans}`;
+  const tableDisplay =
+    order.table_label ||
+    order.cafe_tables?.label ||
+    (order.service_mode ? order.service_mode.toUpperCase().replace("_", " ") : "COUNTER / TAKEAWAY");
+  renderCtx.fillText(tableDisplay.toUpperCase(), centerX, curY);
+  curY += 24;
+
+  // Timestamp & Details
+  renderCtx.font = `14px ${fontMono}`;
+  renderCtx.textAlign = "center";
+  const dateObj = order.created_at ? new Date(order.created_at) : new Date();
+  const dateStr = dateObj.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+  const timeStr = dateObj.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+  renderCtx.fillText(`${dateStr} · ${timeStr}`, centerX, curY);
+  curY += 18;
+
+  if (order.customer_name) {
+    renderCtx.font = `14px ${fontSans}`;
+    const guestInfo = order.guest_count ? ` (${order.guest_count} guests)` : "";
+    renderCtx.fillText(`Guest: ${order.customer_name}${guestInfo}`, centerX, curY);
+    curY += 18;
+  }
+
+  if (order.customer_note) {
+    renderCtx.font = `italic 14px ${fontSans}`;
+    const renderNoteLines = wrapText(renderCtx, `Order Note: ${order.customer_note}`, maxContentWidth);
+    for (const line of renderNoteLines) {
+      renderCtx.fillText(line, centerX, curY);
+      curY += 18;
+    }
+  }
+
+  curY += 6;
+  drawDashedLine(curY);
+  curY += 14;
+
+  // Items Section Header
+  renderCtx.font = `bold 15px ${fontMono}`;
+  renderCtx.textAlign = "left";
+  renderCtx.fillText("ITEMS FOR PREPARATION", leftX, curY);
+  curY += 18;
+
+  drawDashedLine(curY);
+  curY += 14;
+
+  // Items List
+  for (const item of order.order_items) {
+    const rawName = item.item_name_snapshot || item.name || "Dish";
+    const displayName = `${item.quantity}× ${item.is_custom ? `[CUSTOM] ${rawName}` : rawName}`;
+
+    renderCtx.font = `bold 18px ${fontMono}`;
+    renderCtx.textAlign = "left";
+    const nameLines = wrapText(renderCtx, displayName, maxContentWidth);
+    renderCtx.fillText(nameLines[0] || displayName, leftX, curY);
+    curY += 22;
+
+    for (let k = 1; k < nameLines.length; k++) {
+      renderCtx.fillText(nameLines[k] || "", leftX + 12, curY);
+      curY += 20;
+    }
+
+    const optionsList = Array.isArray(item.selected_options)
+      ? item.selected_options
+      : Array.isArray(item.selected_options_snapshot)
+      ? (item.selected_options_snapshot as { name: string }[])
+      : [];
+    if (optionsList.length > 0) {
+      renderCtx.font = `italic 14px ${fontMono}`;
+      const optText = `+ ${optionsList.map((m) => m.name).join(", ")}`;
+      const optLines = wrapText(renderCtx, optText, maxContentWidth - 12);
+      for (const line of optLines) {
+        renderCtx.fillText(line, leftX + 12, curY);
+        curY += 16;
+      }
+    }
+
+    const noteText = item.note || item.item_note;
+    if (noteText) {
+      renderCtx.font = `italic 14px ${fontSans}`;
+      const noteLines = wrapText(renderCtx, `Note: ${noteText}`, maxContentWidth - 12);
+      for (const line of noteLines) {
+        renderCtx.fillText(line, leftX + 12, curY);
+        curY += 16;
+      }
+    }
+
+    curY += 8;
+  }
+
+  curY += 6;
+  drawDashedLine(curY);
+  curY += 14;
+
+  // Footer: Not a Bill
+  renderCtx.font = `bold 13px ${fontMono}`;
+  renderCtx.textAlign = "center";
+  renderCtx.fillText("*** KITCHEN COPY (NOT A BILL) ***", centerX, curY);
+  curY += 8;
+
+  const contentHeight = Math.ceil(curY);
+  if (contentHeight < totalHeight) {
+    const trimmedCanvas = document.createElement("canvas");
+    trimmedCanvas.width = baseWidth * scale;
+    trimmedCanvas.height = contentHeight * scale;
+    const tCtx = trimmedCanvas.getContext("2d");
+    if (tCtx && typeof tCtx.drawImage === "function") {
+      tCtx.drawImage(canvas, 0, 0);
+      return trimmedCanvas;
+    }
+  }
+
+  return canvas;
+}
+
+export function exportKitchenTicketDataUrl(
+  order: KitchenTicketOrder,
+  options: ReceiptCanvasOptions = {},
+): string {
+  const canvas = renderKitchenTicketToCanvas(order, options);
+  return canvas.toDataURL("image/png");
 }
 
 export async function exportReceiptBlob(

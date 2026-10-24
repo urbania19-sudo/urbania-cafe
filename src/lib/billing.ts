@@ -156,6 +156,16 @@ export interface ManualOrderItemInput {
   isCustom?: boolean;
 }
 
+export interface EditOrderItemInput {
+  menuItemId?: string;
+  name?: string;
+  quantity: number;
+  unitPricePaise?: number;
+  unitPriceRupees?: number;
+  note?: string;
+  isCustom?: boolean;
+}
+
 export interface CreateManualOrderInput {
   serviceMode: "dine_in" | "takeaway" | "counter" | "delivery";
   tableId?: string;
@@ -268,6 +278,9 @@ export function friendlyBillingError(err: unknown): string {
   }
   if (msg.includes("custom item name required")) return "Please enter a name for each custom line item.";
   if (msg.includes("invalid custom price")) return "Custom item price must be a valid non-negative amount.";
+  if (msg.includes("already been billed")) return "This order has already been billed and cannot be edited.";
+  if (msg.includes("active bill")) return "This order has an active bill and cannot be edited.";
+  if (msg.includes("cannot be edited in")) return "This order cannot be edited because it is already completed or cancelled.";
   if (msg.includes("invalid service mode")) return "Please select a valid service mode (Dine-in, Takeaway, Counter, or Delivery).";
   if (msg.includes("already_cancelled")) return "This bill has already been cancelled.";
   if (msg.includes("invalid quantity")) return "Item quantity must be between 1 and 20.";

@@ -91,8 +91,8 @@ export default async function Admin() {
         </div>
       </header>
       <nav
+        className="admin-nav"
         aria-label="Owner tools"
-        style={{ display: 'flex', gap: 10, overflowX: 'auto', padding: '18px 0' }}
       >
         <Link className="chip" href="/admin/menu">
           Menu &amp; prices

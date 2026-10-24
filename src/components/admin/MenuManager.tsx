@@ -332,13 +332,55 @@ export default function MenuManager({
         </button>
       </form>
 
+      {/* Category Quick Navigation Scroller */}
+      {categories.length > 0 && (
+        <nav
+          className="admin-nav"
+          aria-label="Category quick navigation"
+          style={{ margin: '14px 0 20px', padding: '10px 0' }}
+        >
+          {categories.map((c) => (
+            <a
+              key={c.id}
+              href={`#cat-${c.id}`}
+              className="chip"
+              style={{ fontSize: 13, textDecoration: 'none' }}
+            >
+              {c.name}
+            </a>
+          ))}
+        </nav>
+      )}
+
       {/* Menu Categories & Items List */}
       {categories.map((c) => {
         const list = rows.filter((i) => i.category_id === c.id);
         return (
-          <div key={c.id}>
-            <h2 style={{ fontFamily: 'Georgia, serif', margin: '28px 0 8px', fontSize: '1.4rem' }}>
-              {c.name} <small className="muted">({list.length} dishes)</small>
+          <div key={c.id} id={`cat-${c.id}`}>
+            <h2
+              style={{
+                fontFamily: 'Georgia, serif',
+                margin: '28px 0 8px',
+                fontSize: '1.4rem',
+                display: 'flex',
+                alignItems: 'baseline',
+                flexWrap: 'wrap',
+                gap: 8,
+                wordBreak: 'normal',
+                overflowWrap: 'break-word',
+              }}
+            >
+              <span>{c.name}</span>
+              <small
+                className="muted"
+                style={{
+                  whiteSpace: 'nowrap',
+                  fontSize: '0.9rem',
+                  fontWeight: 'normal',
+                }}
+              >
+                ({list.length} {list.length === 1 ? 'dish' : 'dishes'})
+              </small>
             </h2>
             <div style={{ display: 'grid', gap: 10 }}>
               {list.map((i) => (

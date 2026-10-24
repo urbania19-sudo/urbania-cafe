@@ -1,89 +1,54 @@
-@import "tailwindcss";
-
 :root {
-  --ink: #f5ead9;
-  --cream: #2b1b16;
+  --bg: #1c1310;
+  --surface: #261914;
+  --card: #301f19;
+  --ink: #fbf5ee;
+  --muted: #c9b49e;
+  --line: #422a21;
   --accent: #d5a84b;
-  --card: #37241d;
-  --line: #ffffff24;
+  --accent-2: #843a22;
+  --tint: #eedcc6;
+  --shade: #120b09;
 }
 
 * {
   box-sizing: border-box;
 }
 
-html {
-  min-width: 320px;
-  background: var(--cream);
-  overflow-x: hidden;
-  -webkit-text-size-adjust: 100%;
-}
-
-body {
+html, body {
   margin: 0;
-  min-height: 100vh;
-  background: radial-gradient(circle at 90% 0, #563a23 0, transparent 30rem), var(--cream);
+  padding: 0;
+  background: var(--bg);
   color: var(--ink);
-  font-family: Arial, Helvetica, sans-serif;
-  overflow-x: hidden;
-  overflow-wrap: break-word;
-  word-break: break-word;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  min-height: 100%;
 }
 
-button, input, textarea, select {
-  font: inherit;
-  max-width: 100%;
-}
-
-select {
-  color-scheme: light;
-}
-
-select option {
-  color: #2b1b16;
-  background-color: #ffffff;
-}
-
-select option:disabled {
-  color: #6d5445;
-  background-color: #fbf8f2;
-}
-
-button {
-  cursor: pointer;
-  min-height: 44px;
-  touch-action: manipulation;
+a {
+  color: inherit;
+  text-decoration: none;
 }
 
 .shell {
-  max-width: 720px;
-  margin: auto;
-  padding: 20px 20px calc(20px + env(safe-area-inset-bottom));
-  width: 100%;
-  min-width: 0;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 24px 20px 60px;
 }
 
 .card {
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 12px;
-  box-shadow: 0 16px 35px #0003;
-  max-width: 100%;
-  min-width: 0;
-  overflow-wrap: break-word;
 }
 
 .btn {
   background: var(--accent);
   color: #2b1b16;
-  border: 0;
-  border-radius: 7px;
-  padding: 12px 16px;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: .06em;
-  font-size: .8rem;
-  max-width: 100%;
+  font-weight: 700;
+  border: none;
+  border-radius: 8px;
+  padding: 12px 18px;
+  cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -135,6 +100,50 @@ button {
   white-space: nowrap;
   overflow-wrap: normal;
   word-break: normal;
+}
+
+/* Admin Horizontal Navigation Scroller */
+.admin-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  padding: 14px 0;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
+  width: 100%;
+  max-width: 100%;
+}
+
+.admin-nav::-webkit-scrollbar {
+  height: 4px;
+}
+
+.admin-nav::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.admin-nav::-webkit-scrollbar-thumb {
+  background: var(--line, #ffffff24);
+  border-radius: 4px;
+}
+
+.admin-nav > .chip,
+.admin-nav a.chip,
+.admin-nav button.chip,
+nav.admin-nav > .chip,
+nav.admin-nav a.chip,
+nav > .chip,
+nav a.chip,
+nav button.chip {
+  flex: 0 0 auto;
+  width: max-content;
+  max-width: none;
+  white-space: nowrap;
+  word-break: normal;
+  overflow-wrap: normal;
 }
 
 .price {

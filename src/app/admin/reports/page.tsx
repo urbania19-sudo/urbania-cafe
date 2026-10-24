@@ -75,7 +75,7 @@ export default async function AdminReportsPage() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          <Link className="btn" href="/admin">
+          <Link className="chip" href="/admin">
             ← Dashboard
           </Link>
           <LogoutButton />
@@ -83,11 +83,11 @@ export default async function AdminReportsPage() {
       </header>
 
       <nav
+        className="admin-nav"
         aria-label="Owner navigation"
-        style={{ display: 'flex', gap: 10, overflowX: 'auto', padding: '16px 0' }}
       >
         <Link className="chip" href="/admin">
-          Today’s Service
+          Today’s service
         </Link>
         <Link className="chip" href="/admin/menu">
           Menu &amp; prices

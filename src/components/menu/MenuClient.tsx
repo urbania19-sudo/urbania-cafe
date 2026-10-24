@@ -142,7 +142,7 @@ export default function MenuClient({
   }
 
   return (
-    <main className="shell">
+    <main className="shell" style={{ paddingBottom: 'max(110px, calc(90px + env(safe-area-inset-bottom, 16px)))' }}>
       <header>
         <p style={{ color: 'var(--accent)', fontSize: 12, letterSpacing: '.16em', textTransform: 'uppercase' }}>
           Dine in · {table.label}
@@ -280,36 +280,65 @@ export default function MenuClient({
 
       {!visible.length && <p className="muted">No menu items match your search.</p>}
 
+      {/* Persistent Fixed Bottom Cart Bar */}
       <aside
         className="card"
+        aria-label="Current Cart"
         style={{
-          position: 'sticky',
-          bottom: 12,
-          padding: 14,
-          marginTop: 18,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 12,
-          flexWrap: 'wrap',
+          position: 'fixed',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          zIndex: 40,
+          background: 'var(--card, #301f19)',
+          borderRadius: 0,
+          borderLeft: 'none',
+          borderRight: 'none',
+          borderBottom: 'none',
+          borderTop: '1px solid var(--line, #422a21)',
+          boxShadow: '0 -4px 20px rgba(0, 0, 0, 0.5)',
+          paddingTop: 12,
+          paddingBottom: 'max(12px, env(safe-area-inset-bottom, 12px))',
+          paddingLeft: 'max(16px, env(safe-area-inset-left, 16px))',
+          paddingRight: 'max(16px, env(safe-area-inset-right, 16px))',
         }}
       >
-        <div>
-          <b>
-            {count} item{count === 1 ? '' : 's'}
-          </b>
-          <div className="price">{formatINR(total)}</div>
-        </div>
-        <button
-          className="btn"
-          disabled={!count}
-          onClick={() => {
-            setMessage('');
-            setOpen(true);
+        <div
+          style={{
+            maxWidth: 760,
+            margin: '0 auto',
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
           }}
         >
-          Place Order
-        </button>
+          <div>
+            <b>
+              {count} item{count === 1 ? '' : 's'}
+            </b>
+            <div className="price" style={{ fontSize: '1.15rem', color: 'var(--accent, #d5a84b)' }}>
+              {formatINR(total)}
+            </div>
+          </div>
+          <button
+            className="btn"
+            disabled={!count}
+            onClick={() => {
+              setMessage('');
+              setOpen(true);
+            }}
+            style={{
+              padding: '12px 24px',
+              fontSize: '1rem',
+              fontWeight: 700,
+              minWidth: 140,
+            }}
+          >
+            Place Order
+          </button>
+        </div>
       </aside>
 
       {open && (

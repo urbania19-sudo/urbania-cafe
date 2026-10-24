@@ -2,9 +2,11 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { type Bill } from '@/lib/billing';
+import { type Bill, type DiscountType } from '@/lib/billing';
 import ThermalBillModal from '@/components/staff/ThermalBillModal';
 import ManualOrderModal from '@/components/staff/ManualOrderModal';
+import KitchenTicketModal from '@/components/staff/KitchenTicketModal';
+import BillDiscountModal from '@/components/staff/BillDiscountModal';
 
 type Order = {
   id: string;
@@ -18,7 +20,16 @@ type Order = {
   service_mode?: string | null;
   order_source?: string | null;
   cafe_tables: { label: string } | null;
-  order_items: { menu_item_id: string | null; item_name_snapshot: string; quantity: number }[];
+  order_items: {
+    id?: string;
+    menu_item_id: string | null;
+    item_name_snapshot: string;
+    quantity: number;
+    unit_price_paise?: number;
+    item_note?: string | null;
+    is_custom?: boolean;
+    selected_options?: { name: string }[];
+  }[];
 };
 
 type MenuItem = {
@@ -33,6 +44,28 @@ type TableOption = {
   table_number: number;
   label: string;
 };
+
+interface EditingItem {
+  key: string;
+  isCustom: boolean;
+  menuItemId?: string;
+  name: string;
+  unitPricePaise: number;
+  quantity: number;
+  note?: string;
+}
+
+interface OrderEditState {
+  id: string; // for backward compatibility
+  orderId: string;
+  items: EditingItem[];
+  customName: string;
+  customPriceRupees: string;
+  customQty: number;
+  customNote: string;
+  showCustomForm: boolean;
+  qty: Record<string, number>;
+}
 
 const next: Record<string, string | undefined> = {
   NEW: 'ACCEPTED',
@@ -62,9 +95,11 @@ export default function OrderBoard({
   const [statusById, setStatusById] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string>();
   const [error, setError] = useState('');
-  const [editing, setEditing] = useState<{ id: string; qty: Record<string, number> } | null>(null);
+  const [editing, setEditing] = useState<OrderEditState | null>(null);
   const [adding, setAdding] = useState('');
   const [activeBill, setActiveBill] = useState<{ bill: Bill; isReprint: boolean } | null>(null);
+  const [billingOrder, setBillingOrder] = useState<Order | null>(null);
+  const [activeKitchenOrder, setActiveKitchenOrder] = useState<Order | null>(null);
   const [showManualModal, setShowManualModal] = useState(false);
   const [filterTab, setFilterTab] = useState<'all' | 'active' | 'completed'>('all');
 
@@ -120,8 +155,25 @@ export default function OrderBoard({
 
   function startEdit(o: Order) {
     setAdding('');
+    const items: EditingItem[] = o.order_items.map((i, idx) => ({
+      key: i.menu_item_id || `custom-${idx}`,
+      isCustom: !i.menu_item_id || Boolean(i.is_custom),
+      menuItemId: i.menu_item_id || undefined,
+      name: i.item_name_snapshot,
+      unitPricePaise: i.unit_price_paise ?? 0,
+      quantity: i.quantity,
+      note: i.item_note || '',
+    }));
+
     setEditing({
       id: o.id,
+      orderId: o.id,
+      items,
+      customName: '',
+      customPriceRupees: '',
+      customQty: 1,
+      customNote: '',
+      showCustomForm: false,
       qty: Object.fromEntries(
         o.order_items.filter((i) => i.menu_item_id).map((i) => [i.menu_item_id as string, i.quantity])
       ),
@@ -131,30 +183,147 @@ export default function OrderBoard({
   function setQty(id: string, delta: number) {
     setEditing((e) => {
       if (!e) return e;
-      const n = (e.qty[id] ?? 0) + delta;
-      const qty = { ...e.qty };
-      if (n < 1) delete qty[id];
-      else qty[id] = Math.min(n, 20);
-      return { ...e, qty };
+      const idx = e.items.findIndex((item) => item.menuItemId === id || item.key === id);
+      if (idx === -1) return e;
+
+      const currentItem = e.items[idx];
+      if (!currentItem) return e;
+
+      const newQty = currentItem.quantity + delta;
+      let newItems: EditingItem[];
+      if (newQty < 1) {
+        newItems = e.items.filter((_, i) => i !== idx);
+      } else {
+        newItems = [...e.items];
+        newItems[idx] = { ...currentItem, quantity: Math.min(newQty, 20) };
+      }
+
+      const newQtyMap: Record<string, number> = {};
+      newItems.forEach((it) => {
+        if (it.menuItemId) newQtyMap[it.menuItemId] = it.quantity;
+      });
+
+      return {
+        ...e,
+        items: newItems,
+        qty: newQtyMap,
+      };
+    });
+  }
+
+  function addCatalogueItemToEdit(menuItemId: string) {
+    const menuItem = menu.find((m) => m.id === menuItemId);
+    if (!menuItem) return;
+
+    setEditing((e) => {
+      if (!e) return e;
+      const existingIdx = e.items.findIndex((it) => !it.isCustom && it.menuItemId === menuItem.id);
+      let newItems: EditingItem[];
+      if (existingIdx >= 0) {
+        newItems = [...e.items];
+        const exist = newItems[existingIdx];
+        if (exist) {
+          newItems[existingIdx] = {
+            ...exist,
+            quantity: Math.min(exist.quantity + 1, 20),
+          };
+        }
+      } else {
+        newItems = [
+          ...e.items,
+          {
+            key: menuItem.id,
+            isCustom: false,
+            menuItemId: menuItem.id,
+            name: menuItem.name,
+            unitPricePaise: menuItem.price_paise,
+            quantity: 1,
+            note: '',
+          },
+        ];
+      }
+
+      const newQtyMap: Record<string, number> = {};
+      newItems.forEach((it) => {
+        if (it.menuItemId) newQtyMap[it.menuItemId] = it.quantity;
+      });
+
+      return {
+        ...e,
+        items: newItems,
+        qty: newQtyMap,
+      };
+    });
+  }
+
+  function addCustomItemToEdit() {
+    if (!editing) return;
+    const name = editing.customName.trim();
+    const priceRupees = parseFloat(editing.customPriceRupees);
+    if (!name) {
+      setError('Please enter a name for the custom dish.');
+      return;
+    }
+    if (isNaN(priceRupees) || priceRupees < 0) {
+      setError('Custom dish price must be a valid non-negative number.');
+      return;
+    }
+    const qty = Math.min(Math.max(1, editing.customQty), 20);
+
+    const newItem: EditingItem = {
+      key: `custom-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      isCustom: true,
+      name,
+      unitPricePaise: Math.round(priceRupees * 100),
+      quantity: qty,
+      note: editing.customNote.trim() || undefined,
+    };
+
+    setEditing((e) => {
+      if (!e) return e;
+      return {
+        ...e,
+        items: [...e.items, newItem],
+        customName: '',
+        customPriceRupees: '',
+        customQty: 1,
+        customNote: '',
+        showCustomForm: false,
+      };
     });
   }
 
   async function saveEdit() {
     if (!editing) return;
-    const items = Object.entries(editing.qty).map(([menuItemId, quantity]) => ({
-      menuItemId,
-      quantity,
-    }));
-    if (!items.length) {
+    if (!editing.items.length) {
       return setError('An order needs at least one item. Use Reject to cancel it instead.');
     }
-    setBusy(editing.id);
+    setBusy(editing.orderId);
     setError('');
+
+    const payloadItems = editing.items.map((it) => {
+      if (it.isCustom) {
+        return {
+          isCustom: true,
+          name: it.name,
+          unitPricePaise: it.unitPricePaise,
+          quantity: it.quantity,
+          note: it.note || null,
+        };
+      }
+      return {
+        isCustom: false,
+        menuItemId: it.menuItemId,
+        quantity: it.quantity,
+        note: it.note || null,
+      };
+    });
+
     try {
-      const r = await fetch(`/api/staff/orders/${editing.id}/items`, {
+      const r = await fetch(`/api/staff/orders/${editing.orderId}/items`, {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ items }),
+        body: JSON.stringify({ items: payloadItems }),
       });
       const data = await r.json().catch(() => null);
       if (r.ok && data?.ok) {
@@ -208,6 +377,7 @@ export default function OrderBoard({
     setError('');
     try {
       if (o.billed_at) {
+        // Already billed: directly fetch existing bill (reprint mode, NO discount prompt)
         const res = await fetch(`/api/staff/orders/${o.id}/bill`);
         const data = await res.json();
         if (!res.ok || !data.bill) {
@@ -220,20 +390,8 @@ export default function OrderBoard({
         return;
       }
 
-      const res = await fetch(`/api/staff/orders/${o.id}/bill`, {
-        method: 'POST',
-      });
-      const data = await res.json();
-      if (!res.ok || !data.ok) {
-        if (data.code === 'PREVIEW_READ_ONLY') {
-          throw new Error('Preview mode is read-only to protect live café data.');
-        }
-        throw new Error(data.error || 'Failed to load receipt');
-      }
-      setActiveBill({
-        bill: data.bill,
-        isReprint: Boolean(data.already_issued || o.billed_at),
-      });
+      // Not yet billed: allow staff to apply optional discount before issuing
+      setBillingOrder(o);
     } catch (err) {
       console.error('Receipt view error:', err);
       setError(err instanceof Error ? err.message : 'Could not open receipt.');
@@ -244,7 +402,7 @@ export default function OrderBoard({
 
   async function billOrderDirectly(
     orderId: string,
-    discount?: { type: 'fixed' | 'percentage'; value: number }
+    discount?: { type: DiscountType; value: number }
   ) {
     setBusy(orderId);
     setError('');
@@ -263,15 +421,20 @@ export default function OrderBoard({
       });
       const data = await res.json();
       if (!res.ok || !data.ok) {
+        if (data.code === 'PREVIEW_READ_ONLY') {
+          throw new Error('Preview mode is read-only to protect live café data.');
+        }
         throw new Error(data.error || 'Failed to generate bill');
       }
       setActiveBill({
         bill: data.bill,
         isReprint: Boolean(data.already_issued),
       });
+      router.refresh();
     } catch (err) {
       console.error('Billing error:', err);
       setError(err instanceof Error ? err.message : 'Could not generate bill.');
+      throw err;
     } finally {
       setBusy(undefined);
     }
@@ -309,6 +472,24 @@ export default function OrderBoard({
               router.refresh();
               await billOrderDirectly(newOrder.order_id, discount);
             }}
+          />
+        )}
+
+        {billingOrder && (
+          <BillDiscountModal
+            orderNumber={billingOrder.order_number}
+            subtotalPaise={billingOrder.total_paise}
+            onClose={() => setBillingOrder(null)}
+            onConfirm={async (discount) => {
+              await billOrderDirectly(billingOrder.id, discount);
+            }}
+          />
+        )}
+
+        {activeKitchenOrder && (
+          <KitchenTicketModal
+            order={activeKitchenOrder}
+            onClose={() => setActiveKitchenOrder(null)}
           />
         )}
 
@@ -465,37 +646,77 @@ export default function OrderBoard({
                 </div>
               </div>
 
-              {editing?.id === o.id ? (
-                <div style={{ display: 'grid', gap: 8, margin: '12px 0' }}>
-                  {Object.entries(editing.qty).map(([id, q]) => (
+              {editing?.orderId === o.id ? (
+                <div style={{ display: 'grid', gap: 10, margin: '14px 0', background: '#ffffff06', padding: 12, borderRadius: 8, border: '1px solid var(--line)' }}>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--accent)' }}>
+                    Edit Order Items:
+                  </div>
+
+                  {editing.items.map((item) => (
                     <div
-                      key={id}
+                      key={item.key}
                       style={{
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
                         gap: 8,
                         flexWrap: 'wrap',
+                        borderBottom: '1px dashed var(--line, #ffffff18)',
+                        paddingBottom: 8,
                       }}
                     >
-                      <span style={{ minWidth: 0, flex: 1, overflowWrap: 'break-word' }}>{nameOf(id, o)}</span>
-                      <span style={{ display: 'flex', alignItems: 'center' }}>
-                        <button className="chip" aria-label="Less" onClick={() => setQty(id, -1)}>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                          <span style={{ fontWeight: 600, overflowWrap: 'break-word' }}>
+                            {item.isCustom ? item.name : nameOf(item.menuItemId || '', o)}
+                          </span>
+                          {item.isCustom && (
+                            <span className="chip" style={{ fontSize: 10, padding: '1px 6px', color: 'var(--accent)', borderColor: 'var(--accent)' }}>
+                              Custom
+                            </span>
+                          )}
+                          <span className="muted" style={{ fontSize: 12 }}>
+                            ₹{((item.unitPricePaise * item.quantity) / 100).toFixed(2)}
+                          </span>
+                        </div>
+                        {item.note && (
+                          <div className="muted" style={{ fontSize: 12, fontStyle: 'italic' }}>
+                            Note: {item.note}
+                          </div>
+                        )}
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <button className="chip" aria-label="Less" onClick={() => setQty(item.menuItemId || item.key, -1)}>
                           −
                         </button>
-                        <span style={{ padding: '0 10px', fontWeight: 700 }}>{q}</span>
-                        <button className="chip" aria-label="More" onClick={() => setQty(id, 1)}>
+                        <span style={{ padding: '0 8px', fontWeight: 700, minWidth: 20, textAlign: 'center' }}>
+                          {item.quantity}
+                        </span>
+                        <button className="chip" aria-label="More" onClick={() => setQty(item.menuItemId || item.key, 1)}>
                           +
                         </button>
-                      </span>
+                        <button
+                          type="button"
+                          className="chip"
+                          aria-label={`Remove ${item.name}`}
+                          onClick={() => setQty(item.menuItemId || item.key, -999)}
+                          style={{ fontSize: 11, padding: '4px 8px', color: '#ef4444' }}
+                          title="Remove item"
+                        >
+                          ✕
+                        </button>
+                      </div>
                     </div>
                   ))}
+
+                  {/* Add Catalogue Item Dropdown */}
                   <select
                     aria-label="Add an item to order"
                     value={adding}
                     onChange={(e) => {
                       if (e.target.value) {
-                        setQty(e.target.value, 1);
+                        addCatalogueItemToEdit(e.target.value);
                       }
                       setAdding('');
                     }}
@@ -524,7 +745,7 @@ export default function OrderBoard({
                       + Add an item…
                     </option>
                     {menu
-                      .filter((m) => m.is_available && !(m.id in editing.qty))
+                      .filter((m) => m.is_available && !editing.items.some((it) => !it.isCustom && it.menuItemId === m.id))
                       .map((m) => (
                         <option
                           key={m.id}
@@ -540,7 +761,114 @@ export default function OrderBoard({
                         </option>
                       ))}
                   </select>
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+
+                  {/* Add Custom Non-Catalogue Dish Section */}
+                  <div style={{ borderTop: '1px solid var(--line, #ffffff24)', paddingTop: 10 }}>
+                    {!editing.showCustomForm ? (
+                      <button
+                        type="button"
+                        className="chip"
+                        onClick={() => setEditing((e) => (e ? { ...e, showCustomForm: true } : e))}
+                        style={{ fontSize: 12, padding: '6px 12px', width: '100%', justifyContent: 'center' }}
+                      >
+                        + Add Custom Dish (Non-Catalogue)
+                      </button>
+                    ) : (
+                      <div style={{ display: 'grid', gap: 8, background: '#ffffff08', padding: 10, borderRadius: 6 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <b style={{ fontSize: 12, color: 'var(--accent)' }}>New Custom Dish</b>
+                          <button
+                            type="button"
+                            className="chip"
+                            onClick={() => setEditing((e) => (e ? { ...e, showCustomForm: false } : e))}
+                            style={{ fontSize: 11, padding: '2px 6px' }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                        <input
+                          type="text"
+                          placeholder="Dish name (e.g. Extra Butter Toast)"
+                          value={editing.customName}
+                          onChange={(e) => setEditing((prev) => prev ? { ...prev, customName: e.target.value } : prev)}
+                          style={{
+                            padding: 8,
+                            borderRadius: 6,
+                            border: '1px solid var(--line)',
+                            background: '#ffffff10',
+                            color: 'var(--ink)',
+                            fontSize: 13,
+                          }}
+                        />
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            placeholder="Price (₹)"
+                            value={editing.customPriceRupees}
+                            onChange={(e) => setEditing((prev) => prev ? { ...prev, customPriceRupees: e.target.value } : prev)}
+                            style={{
+                              padding: 8,
+                              borderRadius: 6,
+                              border: '1px solid var(--line)',
+                              background: '#ffffff10',
+                              color: 'var(--ink)',
+                              fontSize: 13,
+                            }}
+                          />
+                          <input
+                            type="number"
+                            min="1"
+                            max="20"
+                            placeholder="Quantity"
+                            value={editing.customQty}
+                            onChange={(e) => setEditing((prev) => prev ? { ...prev, customQty: parseInt(e.target.value) || 1 } : prev)}
+                            style={{
+                              padding: 8,
+                              borderRadius: 6,
+                              border: '1px solid var(--line)',
+                              background: '#ffffff10',
+                              color: 'var(--ink)',
+                              fontSize: 13,
+                            }}
+                          />
+                        </div>
+                        <input
+                          type="text"
+                          placeholder="Special instructions (optional)"
+                          value={editing.customNote}
+                          onChange={(e) => setEditing((prev) => prev ? { ...prev, customNote: e.target.value } : prev)}
+                          style={{
+                            padding: 8,
+                            borderRadius: 6,
+                            border: '1px solid var(--line)',
+                            background: '#ffffff10',
+                            color: 'var(--ink)',
+                            fontSize: 13,
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="btn"
+                          onClick={addCustomItemToEdit}
+                          style={{ fontSize: 12, padding: '8px' }}
+                        >
+                          + Add to Order
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Edited Total Preview */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 6, borderTop: '1px solid var(--line)' }}>
+                    <span className="muted" style={{ fontSize: 13 }}>New Order Total:</span>
+                    <b style={{ fontSize: 14 }}>
+                      ₹{(editing.items.reduce((sum, item) => sum + item.unitPricePaise * item.quantity, 0) / 100).toFixed(2)}
+                    </b>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
                     <button className="btn" disabled={busy === o.id} onClick={saveEdit}>
                       {busy === o.id ? 'Saving…' : 'Save changes'}
                     </button>
@@ -553,7 +881,13 @@ export default function OrderBoard({
                 <ul className="muted" style={{ paddingLeft: 20, margin: '10px 0', lineHeight: 1.6, overflowWrap: 'break-word' }}>
                   {o.order_items.map((i, n) => (
                     <li key={n} style={{ overflowWrap: 'break-word' }}>
-                      {i.quantity}× {i.item_name_snapshot}
+                      {i.quantity}× {i.item_name_snapshot}{' '}
+                      {i.is_custom && (
+                        <span className="chip" style={{ fontSize: 9, padding: '1px 5px', color: 'var(--accent)' }}>
+                          Custom
+                        </span>
+                      )}
+                      {i.item_note && <em style={{ fontSize: 12, display: 'block', color: '#d7c3ab' }}>Note: {i.item_note}</em>}
                     </li>
                   ))}
                 </ul>
@@ -577,9 +911,19 @@ export default function OrderBoard({
                       Reject
                     </button>
                   )}
-                  {['NEW', 'ACCEPTED'].includes(o.status) && editing?.id !== o.id && (
+                  {['NEW', 'ACCEPTED'].includes(o.status) && !o.billed_at && editing?.orderId !== o.id && (
                     <button className="chip" onClick={() => startEdit(o)}>
                       Edit items
+                    </button>
+                  )}
+                  {o.status !== 'CANCELLED' && (
+                    <button
+                      className="chip"
+                      onClick={() => setActiveKitchenOrder(o)}
+                      title="Print Kitchen Ticket"
+                      style={{ fontWeight: 600 }}
+                    >
+                      Kitchen Ticket
                     </button>
                   )}
                   {following && (
@@ -614,11 +958,29 @@ export default function OrderBoard({
           tables={tables}
           menuItems={menu}
           onClose={() => setShowManualModal(false)}
-          onSuccess={async (newOrder) => {
+          onSuccess={async (newOrder, discount) => {
             setShowManualModal(false);
             router.refresh();
-            await billOrderDirectly(newOrder.order_id);
+            await billOrderDirectly(newOrder.order_id, discount);
           }}
+        />
+      )}
+
+      {billingOrder && (
+        <BillDiscountModal
+          orderNumber={billingOrder.order_number}
+          subtotalPaise={billingOrder.total_paise}
+          onClose={() => setBillingOrder(null)}
+          onConfirm={async (discount) => {
+            await billOrderDirectly(billingOrder.id, discount);
+          }}
+        />
+      )}
+
+      {activeKitchenOrder && (
+        <KitchenTicketModal
+          order={activeKitchenOrder}
+          onClose={() => setActiveKitchenOrder(null)}
         />
       )}
 

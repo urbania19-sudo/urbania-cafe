@@ -74,11 +74,11 @@ export default async function AdminMenu() {
         </div>
       </header>
 
-      <nav aria-label="Owner navigation" style={{ display: 'flex', gap: 10, overflowX: 'auto', padding: '16px 0' }}>
+      <nav className="admin-nav" aria-label="Owner navigation">
         <Link className="chip" href="/admin">
           Today’s service
         </Link>
-        <Link className="chip" href="/admin/menu" style={{ background: 'var(--accent)', color: '#2b1b16' }}>
+        <Link className="chip" href="/admin/menu" style={{ background: 'var(--accent)', color: '#2b1b16', fontWeight: 700 }}>
           Menu & prices
         </Link>
         <Link className="chip" href="/admin/tables">
@@ -86,6 +86,9 @@ export default async function AdminMenu() {
         </Link>
         <Link className="chip" href="/admin/settings">
           Settings & FSSAI
+        </Link>
+        <Link className="chip" href="/admin/reports">
+          Audit & reports
         </Link>
       </nav>
 
