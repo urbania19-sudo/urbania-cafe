@@ -94,7 +94,7 @@ Every successful response envelope adheres to strict validation rules:
 - `has_more`: Must be a boolean (`true` or `false`).
 - `next_cursor`: Must be either `null` or a non-empty base64 string.
 - If `has_more = true`, `next_cursor` must be a valid non-empty string.
-- If `has_more = false`, `next_cursor` is `null`, indicating the end of pagination.
+- If `has_more = false`, `next_cursor` must be `null`, indicating the end of pagination. Any response with `has_more = false` and a non-null cursor is rejected as an inconsistent envelope error.
 
 ---
 
@@ -209,6 +209,8 @@ let
                         error Error.Record("UrbaniaEnvelopeError", "Invalid API response envelope: 'next_cursor' must be null or a non-empty text string")
                     else if ParsedJson[has_more] = true and (ParsedJson[next_cursor] = null or Text.Trim(ParsedJson[next_cursor]) = "") then
                         error Error.Record("UrbaniaEnvelopeError", "Inconsistent API response envelope: 'has_more' is true but 'next_cursor' is null or empty")
+                    else if ParsedJson[has_more] = false and ParsedJson[next_cursor] <> null then
+                        error Error.Record("UrbaniaEnvelopeError", "Inconsistent API response envelope: 'has_more' is false but 'next_cursor' is not null")
                     else
                         ParsedJson
         in
@@ -337,6 +339,8 @@ let
                         error Error.Record("UrbaniaEnvelopeError", "Invalid API response envelope: 'next_cursor' must be null or a non-empty text string")
                     else if ParsedJson[has_more] = true and (ParsedJson[next_cursor] = null or Text.Trim(ParsedJson[next_cursor]) = "") then
                         error Error.Record("UrbaniaEnvelopeError", "Inconsistent API response envelope: 'has_more' is true but 'next_cursor' is null or empty")
+                    else if ParsedJson[has_more] = false and ParsedJson[next_cursor] <> null then
+                        error Error.Record("UrbaniaEnvelopeError", "Inconsistent API response envelope: 'has_more' is false but 'next_cursor' is not null")
                     else
                         ParsedJson
         in
@@ -452,6 +456,8 @@ let
                         error Error.Record("UrbaniaEnvelopeError", "Invalid API response envelope: 'next_cursor' must be null or a non-empty text string")
                     else if ParsedJson[has_more] = true and (ParsedJson[next_cursor] = null or Text.Trim(ParsedJson[next_cursor]) = "") then
                         error Error.Record("UrbaniaEnvelopeError", "Inconsistent API response envelope: 'has_more' is true but 'next_cursor' is null or empty")
+                    else if ParsedJson[has_more] = false and ParsedJson[next_cursor] <> null then
+                        error Error.Record("UrbaniaEnvelopeError", "Inconsistent API response envelope: 'has_more' is false but 'next_cursor' is not null")
                     else
                         ParsedJson
         in

@@ -817,6 +817,12 @@ describe('Excel Power Query Reporting Endpoints', () => {
           );
         }
 
+        if (parsedJson.has_more === false && parsedJson.next_cursor !== null) {
+          throw new Error(
+            "Inconsistent API response envelope: 'has_more' is false but 'next_cursor' is not null"
+          );
+        }
+
         return parsedJson;
       };
 
@@ -967,6 +973,23 @@ describe('Excel Power Query Reporting Endpoints', () => {
       });
       await expect(simulatePowerQueryFetch(fetcherInconsistent)).rejects.toThrow(
         /Inconsistent API response envelope: 'has_more' is true but 'next_cursor' is null or empty/
+      );
+    });
+
+    it('Power Query envelope validation fails visibly when has_more is false but next_cursor is not null (regression simulation)', async () => {
+      // NOTE: Source-level simulation. This test validates the contract and parser logic
+      // from docs/excel-power-query.md without invoking the native Power Query M engine directly.
+      const fetcherInconsistentFalseMore = async () => ({
+        status: 200,
+        body: {
+          data: [{ item_id: 'item-1', item_name: 'Masala Chai' }],
+          has_more: false,
+          next_cursor: encodeCursor('2026-10-24T10:00:00.000Z', 'uuid-1'),
+          page_size: 1,
+        },
+      });
+      await expect(simulatePowerQueryFetch(fetcherInconsistentFalseMore)).rejects.toThrow(
+        /Inconsistent API response envelope: 'has_more' is false but 'next_cursor' is not null/
       );
     });
 
