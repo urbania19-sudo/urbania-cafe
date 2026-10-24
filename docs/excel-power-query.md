@@ -80,7 +80,7 @@ The café operates in India Standard Time (UTC+05:30 with no daylight saving tim
 - `endDate=2026-10-24` ends at `2026-10-24 23:59:59.999 IST`, querying database timestamps $\le$ `2026-10-24T18:29:59.999Z`.
 - Non-existent calendar dates (e.g. `2026-02-31`, `2026-04-31`) and unsupported timestamp formats are rejected with `HTTP 400 Bad Request`.
 
-### Standard Response Envelope
+### Standard Response Envelope & Validation Rules
 ```json
 {
   "data": [ ... ],
@@ -89,11 +89,37 @@ The café operates in India Standard Time (UTC+05:30 with no daylight saving tim
   "page_size": 200
 }
 ```
-When there are no further records, `next_cursor` is `null` and `has_more` is `false`.
+Every successful response envelope adheres to strict validation rules:
+- `data`: Must be a list (can be empty `[]` if no matching records exist or when traversing non-item batches).
+- `has_more`: Must be a boolean (`true` or `false`).
+- `next_cursor`: Must be either `null` or a non-empty base64 string.
+- If `has_more = true`, `next_cursor` must be a valid non-empty string.
+- If `has_more = false`, `next_cursor` is `null`, indicating the end of pagination.
 
 ---
 
-## 3. Excel Setup: Shared Parameters
+## 3. Power Query Authentication Error Handling in Excel Desktop
+
+Microsoft documents that standard `Web.Contents` calls in Excel Desktop (outside of custom connector packages) do not support intercepting HTTP 401 or 403 status codes via `ManualStatusHandling`.
+
+### Expected Excel Desktop Behavior
+1. **Initial Connection / Invalid Token**:
+   - If `URBANIA_EXCEL_EXPORT_TOKEN` is incorrect, revoked, or rejected with `401 Unauthorized`, Excel Desktop intercepts the response at the data source engine level.
+   - Excel may open an **"Access Web content"** dialog asking you how to connect (Anonymous, Windows, Basic, Web API).
+   - If prompted, select **Anonymous** (since the token is already passed in the `Authorization: Bearer` header).
+   - If the token remains invalid, Excel will abort query execution and display:
+     `DataSource.Error: The remote server returned an error: (401) Unauthorized.`
+2. **Clearing Cached Credentials in Excel**:
+   - If Excel caches an invalid credential state, go to **Data** → **Get Data** → **Data Source Settings**.
+   - Select `https://urbania-cafe.vercel.app` (or your domain) and click **Clear Permissions**.
+   - Ensure the `UrbaniaExportToken` parameter contains the correct secret and refresh.
+3. **Other HTTP Statuses (400, 404, 405, 500)**:
+   - Supported via `ManualStatusHandling = {400, 404, 405, 500}`.
+   - The M scripts inspect the response metadata and JSON body, raising a visible `UrbaniaApiError` (e.g. `Urbania Café API error (500): Failed to query bills`) so server errors are never swallowed or converted into empty tables.
+
+---
+
+## 4. Excel Setup: Shared Parameters
 
 To keep your workbook organized and make token rotation easy, set up two Power Query Parameters once. All three report queries will reference them.
 
@@ -116,7 +142,7 @@ To keep your workbook organized and make token rotation easy, set up two Power Q
 
 ---
 
-## 4. Query 1: Bills Ledger (`UrbaniaBills`)
+## 5. Query 1: Bills Ledger (`UrbaniaBills`)
 
 ### Step 1: Create Blank Query
 1. In Power Query Editor, click **Home** → **New Source** → **Blank Query**.
@@ -131,7 +157,7 @@ let
     Token = UrbaniaExportToken,
     PageLimit = 200,
 
-    // Helper function to fetch a single page with visible error handling
+    // Helper function to fetch a single page with safe error handling and strict envelope validation
     FetchPage = (cursor as nullable text) =>
         let
             QueryParams = [
@@ -141,30 +167,52 @@ let
                 then Record.AddField(QueryParams, "cursor", cursor) 
                 else QueryParams,
             
-            Source = Web.Contents(EndpointUrl, [
+            // Execute Web.Contents. ManualStatusHandling supports 400, 404, 405, 500.
+            // Note: Standard Power Query engine handles 401/403 at the credential layer.
+            WebCall = try Web.Contents(EndpointUrl, [
                 Query = QueryParamsWithCursor,
                 Headers = [
                     #"Authorization" = "Bearer " & Token,
                     #"Accept" = "application/json"
                 ],
-                ManualStatusHandling = {400, 401, 403, 404, 405, 500}
+                ManualStatusHandling = {400, 404, 405, 500}
             ]),
 
-            ResponseMeta = Value.Metadata(Source),
-            HttpStatus = Record.FieldOrDefault(ResponseMeta, "Response.Status", 200),
-            
-            // Parse response body
-            ParsedJson = try Json.Document(Source) otherwise null,
-            ServerErrorMessage = if ParsedJson <> null and Record.HasFields(ParsedJson, "error") 
-                then Text.From(ParsedJson[error]) 
-                else "HTTP " & Text.From(HttpStatus)
-        in
-            if HttpStatus >= 400 then
-                error Error.Record("UrbaniaApiError", "Urbania Café API error (" & Text.From(HttpStatus) & "): " & ServerErrorMessage, [Status = HttpStatus])
-            else if ParsedJson = null or not Record.HasFields(ParsedJson, "data") or not (ParsedJson[data] is list) then
-                error Error.Record("UrbaniaApiError", "Invalid API response structure: missing 'data' array", [Status = HttpStatus])
+            Result = if WebCall[HasError] then
+                let
+                    ErrorDetail = WebCall[Error],
+                    ErrorMessage = Record.FieldOrDefault(ErrorDetail, "Message", "Unknown connection error")
+                in
+                    error Error.Record("UrbaniaConnectionError", "Failed to connect to Urbania API: " & ErrorMessage)
             else
-                ParsedJson,
+                let
+                    Source = WebCall[Value],
+                    ResponseMeta = Value.Metadata(Source),
+                    HttpStatus = Record.FieldOrDefault(ResponseMeta, "Response.Status", 200),
+                    
+                    ParsedJson = try Json.Document(Source) otherwise null,
+                    ServerErrorMessage = if ParsedJson <> null and Record.HasFields(ParsedJson, "error") 
+                        then Text.From(ParsedJson[error]) 
+                        else "HTTP " & Text.From(HttpStatus)
+                in
+                    if HttpStatus >= 400 then
+                        error Error.Record("UrbaniaApiError", "Urbania Café API error (" & Text.From(HttpStatus) & "): " & ServerErrorMessage, [Status = HttpStatus])
+                    else if ParsedJson = null or not (ParsedJson is record) then
+                        error Error.Record("UrbaniaEnvelopeError", "Invalid API response: expected JSON object")
+                    else if not Record.HasFields(ParsedJson, "data") or not (ParsedJson[data] is list) then
+                        error Error.Record("UrbaniaEnvelopeError", "Invalid API response envelope: 'data' must be a list")
+                    else if not Record.HasFields(ParsedJson, "has_more") or not (ParsedJson[has_more] is logical) then
+                        error Error.Record("UrbaniaEnvelopeError", "Invalid API response envelope: 'has_more' must be a boolean (true/false)")
+                    else if not Record.HasFields(ParsedJson, "next_cursor") then
+                        error Error.Record("UrbaniaEnvelopeError", "Invalid API response envelope: missing 'next_cursor' field")
+                    else if ParsedJson[next_cursor] <> null and (not (ParsedJson[next_cursor] is text) or Text.Trim(ParsedJson[next_cursor]) = "") then
+                        error Error.Record("UrbaniaEnvelopeError", "Invalid API response envelope: 'next_cursor' must be null or a non-empty text string")
+                    else if ParsedJson[has_more] = true and (ParsedJson[next_cursor] = null or Text.Trim(ParsedJson[next_cursor]) = "") then
+                        error Error.Record("UrbaniaEnvelopeError", "Inconsistent API response envelope: 'has_more' is true but 'next_cursor' is null or empty")
+                    else
+                        ParsedJson
+        in
+            Result,
 
     // Paginate through all records using List.Generate until next_cursor is null.
     // Continues through valid empty pages when has_more is true.
@@ -222,7 +270,7 @@ in
 
 ---
 
-## 5. Query 2: Bill Line Items (`UrbaniaBillItems`)
+## 6. Query 2: Bill Line Items (`UrbaniaBillItems`)
 
 This query imports individual item rows with enforced maximum page sizing, automatic multi-batch scanning, and stable ordering across bill boundaries.
 
@@ -239,7 +287,7 @@ let
     Token = UrbaniaExportToken,
     PageLimit = 200,
 
-    // Helper function to fetch a single page of items with visible error handling
+    // Helper function to fetch a single page of items with safe error handling and strict envelope validation
     FetchPage = (cursor as nullable text) =>
         let
             QueryParams = [
@@ -249,30 +297,50 @@ let
                 then Record.AddField(QueryParams, "cursor", cursor) 
                 else QueryParams,
             
-            Source = Web.Contents(EndpointUrl, [
+            WebCall = try Web.Contents(EndpointUrl, [
                 Query = QueryParamsWithCursor,
                 Headers = [
                     #"Authorization" = "Bearer " & Token,
                     #"Accept" = "application/json"
                 ],
-                ManualStatusHandling = {400, 401, 403, 404, 405, 500}
+                ManualStatusHandling = {400, 404, 405, 500}
             ]),
 
-            ResponseMeta = Value.Metadata(Source),
-            HttpStatus = Record.FieldOrDefault(ResponseMeta, "Response.Status", 200),
-            
-            // Parse response body
-            ParsedJson = try Json.Document(Source) otherwise null,
-            ServerErrorMessage = if ParsedJson <> null and Record.HasFields(ParsedJson, "error") 
-                then Text.From(ParsedJson[error]) 
-                else "HTTP " & Text.From(HttpStatus)
-        in
-            if HttpStatus >= 400 then
-                error Error.Record("UrbaniaApiError", "Urbania Café API error (" & Text.From(HttpStatus) & "): " & ServerErrorMessage, [Status = HttpStatus])
-            else if ParsedJson = null or not Record.HasFields(ParsedJson, "data") or not (ParsedJson[data] is list) then
-                error Error.Record("UrbaniaApiError", "Invalid API response structure: missing 'data' array", [Status = HttpStatus])
+            Result = if WebCall[HasError] then
+                let
+                    ErrorDetail = WebCall[Error],
+                    ErrorMessage = Record.FieldOrDefault(ErrorDetail, "Message", "Unknown connection error")
+                in
+                    error Error.Record("UrbaniaConnectionError", "Failed to connect to Urbania API: " & ErrorMessage)
             else
-                ParsedJson,
+                let
+                    Source = WebCall[Value],
+                    ResponseMeta = Value.Metadata(Source),
+                    HttpStatus = Record.FieldOrDefault(ResponseMeta, "Response.Status", 200),
+                    
+                    ParsedJson = try Json.Document(Source) otherwise null,
+                    ServerErrorMessage = if ParsedJson <> null and Record.HasFields(ParsedJson, "error") 
+                        then Text.From(ParsedJson[error]) 
+                        else "HTTP " & Text.From(HttpStatus)
+                in
+                    if HttpStatus >= 400 then
+                        error Error.Record("UrbaniaApiError", "Urbania Café API error (" & Text.From(HttpStatus) & "): " & ServerErrorMessage, [Status = HttpStatus])
+                    else if ParsedJson = null or not (ParsedJson is record) then
+                        error Error.Record("UrbaniaEnvelopeError", "Invalid API response: expected JSON object")
+                    else if not Record.HasFields(ParsedJson, "data") or not (ParsedJson[data] is list) then
+                        error Error.Record("UrbaniaEnvelopeError", "Invalid API response envelope: 'data' must be a list")
+                    else if not Record.HasFields(ParsedJson, "has_more") or not (ParsedJson[has_more] is logical) then
+                        error Error.Record("UrbaniaEnvelopeError", "Invalid API response envelope: 'has_more' must be a boolean (true/false)")
+                    else if not Record.HasFields(ParsedJson, "next_cursor") then
+                        error Error.Record("UrbaniaEnvelopeError", "Invalid API response envelope: missing 'next_cursor' field")
+                    else if ParsedJson[next_cursor] <> null and (not (ParsedJson[next_cursor] is text) or Text.Trim(ParsedJson[next_cursor]) = "") then
+                        error Error.Record("UrbaniaEnvelopeError", "Invalid API response envelope: 'next_cursor' must be null or a non-empty text string")
+                    else if ParsedJson[has_more] = true and (ParsedJson[next_cursor] = null or Text.Trim(ParsedJson[next_cursor]) = "") then
+                        error Error.Record("UrbaniaEnvelopeError", "Inconsistent API response envelope: 'has_more' is true but 'next_cursor' is null or empty")
+                    else
+                        ParsedJson
+        in
+            Result,
 
     // Paginate through all batches until next_cursor is null.
     // Continues through valid empty pages when has_more is true.
@@ -319,7 +387,7 @@ in
 
 ---
 
-## 6. Query 3: Audit Events (`UrbaniaAuditEvents`)
+## 7. Query 3: Audit Events (`UrbaniaAuditEvents`)
 
 ### Step 1: Create Blank Query
 1. In Power Query Editor, click **Home** → **New Source** → **Blank Query**.
@@ -334,7 +402,7 @@ let
     Token = UrbaniaExportToken,
     PageLimit = 200,
 
-    // Helper function to fetch a single page of audit events with visible error handling
+    // Helper function to fetch a single page of audit events with safe error handling and strict envelope validation
     FetchPage = (cursor as nullable text) =>
         let
             QueryParams = [
@@ -344,30 +412,50 @@ let
                 then Record.AddField(QueryParams, "cursor", cursor) 
                 else QueryParams,
             
-            Source = Web.Contents(EndpointUrl, [
+            WebCall = try Web.Contents(EndpointUrl, [
                 Query = QueryParamsWithCursor,
                 Headers = [
                     #"Authorization" = "Bearer " & Token,
                     #"Accept" = "application/json"
                 ],
-                ManualStatusHandling = {400, 401, 403, 404, 405, 500}
+                ManualStatusHandling = {400, 404, 405, 500}
             ]),
 
-            ResponseMeta = Value.Metadata(Source),
-            HttpStatus = Record.FieldOrDefault(ResponseMeta, "Response.Status", 200),
-            
-            // Parse response body
-            ParsedJson = try Json.Document(Source) otherwise null,
-            ServerErrorMessage = if ParsedJson <> null and Record.HasFields(ParsedJson, "error") 
-                then Text.From(ParsedJson[error]) 
-                else "HTTP " & Text.From(HttpStatus)
-        in
-            if HttpStatus >= 400 then
-                error Error.Record("UrbaniaApiError", "Urbania Café API error (" & Text.From(HttpStatus) & "): " & ServerErrorMessage, [Status = HttpStatus])
-            else if ParsedJson = null or not Record.HasFields(ParsedJson, "data") or not (ParsedJson[data] is list) then
-                error Error.Record("UrbaniaApiError", "Invalid API response structure: missing 'data' array", [Status = HttpStatus])
+            Result = if WebCall[HasError] then
+                let
+                    ErrorDetail = WebCall[Error],
+                    ErrorMessage = Record.FieldOrDefault(ErrorDetail, "Message", "Unknown connection error")
+                in
+                    error Error.Record("UrbaniaConnectionError", "Failed to connect to Urbania API: " & ErrorMessage)
             else
-                ParsedJson,
+                let
+                    Source = WebCall[Value],
+                    ResponseMeta = Value.Metadata(Source),
+                    HttpStatus = Record.FieldOrDefault(ResponseMeta, "Response.Status", 200),
+                    
+                    ParsedJson = try Json.Document(Source) otherwise null,
+                    ServerErrorMessage = if ParsedJson <> null and Record.HasFields(ParsedJson, "error") 
+                        then Text.From(ParsedJson[error]) 
+                        else "HTTP " & Text.From(HttpStatus)
+                in
+                    if HttpStatus >= 400 then
+                        error Error.Record("UrbaniaApiError", "Urbania Café API error (" & Text.From(HttpStatus) & "): " & ServerErrorMessage, [Status = HttpStatus])
+                    else if ParsedJson = null or not (ParsedJson is record) then
+                        error Error.Record("UrbaniaEnvelopeError", "Invalid API response: expected JSON object")
+                    else if not Record.HasFields(ParsedJson, "data") or not (ParsedJson[data] is list) then
+                        error Error.Record("UrbaniaEnvelopeError", "Invalid API response envelope: 'data' must be a list")
+                    else if not Record.HasFields(ParsedJson, "has_more") or not (ParsedJson[has_more] is logical) then
+                        error Error.Record("UrbaniaEnvelopeError", "Invalid API response envelope: 'has_more' must be a boolean (true/false)")
+                    else if not Record.HasFields(ParsedJson, "next_cursor") then
+                        error Error.Record("UrbaniaEnvelopeError", "Invalid API response envelope: missing 'next_cursor' field")
+                    else if ParsedJson[next_cursor] <> null and (not (ParsedJson[next_cursor] is text) or Text.Trim(ParsedJson[next_cursor]) = "") then
+                        error Error.Record("UrbaniaEnvelopeError", "Invalid API response envelope: 'next_cursor' must be null or a non-empty text string")
+                    else if ParsedJson[has_more] = true and (ParsedJson[next_cursor] = null or Text.Trim(ParsedJson[next_cursor]) = "") then
+                        error Error.Record("UrbaniaEnvelopeError", "Inconsistent API response envelope: 'has_more' is true but 'next_cursor' is null or empty")
+                    else
+                        ParsedJson
+        in
+            Result,
 
     // Paginate through all audit events until next_cursor is null.
     // Continues through valid empty pages when has_more is true.
@@ -409,7 +497,7 @@ in
 
 ---
 
-## 7. Loading Into Worksheets & Automatic Refresh
+## 8. Loading Into Worksheets & Automatic Refresh
 
 ### Loading to Separate Worksheets
 1. In the Power Query Editor, click **Home** → **Close & Load** (or **Close & Load To...**).

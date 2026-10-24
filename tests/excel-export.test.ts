@@ -742,35 +742,94 @@ describe('Excel Power Query Reporting Endpoints', () => {
     });
   });
 
-  describe('8. Power Query Client Error Transparency Simulation', () => {
-    // Simulates the exact Power Query M evaluation logic from docs/excel-power-query.md
+  describe('8. Power Query Client Contract & Envelope Validation Simulation', () => {
+    /**
+     * NOTE ON TESTING SCOPE:
+     * This suite provides automated contract and simulation tests for the Power Query M logic
+     * documented in `docs/excel-power-query.md`. It validates that the client-side error-handling
+     * algorithm, envelope schema rules, and pagination behavior behave safely under all edge cases.
+     * 
+     * This automated test suite does NOT execute the Microsoft Power Query M engine directly
+     * (which requires the Windows Excel Desktop runtime). Live interactive behavior
+     * (such as Excel Desktop's "Access Web content" credential modal on HTTP 401 or clearing data source permissions)
+     * must be verified manually in Microsoft Excel Desktop as detailed in `docs/excel-power-query.md`.
+     */
     async function simulatePowerQueryFetch(
-      fetchPageFn: (cursor: string | null) => Promise<{ status: number; body: any }>
+      fetchPageFn: (cursor: string | null) => Promise<{ status?: number; body?: any; throwsError?: Error }>
     ) {
       const fetchPage = async (cursor: string | null) => {
-        const res = await fetchPageFn(cursor);
-        const httpStatus = res.status;
-        const parsedJson = res.body;
+        let webCallResult: { status: number; body: any };
+        try {
+          const res = await fetchPageFn(cursor);
+          if (res.throwsError) {
+            throw res.throwsError;
+          }
+          webCallResult = { status: res.status ?? 200, body: res.body };
+        } catch (err: any) {
+          // Simulates: WebCall = try Web.Contents(...)
+          // Result = if WebCall[HasError] then error Error.Record("UrbaniaConnectionError", ...)
+          throw new Error(`Failed to connect to Urbania API: ${err?.message || 'Unknown connection error'}`);
+        }
 
+        const { status: httpStatus, body: parsedJson } = webCallResult;
         const serverErrorMessage =
-          parsedJson && parsedJson.error ? parsedJson.error : `HTTP ${httpStatus}`;
+          parsedJson && typeof parsedJson === 'object' && parsedJson.error
+            ? String(parsedJson.error)
+            : `HTTP ${httpStatus}`;
 
+        // ManualStatusHandling = {400, 404, 405, 500}
         if (httpStatus >= 400) {
           throw new Error(`Urbania Café API error (${httpStatus}): ${serverErrorMessage}`);
         }
 
-        if (!parsedJson || !Array.isArray(parsedJson.data)) {
-          throw new Error('Invalid API response structure: missing data array');
+        // Envelope validation checks matching docs/excel-power-query.md
+        if (parsedJson === null || typeof parsedJson !== 'object' || Array.isArray(parsedJson)) {
+          throw new Error('Invalid API response: expected JSON object');
+        }
+
+        if (!('data' in parsedJson) || !Array.isArray(parsedJson.data)) {
+          throw new Error("Invalid API response envelope: 'data' must be a list");
+        }
+
+        if (!('has_more' in parsedJson) || typeof parsedJson.has_more !== 'boolean') {
+          throw new Error("Invalid API response envelope: 'has_more' must be a boolean (true/false)");
+        }
+
+        if (!('next_cursor' in parsedJson)) {
+          throw new Error("Invalid API response envelope: missing 'next_cursor' field");
+        }
+
+        if (
+          parsedJson.next_cursor !== null &&
+          (typeof parsedJson.next_cursor !== 'string' || parsedJson.next_cursor.trim() === '')
+        ) {
+          throw new Error(
+            "Invalid API response envelope: 'next_cursor' must be null or a non-empty text string"
+          );
+        }
+
+        if (
+          parsedJson.has_more === true &&
+          (parsedJson.next_cursor === null || parsedJson.next_cursor.trim() === '')
+        ) {
+          throw new Error(
+            "Inconsistent API response envelope: 'has_more' is true but 'next_cursor' is null or empty"
+          );
         }
 
         return parsedJson;
       };
 
-      // M List.Generate equivalent
+      // M List.Generate equivalent:
+      // List.Generate(
+      //   () => FetchPage(null),
+      //   each _ <> null and Record.HasFields(_, "data"),
+      //   each if _[has_more] = true and _[next_cursor] <> null then FetchPage(_[next_cursor]) else null
+      // )
       const pages: any[][] = [];
       let currentPage = await fetchPage(null);
 
-      while (currentPage && Array.isArray(currentPage.data)) {
+      while (currentPage !== null && typeof currentPage === 'object' && Array.isArray(currentPage.data)) {
         pages.push(currentPage.data);
         if (currentPage.has_more === true && currentPage.next_cursor) {
           currentPage = await fetchPage(currentPage.next_cursor);
@@ -782,6 +841,16 @@ describe('Excel Power Query Reporting Endpoints', () => {
       // M List.Combine
       return pages.flat();
     }
+
+    it('Power Query simulation raises UrbaniaConnectionError on network or transport failure', async () => {
+      const fetcher = async () => {
+        throw new Error('Name resolution failure');
+      };
+
+      await expect(simulatePowerQueryFetch(fetcher)).rejects.toThrow(
+        /Failed to connect to Urbania API: Name resolution failure/
+      );
+    });
 
     it('Power Query evaluation fails visibly on HTTP 401 and never silently creates an empty table', async () => {
       // Calling getBills without Authorization header results in 401
@@ -815,15 +884,101 @@ describe('Excel Power Query Reporting Endpoints', () => {
       );
     });
 
+    it('Power Query envelope validation fails visibly when response is not a JSON object', async () => {
+      const fetcherNull = async () => ({ status: 200, body: null });
+      await expect(simulatePowerQueryFetch(fetcherNull)).rejects.toThrow(
+        /Invalid API response: expected JSON object/
+      );
+
+      const fetcherArray = async () => ({ status: 200, body: [] });
+      await expect(simulatePowerQueryFetch(fetcherArray)).rejects.toThrow(
+        /Invalid API response: expected JSON object/
+      );
+    });
+
+    it('Power Query envelope validation fails visibly when data is missing or not a list', async () => {
+      const fetcherNoData = async () => ({
+        status: 200,
+        body: { has_more: false, next_cursor: null },
+      });
+      await expect(simulatePowerQueryFetch(fetcherNoData)).rejects.toThrow(
+        /Invalid API response envelope: 'data' must be a list/
+      );
+
+      const fetcherNonListData = async () => ({
+        status: 200,
+        body: { data: 'not-a-list', has_more: false, next_cursor: null },
+      });
+      await expect(simulatePowerQueryFetch(fetcherNonListData)).rejects.toThrow(
+        /Invalid API response envelope: 'data' must be a list/
+      );
+    });
+
+    it('Power Query envelope validation fails visibly when has_more is missing or not a boolean', async () => {
+      const fetcherNoHasMore = async () => ({
+        status: 200,
+        body: { data: [], next_cursor: null },
+      });
+      await expect(simulatePowerQueryFetch(fetcherNoHasMore)).rejects.toThrow(
+        /Invalid API response envelope: 'has_more' must be a boolean \(true\/false\)/
+      );
+
+      const fetcherStringHasMore = async () => ({
+        status: 200,
+        body: { data: [], has_more: 'true', next_cursor: null },
+      });
+      await expect(simulatePowerQueryFetch(fetcherStringHasMore)).rejects.toThrow(
+        /Invalid API response envelope: 'has_more' must be a boolean \(true\/false\)/
+      );
+    });
+
+    it('Power Query envelope validation fails visibly when next_cursor field is missing', async () => {
+      const fetcherNoCursor = async () => ({
+        status: 200,
+        body: { data: [], has_more: false },
+      });
+      await expect(simulatePowerQueryFetch(fetcherNoCursor)).rejects.toThrow(
+        /Invalid API response envelope: missing 'next_cursor' field/
+      );
+    });
+
+    it('Power Query envelope validation fails visibly when next_cursor is invalid text or empty string', async () => {
+      const fetcherEmptyCursor = async () => ({
+        status: 200,
+        body: { data: [], has_more: false, next_cursor: '   ' },
+      });
+      await expect(simulatePowerQueryFetch(fetcherEmptyCursor)).rejects.toThrow(
+        /Invalid API response envelope: 'next_cursor' must be null or a non-empty text string/
+      );
+
+      const fetcherNumberCursor = async () => ({
+        status: 200,
+        body: { data: [], has_more: false, next_cursor: 12345 },
+      });
+      await expect(simulatePowerQueryFetch(fetcherNumberCursor)).rejects.toThrow(
+        /Invalid API response envelope: 'next_cursor' must be null or a non-empty text string/
+      );
+    });
+
+    it('Power Query envelope validation fails visibly when has_more is true but next_cursor is null or empty', async () => {
+      const fetcherInconsistent = async () => ({
+        status: 200,
+        body: { data: [], has_more: true, next_cursor: null },
+      });
+      await expect(simulatePowerQueryFetch(fetcherInconsistent)).rejects.toThrow(
+        /Inconsistent API response envelope: 'has_more' is true but 'next_cursor' is null or empty/
+      );
+    });
+
     it('Power Query evaluation continues through a valid empty page when has_more is true', async () => {
-      // Page 1 returns empty items with has_more: true
+      // Page 1 returns empty items with has_more: true and valid next_cursor
       const page1 = {
         data: [],
         next_cursor: encodeCursor('2026-10-24T10:00:00.000Z', 'uuid-1'),
         has_more: true,
         page_size: 0,
       };
-      // Page 2 returns actual items with has_more: false
+      // Page 2 returns actual items with has_more: false and next_cursor: null
       const page2 = {
         data: [{ item_id: 'item-2', item_name: 'Hot Chocolate' }],
         next_cursor: null,
@@ -841,6 +996,26 @@ describe('Excel Power Query Reporting Endpoints', () => {
       expect(result.length).toBe(1);
       expect(result[0].item_id).toBe('item-2');
       expect(callCount).toBe(2);
+    });
+
+    it('Power Query evaluation completes cleanly when has_more is false and next_cursor is null', async () => {
+      const page = {
+        data: [{ item_id: 'item-1', item_name: 'Masala Chai' }],
+        next_cursor: null,
+        has_more: false,
+        page_size: 1,
+      };
+
+      let callCount = 0;
+      const fetcher = async () => {
+        callCount++;
+        return { status: 200, body: page };
+      };
+
+      const result = await simulatePowerQueryFetch(fetcher);
+      expect(result.length).toBe(1);
+      expect(result[0].item_id).toBe('item-1');
+      expect(callCount).toBe(1);
     });
   });
 
