@@ -27,25 +27,32 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const { limit, startDate, endDate, eventType, billId, sort, cursorPayload } = validation.params;
+  const { limit, startUtcBoundary, endUtcBoundary, eventType, billId, sort, cursorPayload } =
+    validation.params;
 
   try {
     const db = adminDb();
 
     let query = db
       .from('bill_audit_events')
-      .select('id, bill_id, bill_number, event_type, actor_id, actor_role, actor_email, metadata, created_at');
+      .select(
+        'id, bill_id, bill_number, event_type, actor_id, actor_role, actor_email, metadata, created_at'
+      );
 
     if (eventType !== 'all') query = query.eq('event_type', eventType);
     if (billId) query = query.eq('bill_id', billId);
-    if (startDate) query = query.gte('created_at', `${startDate}T00:00:00.000Z`);
-    if (endDate) query = query.lte('created_at', `${endDate}T23:59:59.999Z`);
+    if (startUtcBoundary) query = query.gte('created_at', startUtcBoundary);
+    if (endUtcBoundary) query = query.lte('created_at', endUtcBoundary);
 
     if (cursorPayload) {
       if (sort === 'desc') {
-        query = query.or(`created_at.lt.${cursorPayload.t},and(created_at.eq.${cursorPayload.t},id.lt.${cursorPayload.id})`);
+        query = query.or(
+          `created_at.lt.${cursorPayload.t},and(created_at.eq.${cursorPayload.t},id.lt.${cursorPayload.id})`
+        );
       } else {
-        query = query.or(`created_at.gt.${cursorPayload.t},and(created_at.eq.${cursorPayload.t},id.gt.${cursorPayload.id})`);
+        query = query.or(
+          `created_at.gt.${cursorPayload.t},and(created_at.eq.${cursorPayload.t},id.gt.${cursorPayload.id})`
+        );
       }
     }
 
@@ -57,22 +64,10 @@ export async function GET(req: NextRequest) {
     const { data: rawEvents, error } = await query;
 
     if (error) {
-      console.warn('Audit events Excel export query notice:', error.message);
-      // If table does not exist or schema issue, return empty result gracefully
+      console.error('Audit events Excel export query failed:', error.message);
       return NextResponse.json(
-        {
-          data: [],
-          next_cursor: null,
-          has_more: false,
-          page_size: 0,
-        },
-        {
-          status: 200,
-          headers: {
-            'Cache-Control': 'no-store, max-age=0',
-            'Content-Type': 'application/json; charset=utf-8',
-          },
-        }
+        { error: 'Failed to query audit events' },
+        { status: 500, headers: { 'Cache-Control': 'no-store, max-age=0' } }
       );
     }
 
@@ -119,9 +114,9 @@ export async function GET(req: NextRequest) {
       }
     );
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Internal Server Error';
+    console.error('Audit events Excel export unexpected failure:', err);
     return NextResponse.json(
-      { error: `Events export failed: ${message}` },
+      { error: 'Internal Server Error' },
       { status: 500, headers: { 'Cache-Control': 'no-store, max-age=0' } }
     );
   }

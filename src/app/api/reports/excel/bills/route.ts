@@ -27,79 +27,53 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const { limit, startDate, endDate, status, orderSource, sort, cursorPayload } = validation.params;
+  const { limit, startUtcBoundary, endUtcBoundary, status, orderSource, sort, cursorPayload } =
+    validation.params;
 
   try {
     const db = adminDb();
-    let rawBills: Record<string, unknown>[] = [];
 
-    // Helper to apply filters to any query
-    const applyFilters = (baseQuery: any) => {
-      let q = baseQuery;
-      if (status !== 'all') q = q.eq('status', status);
-      if (orderSource !== 'all') q = q.eq('order_source', orderSource);
-      if (startDate) q = q.gte('issued_at', `${startDate}T00:00:00.000Z`);
-      if (endDate) q = q.lte('issued_at', `${endDate}T23:59:59.999Z`);
-
-      if (cursorPayload) {
-        if (sort === 'desc') {
-          q = q.or(`issued_at.lt.${cursorPayload.t},and(issued_at.eq.${cursorPayload.t},id.lt.${cursorPayload.id})`);
-        } else {
-          q = q.or(`issued_at.gt.${cursorPayload.t},and(issued_at.eq.${cursorPayload.t},id.gt.${cursorPayload.id})`);
-        }
-      }
-
-      q = q
-        .order('issued_at', { ascending: sort === 'asc' })
-        .order('id', { ascending: sort === 'asc' })
-        .limit(limit + 1);
-
-      return q;
-    };
-
-    // 1. Primary Query: Assumes modern schema (Migration 0009)
-    let primaryQuery = db
+    let query = db
       .from('bills')
-      .select('id, bill_number, order_id, order_number, table_number, table_label, status, subtotal_paise, tax_rate, tax_paise, total_paise, notes, issued_at, issued_by, cancelled_at, cancellation_reason, order_source, service_mode, customer_name, orders(customer_name, guest_count, service_mode, order_source)');
+      .select(
+        'id, bill_number, order_id, order_number, table_number, table_label, status, subtotal_paise, tax_rate, tax_paise, total_paise, notes, issued_at, issued_by, cancelled_at, cancellation_reason, order_source, service_mode, customer_name, orders(customer_name, guest_count, service_mode, order_source)'
+      );
 
-    const primaryRes = await applyFilters(primaryQuery);
+    if (status !== 'all') query = query.eq('status', status);
+    if (orderSource !== 'all') query = query.eq('order_source', orderSource);
+    if (startUtcBoundary) query = query.gte('issued_at', startUtcBoundary);
+    if (endUtcBoundary) query = query.lte('issued_at', endUtcBoundary);
 
-    if (!primaryRes.error) {
-      rawBills = (primaryRes.data || []) as unknown as Record<string, unknown>[];
-    } else {
-      console.warn('Primary bills Excel export query failed, trying safe fallback:', primaryRes.error.message);
-
-      if (orderSource === 'manual') {
-        rawBills = [];
+    if (cursorPayload) {
+      if (sort === 'desc') {
+        query = query.or(
+          `issued_at.lt.${cursorPayload.t},and(issued_at.eq.${cursorPayload.t},id.lt.${cursorPayload.id})`
+        );
       } else {
-        // Fallback: Query bills with safe orders(customer_name, guest_count)
-        let fallbackQuery = db
-          .from('bills')
-          .select('id, bill_number, order_id, order_number, table_number, table_label, status, subtotal_paise, tax_rate, tax_paise, total_paise, notes, issued_at, issued_by, cancelled_at, cancellation_reason, orders(customer_name, guest_count)');
-
-        const fallbackRes = await applyFilters(fallbackQuery);
-        if (!fallbackRes.error) {
-          rawBills = (fallbackRes.data || []) as unknown as Record<string, unknown>[];
-        } else {
-          // Direct bills query without joins
-          let directQuery = db
-            .from('bills')
-            .select('id, bill_number, order_id, order_number, table_number, table_label, status, subtotal_paise, tax_rate, tax_paise, total_paise, notes, issued_at, issued_by, cancelled_at, cancellation_reason');
-
-          const directRes = await applyFilters(directQuery);
-          if (directRes.error) {
-            return NextResponse.json(
-              { error: `Database query failed: ${directRes.error.message}` },
-              { status: 500, headers: { 'Cache-Control': 'no-store, max-age=0' } }
-            );
-          }
-          rawBills = (directRes.data || []) as unknown as Record<string, unknown>[];
-        }
+        query = query.or(
+          `issued_at.gt.${cursorPayload.t},and(issued_at.eq.${cursorPayload.t},id.gt.${cursorPayload.id})`
+        );
       }
     }
 
-    const hasMore = rawBills.length > limit;
-    const pageData = hasMore ? rawBills.slice(0, limit) : rawBills;
+    query = query
+      .order('issued_at', { ascending: sort === 'asc' })
+      .order('id', { ascending: sort === 'asc' })
+      .limit(limit + 1);
+
+    const { data: rawBills, error } = await query;
+
+    if (error) {
+      console.error('Bills Excel export query failed:', error.message);
+      return NextResponse.json(
+        { error: 'Failed to query bills' },
+        { status: 500, headers: { 'Cache-Control': 'no-store, max-age=0' } }
+      );
+    }
+
+    const billsList = (rawBills || []) as Record<string, unknown>[];
+    const hasMore = billsList.length > limit;
+    const pageData = hasMore ? billsList.slice(0, limit) : billsList;
     let nextCursor: string | null = null;
 
     if (hasMore && pageData.length > 0) {
@@ -167,9 +141,9 @@ export async function GET(req: NextRequest) {
       }
     );
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Internal Server Error';
+    console.error('Bills Excel export unexpected failure:', err);
     return NextResponse.json(
-      { error: `Bills export failed: ${message}` },
+      { error: 'Internal Server Error' },
       { status: 500, headers: { 'Cache-Control': 'no-store, max-age=0' } }
     );
   }

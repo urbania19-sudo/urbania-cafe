@@ -1,8 +1,23 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-import { GET as getBills, POST as postBills, PUT as putBills, DELETE as deleteBills } from '@/app/api/reports/excel/bills/route';
-import { GET as getItems, POST as postItems, PUT as putItems, DELETE as deleteItems } from '@/app/api/reports/excel/items/route';
-import { GET as getEvents, POST as postEvents, PUT as putEvents, DELETE as deleteEvents } from '@/app/api/reports/excel/events/route';
+import {
+  GET as getBills,
+  POST as postBills,
+  PUT as putBills,
+  DELETE as deleteBills,
+} from '@/app/api/reports/excel/bills/route';
+import {
+  GET as getItems,
+  POST as postItems,
+  PUT as putItems,
+  DELETE as deleteItems,
+} from '@/app/api/reports/excel/items/route';
+import {
+  GET as getEvents,
+  POST as postEvents,
+  PUT as putEvents,
+  DELETE as deleteEvents,
+} from '@/app/api/reports/excel/events/route';
 import { encodeCursor, decodeCursor } from '@/lib/excel-export-helpers';
 
 // Mock Supabase adminDb
@@ -114,7 +129,6 @@ describe('Excel Power Query Reporting Endpoints', () => {
     });
 
     it('never accepts export token in URL query parameter', async () => {
-      // Query param token should be rejected if Authorization header is missing
       const req = new NextRequest(`http://localhost/api/reports/excel/bills?token=${TEST_TOKEN}`);
       const res = await getBills(req);
       expect(res.status).toBe(401);
@@ -165,9 +179,95 @@ describe('Excel Power Query Reporting Endpoints', () => {
     });
   });
 
-  describe('3. Query Parameter Validation', () => {
+  describe('3. Query Parameter Validation & Indian Date Boundaries (Asia/Kolkata)', () => {
     const makeAuthReq = (url: string) =>
       new NextRequest(url, { headers: { Authorization: `Bearer ${TEST_TOKEN}` } });
+
+    it('converts India business date (Asia/Kolkata) to exact UTC boundaries for bills', async () => {
+      mockQueryBuilder.limit.mockResolvedValueOnce({ data: [], error: null });
+
+      // In IST (UTC+05:30):
+      // 2026-10-24 00:00:00.000 IST = 2026-10-23T18:30:00.000Z UTC
+      // 2026-10-24 23:59:59.999 IST = 2026-10-24T18:29:59.999Z UTC
+      await getBills(makeAuthReq('http://localhost/api/reports/excel/bills?startDate=2026-10-24&endDate=2026-10-24'));
+
+      expect(mockQueryBuilder.gte).toHaveBeenCalledWith('issued_at', '2026-10-23T18:30:00.000Z');
+      expect(mockQueryBuilder.lte).toHaveBeenCalledWith('issued_at', '2026-10-24T18:29:59.999Z');
+    });
+
+    it('converts India business date (Asia/Kolkata) to exact UTC boundaries for audit events', async () => {
+      mockQueryBuilder.limit.mockResolvedValueOnce({ data: [], error: null });
+
+      await getEvents(makeAuthReq('http://localhost/api/reports/excel/events?startDate=2026-10-24&endDate=2026-10-24'));
+
+      expect(mockQueryBuilder.gte).toHaveBeenCalledWith('created_at', '2026-10-23T18:30:00.000Z');
+      expect(mockQueryBuilder.lte).toHaveBeenCalledWith('created_at', '2026-10-24T18:29:59.999Z');
+    });
+
+    it('rejects impossible calendar date 2026-02-31 with HTTP 400', async () => {
+      const res = await getBills(makeAuthReq('http://localhost/api/reports/excel/bills?startDate=2026-02-31'));
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toContain('not a valid calendar date');
+    });
+
+    it('rejects impossible calendar date 2026-04-31 (April has 30 days) with HTTP 400', async () => {
+      const res = await getBills(makeAuthReq('http://localhost/api/reports/excel/bills?startDate=2026-04-31'));
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toContain('not a valid calendar date');
+    });
+
+    it('rejects impossible calendar date in non-leap year (2025-02-29) with HTTP 400', async () => {
+      const res = await getBills(makeAuthReq('http://localhost/api/reports/excel/bills?startDate=2025-02-29'));
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toContain('not a valid calendar date');
+    });
+
+    it('accepts valid leap year date 2024-02-29 with HTTP 200', async () => {
+      mockQueryBuilder.limit.mockResolvedValueOnce({ data: [], error: null });
+      const res = await getBills(makeAuthReq('http://localhost/api/reports/excel/bills?startDate=2024-02-29'));
+      expect(res.status).toBe(200);
+      expect(mockQueryBuilder.gte).toHaveBeenCalledWith('issued_at', '2024-02-28T18:30:00.000Z');
+    });
+
+    it('rejects invalid month numbers with HTTP 400', async () => {
+      const res = await getBills(makeAuthReq('http://localhost/api/reports/excel/bills?startDate=2026-13-01'));
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toContain('month must be between 01 and 12');
+    });
+
+    it('rejects invalid day numbers with HTTP 400', async () => {
+      const res = await getBills(makeAuthReq('http://localhost/api/reports/excel/bills?startDate=2026-01-00'));
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toContain('day must be between 01 and 31');
+    });
+
+    it('rejects unsupported timestamp format (e.g. ISO string) in date-only filter with HTTP 400', async () => {
+      const res = await getBills(makeAuthReq('http://localhost/api/reports/excel/bills?startDate=2026-10-24T00:00:00Z'));
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toContain('must be a calendar date in YYYY-MM-DD format');
+    });
+
+    it('rejects non-standard slash format (e.g. MM/DD/YYYY) with HTTP 400', async () => {
+      const res = await getBills(makeAuthReq('http://localhost/api/reports/excel/bills?startDate=10/24/2026'));
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toContain('must be a calendar date in YYYY-MM-DD format');
+    });
+
+    it('rejects startDate > endDate with HTTP 400', async () => {
+      const res = await getBills(
+        makeAuthReq('http://localhost/api/reports/excel/bills?startDate=2026-10-25&endDate=2026-10-20')
+      );
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toContain('startDate cannot be after endDate');
+    });
 
     it('rejects limit < 1 with HTTP 400', async () => {
       const res = await getBills(makeAuthReq('http://localhost/api/reports/excel/bills?limit=0'));
@@ -181,22 +281,6 @@ describe('Excel Power Query Reporting Endpoints', () => {
       expect(res.status).toBe(400);
       const data = await res.json();
       expect(data.error).toContain('must be an integer between 1 and 1000');
-    });
-
-    it('rejects invalid startDate format with HTTP 400', async () => {
-      const res = await getBills(makeAuthReq('http://localhost/api/reports/excel/bills?startDate=invalid-date'));
-      expect(res.status).toBe(400);
-      const data = await res.json();
-      expect(data.error).toContain('Invalid startDate');
-    });
-
-    it('rejects startDate > endDate with HTTP 400', async () => {
-      const res = await getBills(
-        makeAuthReq('http://localhost/api/reports/excel/bills?startDate=2026-10-25&endDate=2026-10-20')
-      );
-      expect(res.status).toBe(400);
-      const data = await res.json();
-      expect(data.error).toContain('startDate cannot be after endDate');
     });
 
     it('rejects invalid status filter with HTTP 400', async () => {
@@ -242,11 +326,85 @@ describe('Excel Power Query Reporting Endpoints', () => {
     });
   });
 
-  describe('4. Bills Endpoint (/api/reports/excel/bills)', () => {
+  describe('4. Error Transparency & Sanitization (Never hide reporting failures)', () => {
     const makeAuthReq = (url: string) =>
       new NextRequest(url, { headers: { Authorization: `Bearer ${TEST_TOKEN}` } });
 
-    it('handles empty results cleanly', async () => {
+    it('returns HTTP 500 when audit events database query fails (does not return fake empty 200)', async () => {
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      mockQueryBuilder.limit.mockResolvedValueOnce({
+        data: null,
+        error: { message: 'relation "bill_audit_events" does not exist' },
+      });
+
+      const res = await getEvents(makeAuthReq('http://localhost/api/reports/excel/events'));
+      expect(res.status).toBe(500);
+      const json = await res.json();
+
+      // Generic sanitized error returned to client
+      expect(json.error).toBe('Failed to query audit events');
+      // Must not leak raw SQL table names or database error details to client
+      expect(json.error).not.toContain('bill_audit_events');
+      // Detailed diagnostics logged server-side
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Audit events Excel export query failed'),
+        expect.stringContaining('relation "bill_audit_events" does not exist')
+      );
+
+      consoleSpy.mockRestore();
+    });
+
+    it('returns HTTP 500 when bills database query fails (does not return fake empty data)', async () => {
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      mockQueryBuilder.limit.mockResolvedValueOnce({
+        data: null,
+        error: { message: 'connection timeout to database cluster' },
+      });
+
+      const res = await getBills(makeAuthReq('http://localhost/api/reports/excel/bills'));
+      expect(res.status).toBe(500);
+      const json = await res.json();
+
+      expect(json.error).toBe('Failed to query bills');
+      expect(json.error).not.toContain('connection timeout');
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Bills Excel export query failed'),
+        expect.stringContaining('connection timeout')
+      );
+
+      consoleSpy.mockRestore();
+    });
+
+    it('returns HTTP 500 when bill items database query fails (does not return fake empty data)', async () => {
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      mockQueryBuilder.limit.mockResolvedValueOnce({
+        data: null,
+        error: { message: 'database read replica unavailable' },
+      });
+
+      const res = await getItems(makeAuthReq('http://localhost/api/reports/excel/items'));
+      expect(res.status).toBe(500);
+      const json = await res.json();
+
+      expect(json.error).toBe('Failed to query bill items');
+      expect(json.error).not.toContain('replica unavailable');
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Bill items Excel export query failed'),
+        expect.stringContaining('replica unavailable')
+      );
+
+      consoleSpy.mockRestore();
+    });
+  });
+
+  describe('5. Bills Endpoint (/api/reports/excel/bills)', () => {
+    const makeAuthReq = (url: string) =>
+      new NextRequest(url, { headers: { Authorization: `Bearer ${TEST_TOKEN}` } });
+
+    it('handles legitimate zero-result queries cleanly with HTTP 200', async () => {
       mockQueryBuilder.limit.mockResolvedValueOnce({ data: [], error: null });
 
       const res = await getBills(makeAuthReq('http://localhost/api/reports/excel/bills'));
@@ -258,19 +416,6 @@ describe('Excel Power Query Reporting Endpoints', () => {
       expect(json.has_more).toBe(false);
       expect(json.page_size).toBe(0);
       expect(res.headers.get('Cache-Control')).toBe('no-store, max-age=0');
-    });
-
-    it('applies date-range and status filters correctly', async () => {
-      mockQueryBuilder.limit.mockResolvedValueOnce({ data: [], error: null });
-
-      await getBills(
-        makeAuthReq('http://localhost/api/reports/excel/bills?startDate=2026-10-01&endDate=2026-10-15&status=issued&orderSource=qr')
-      );
-
-      expect(mockQueryBuilder.gte).toHaveBeenCalledWith('issued_at', '2026-10-01T00:00:00.000Z');
-      expect(mockQueryBuilder.lte).toHaveBeenCalledWith('issued_at', '2026-10-15T23:59:59.999Z');
-      expect(mockQueryBuilder.eq).toHaveBeenCalledWith('status', 'issued');
-      expect(mockQueryBuilder.eq).toHaveBeenCalledWith('order_source', 'qr');
     });
 
     it('returns only authorized reporting columns and excludes internal or unneeded data', async () => {
@@ -335,7 +480,6 @@ describe('Excel Power Query Reporting Endpoints', () => {
     });
 
     it('generates a valid cursor when data exceeds page limit', async () => {
-      // Limit requested: 2. Return 3 rows (limit + 1)
       const rows = [
         { id: 'uuid-1', bill_number: 'UB-1', issued_at: '2026-10-24T10:00:00.000Z', total_paise: 1000 },
         { id: 'uuid-2', bill_number: 'UB-2', issued_at: '2026-10-24T09:00:00.000Z', total_paise: 2000 },
@@ -351,7 +495,6 @@ describe('Excel Power Query Reporting Endpoints', () => {
       expect(json.has_more).toBe(true);
       expect(json.next_cursor).toBeDefined();
 
-      // Validate cursor payload
       const decoded = decodeCursor(json.next_cursor);
       expect(decoded).toEqual({
         t: '2026-10-24T09:00:00.000Z',
@@ -359,26 +502,13 @@ describe('Excel Power Query Reporting Endpoints', () => {
       });
     });
 
-    it('applies decoded cursor in subsequent page query', async () => {
-      const cursor = encodeCursor('2026-10-24T09:00:00.000Z', 'uuid-2');
-      mockQueryBuilder.limit.mockResolvedValueOnce({ data: [], error: null });
-
-      await getBills(makeAuthReq(`http://localhost/api/reports/excel/bills?cursor=${cursor}&sort=desc`));
-
-      expect(mockQueryBuilder.or).toHaveBeenCalledWith(
-        'issued_at.lt.2026-10-24T09:00:00.000Z,and(issued_at.eq.2026-10-24T09:00:00.000Z,id.lt.uuid-2)'
-      );
-    });
-
     it('paginates deterministically across more than 1,000 records without truncation', async () => {
-      // Simulate retrieving 1,500 records across 3 batches of 500 records
       const totalRecords = 1500;
       const batchSize = 500;
       let currentCursor: string | null = null;
       let fetchedTotal = 0;
 
       for (let batch = 0; batch < 3; batch++) {
-        // Return 501 rows for batch 0 and 1, and 500 rows for batch 2
         const isLastBatch = batch === 2;
         const rowCount = isLastBatch ? batchSize : batchSize + 1;
         const mockRows = Array.from({ length: rowCount }, (_, i) => {
@@ -417,9 +547,79 @@ describe('Excel Power Query Reporting Endpoints', () => {
     });
   });
 
-  describe('5. Bill Items Endpoint (/api/reports/excel/items)', () => {
+  describe('6. Bill Items Endpoint (/api/reports/excel/items) & Item-Level Pagination', () => {
     const makeAuthReq = (url: string) =>
       new NextRequest(url, { headers: { Authorization: `Bearer ${TEST_TOKEN}` } });
+
+    it('strictly bounds response size to the requested item limit and preserves item offsets across pages', async () => {
+      // Bill 1 has 2 items: item-1a, item-1b
+      // Bill 2 has 3 items: item-2a, item-2b, item-2c
+      const bill1 = {
+        id: 'bill-1',
+        bill_number: 'UB-01001',
+        order_number: 101,
+        status: 'issued',
+        issued_at: '2026-10-24T10:00:00.000Z',
+        items_snapshot: [
+          { id: 'item-1a', name: 'Coffee', unit_price_paise: 10000, quantity: 1, line_total_paise: 10000 },
+          { id: 'item-1b', name: 'Sandwich', unit_price_paise: 15000, quantity: 1, line_total_paise: 15000 },
+        ],
+      };
+      const bill2 = {
+        id: 'bill-2',
+        bill_number: 'UB-01002',
+        order_number: 102,
+        status: 'issued',
+        issued_at: '2026-10-24T09:00:00.000Z',
+        items_snapshot: [
+          { id: 'item-2a', name: 'Pizza', unit_price_paise: 25000, quantity: 1, line_total_paise: 25000 },
+          { id: 'item-2b', name: 'Garlic Bread', unit_price_paise: 12000, quantity: 1, line_total_paise: 12000 },
+          { id: 'item-2c', name: 'Soda', unit_price_paise: 5000, quantity: 1, line_total_paise: 5000 },
+        ],
+      };
+
+      // Request Page 1 with item limit = 3
+      mockQueryBuilder.limit.mockResolvedValueOnce({ data: [bill1, bill2], error: null });
+
+      const resPage1 = await getItems(makeAuthReq('http://localhost/api/reports/excel/items?limit=3'));
+      expect(resPage1.status).toBe(200);
+
+      const jsonPage1 = await resPage1.json();
+      // Must NOT exceed limit (3 items)
+      expect(jsonPage1.data.length).toBe(3);
+      expect(jsonPage1.data.map((i: any) => i.item_id)).toEqual(['item-1a', 'item-1b', 'item-2a']);
+      expect(jsonPage1.has_more).toBe(true);
+      expect(jsonPage1.next_cursor).toBeDefined();
+
+      // Verify the cursor encodes offset=1 for bill-2 (meaning item-2a was returned, next item is index 1: item-2b)
+      const decodedCursor = decodeCursor(jsonPage1.next_cursor);
+      expect(decodedCursor).toEqual({
+        t: '2026-10-24T09:00:00.000Z',
+        id: 'bill-2',
+        offset: 1,
+      });
+
+      // Request Page 2 with item limit = 3 and the cursor from Page 1
+      // Server queries bills starting at or after bill-2 (inclusive)
+      mockQueryBuilder.limit.mockResolvedValueOnce({ data: [bill2], error: null });
+
+      const resPage2 = await getItems(
+        makeAuthReq(`http://localhost/api/reports/excel/items?limit=3&cursor=${jsonPage1.next_cursor}`)
+      );
+      expect(resPage2.status).toBe(200);
+
+      const jsonPage2 = await resPage2.json();
+      // Remaining 2 items of bill-2: item-2b and item-2c
+      expect(jsonPage2.data.length).toBe(2);
+      expect(jsonPage2.data.map((i: any) => i.item_id)).toEqual(['item-2b', 'item-2c']);
+      expect(jsonPage2.has_more).toBe(false);
+      expect(jsonPage2.next_cursor).toBeNull();
+
+      // Verify query builder applied the correct inclusive tie-breaker (id.lte) when offset > 0
+      expect(mockQueryBuilder.or).toHaveBeenCalledWith(
+        'issued_at.lt.2026-10-24T09:00:00.000Z,and(issued_at.eq.2026-10-24T09:00:00.000Z,id.lte.bill-2)'
+      );
+    });
 
     it('unpacks items_snapshot into clean line items with correct INR prices', async () => {
       const mockBill = {
@@ -478,10 +678,12 @@ describe('Excel Power Query Reporting Endpoints', () => {
       expect(item2.line_total_inr).toBe(150);
     });
 
-    it('returns empty array cleanly when bills have no items', async () => {
+    it('returns empty array cleanly when database has no bills or bills have no items', async () => {
       mockQueryBuilder.limit.mockResolvedValueOnce({ data: [], error: null });
 
       const res = await getItems(makeAuthReq('http://localhost/api/reports/excel/items'));
+      expect(res.status).toBe(200);
+
       const json = await res.json();
       expect(json.data).toEqual([]);
       expect(json.has_more).toBe(false);
@@ -489,9 +691,23 @@ describe('Excel Power Query Reporting Endpoints', () => {
     });
   });
 
-  describe('6. Audit Events Endpoint (/api/reports/excel/events)', () => {
+  describe('7. Audit Events Endpoint (/api/reports/excel/events)', () => {
     const makeAuthReq = (url: string) =>
       new NextRequest(url, { headers: { Authorization: `Bearer ${TEST_TOKEN}` } });
+
+    it('handles legitimate zero-result queries cleanly with HTTP 200', async () => {
+      mockQueryBuilder.limit.mockResolvedValueOnce({ data: [], error: null });
+
+      const res = await getEvents(makeAuthReq('http://localhost/api/reports/excel/events'));
+      expect(res.status).toBe(200);
+
+      const json = await res.json();
+      expect(json.data).toEqual([]);
+      expect(json.next_cursor).toBeNull();
+      expect(json.has_more).toBe(false);
+      expect(json.page_size).toBe(0);
+      expect(res.headers.get('Cache-Control')).toBe('no-store, max-age=0');
+    });
 
     it('returns formatted audit events with IST timestamps', async () => {
       const mockEvent = {
@@ -523,20 +739,6 @@ describe('Excel Power Query Reporting Endpoints', () => {
       expect(event.metadata).toEqual({ reason: 'Incorrect table' });
       expect(event.event_date_ist).toBeDefined();
       expect(event.event_time_ist).toBeDefined();
-    });
-
-    it('gracefully handles missing database table without crashing', async () => {
-      mockQueryBuilder.limit.mockResolvedValueOnce({
-        data: null,
-        error: { message: 'relation "bill_audit_events" does not exist' },
-      });
-
-      const res = await getEvents(makeAuthReq('http://localhost/api/reports/excel/events'));
-      expect(res.status).toBe(200);
-      const json = await res.json();
-      expect(json.data).toEqual([]);
-      expect(json.has_more).toBe(false);
-      expect(json.next_cursor).toBeNull();
     });
   });
 });

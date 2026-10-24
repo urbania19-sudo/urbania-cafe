@@ -19,6 +19,8 @@ Authorization: Bearer <URBANIA_EXCEL_EXPORT_TOKEN>
 - If `URBANIA_EXCEL_EXPORT_TOKEN` is not configured on the server, endpoints fail closed with `500 Internal Server Error`.
 - Tokens are **never** accepted in URL query parameters (to avoid token leakage in browser history, CDN logs, or reverse proxy access logs).
 - Tokens are compared using constant-time SHA-256 cryptographic hashes (`crypto.timingSafeEqual`) to protect against timing attacks.
+- Privileged database access is executed server-side via Supabase `adminDb()`; database service-role keys are never exposed to clients.
+- If a database query fails, the server logs diagnostic details internally and returns a generic sanitized error (`HTTP 500`) to the client without exposing internal database structure. Failures are never disguised as empty reports.
 
 ### Server Environment Setup
 Configure the dedicated secret in your Vercel project environment settings:
@@ -53,7 +55,7 @@ All endpoints are strictly **read-only GET** endpoints (`POST`, `PUT`, `PATCH`, 
 | Endpoint | Base Path | Description |
 | :--- | :--- | :--- |
 | **Bills** | `/api/reports/excel/bills` | Master ledger of issued and cancelled bills, totals, taxes, and customer details. |
-| **Bill Items** | `/api/reports/excel/items` | Itemized line-by-line breakdown of ordered products, options, quantities, and line totals. |
+| **Bill Items** | `/api/reports/excel/items` | Itemized line-by-line breakdown of ordered products, options, quantities, and line totals with item-level pagination. |
 | **Audit Events** | `/api/reports/excel/events` | Operational security log of bill creation, reprints, cancellations, and views. |
 
 ### Query Parameters
@@ -62,21 +64,27 @@ All parameters are optional.
 
 | Parameter | Type | Default | Allowed Values | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| `limit` | integer | `200` | `1` to `1000` | Number of records per page. |
+| `limit` | integer | `200` | `1` to `1000` | Number of records per page (for `/items`, strictly bounds individual item rows). |
 | `cursor` | string | `null` | URL-safe base64 | Opaque cursor token from the previous page's `next_cursor`. |
-| `startDate` | string | `null` | `YYYY-MM-DD` | Inclusive start date (UTC midnight). |
-| `endDate` | string | `null` | `YYYY-MM-DD` | Inclusive end date (UTC 23:59:59.999). |
+| `startDate` | string | `null` | `YYYY-MM-DD` | Inclusive start date in India Standard Time (`Asia/Kolkata`). Converted to UTC boundary (`00:00:00 IST` = `18:30:00Z` on previous day). |
+| `endDate` | string | `null` | `YYYY-MM-DD` | Inclusive end date in India Standard Time (`Asia/Kolkata`). Converted to UTC boundary (`23:59:59.999 IST` = `18:29:59.999Z` on same day). |
 | `status` | string | `all` | `all`, `issued`, `cancelled` | Filter bills/items by billing status (*Bills & Items only*). |
 | `orderSource`| string | `all` | `all`, `qr`, `manual` | Filter by order channel (*Bills & Items only*). |
 | `eventType` | string | `all` | `all`, `issued`, `reprinted`, `cancelled`, `viewed` | Filter by event type (*Events only*). |
 | `billId` | string | `null` | UUID | Filter events for a specific bill (*Events only*). |
 | `sort` | string | `desc` | `desc`, `asc` | Primary ordering by timestamp (`desc` = newest first). |
 
+### Indian Business Date Boundaries (`Asia/Kolkata`)
+The café operates in India Standard Time (UTC+05:30 with no daylight saving time). Date-only query parameters represent business dates in `Asia/Kolkata`:
+- `startDate=2026-10-24` begins at `2026-10-24 00:00:00.000 IST`, querying database timestamps $\ge$ `2026-10-23T18:30:00.000Z`.
+- `endDate=2026-10-24` ends at `2026-10-24 23:59:59.999 IST`, querying database timestamps $\le$ `2026-10-24T18:29:59.999Z`.
+- Non-existent calendar dates (e.g. `2026-02-31`, `2026-04-31`) and unsupported timestamp formats are rejected with `HTTP 400 Bad Request`.
+
 ### Standard Response Envelope
 ```json
 {
   "data": [ ... ],
-  "next_cursor": "eyJ0IjoiMjAyNi0xMC0yNFQwOTowMDowMC4wMDBaIiwiaWQiOiJmMTky...==",
+  "next_cursor": "eyJ0IjoiMjAyNi0xMC0yNFQwODowMDowMC4wMDBaIiwiaWQiOiJmMTky...==",
   "has_more": true,
   "page_size": 200
 }
@@ -201,6 +209,8 @@ in
 ---
 
 ## 5. Query 2: Bill Line Items (`UrbaniaBillItems`)
+
+This query imports individual item rows with enforced maximum page sizing and stable ordering across bill boundaries.
 
 ### Step 1: Create Blank Query
 1. In Power Query Editor, click **Home** → **New Source** → **Blank Query**.

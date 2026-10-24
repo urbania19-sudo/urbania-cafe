@@ -27,101 +27,134 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const { limit, startDate, endDate, status, orderSource, sort, cursorPayload } = validation.params;
+  const { limit, startUtcBoundary, endUtcBoundary, status, orderSource, sort, cursorPayload } =
+    validation.params;
 
   try {
     const db = adminDb();
-    let rawBills: Record<string, unknown>[] = [];
 
-    // Helper to apply filters to query
-    const applyFilters = (baseQuery: any) => {
-      let q = baseQuery;
-      if (status !== 'all') q = q.eq('status', status);
-      if (orderSource !== 'all') q = q.eq('order_source', orderSource);
-      if (startDate) q = q.gte('issued_at', `${startDate}T00:00:00.000Z`);
-      if (endDate) q = q.lte('issued_at', `${endDate}T23:59:59.999Z`);
+    // Query bills to expand item snapshots.
+    // Fetch a bounded batch of bills sufficient to fulfill the requested item limit.
+    const billsBatch = Math.min(limit + 5, 250);
 
-      if (cursorPayload) {
-        if (sort === 'desc') {
-          q = q.or(`issued_at.lt.${cursorPayload.t},and(issued_at.eq.${cursorPayload.t},id.lt.${cursorPayload.id})`);
-        } else {
-          q = q.or(`issued_at.gt.${cursorPayload.t},and(issued_at.eq.${cursorPayload.t},id.gt.${cursorPayload.id})`);
-        }
-      }
-
-      q = q
-        .order('issued_at', { ascending: sort === 'asc' })
-        .order('id', { ascending: sort === 'asc' })
-        .limit(limit + 1);
-
-      return q;
-    };
-
-    let primaryQuery = db
+    let query = db
       .from('bills')
       .select('id, bill_number, order_number, status, issued_at, items_snapshot, order_source');
 
-    const primaryRes = await applyFilters(primaryQuery);
+    if (status !== 'all') query = query.eq('status', status);
+    if (orderSource !== 'all') query = query.eq('order_source', orderSource);
+    if (startUtcBoundary) query = query.gte('issued_at', startUtcBoundary);
+    if (endUtcBoundary) query = query.lte('issued_at', endUtcBoundary);
 
-    if (!primaryRes.error) {
-      rawBills = (primaryRes.data || []) as unknown as Record<string, unknown>[];
-    } else {
-      console.warn('Primary items Excel export query failed, trying direct fallback:', primaryRes.error.message);
-
-      if (orderSource === 'manual') {
-        rawBills = [];
-      } else {
-        // Fallback without order_source
-        let fallbackQuery = db
-          .from('bills')
-          .select('id, bill_number, order_number, status, issued_at, items_snapshot');
-
-        const fallbackRes = await applyFilters(fallbackQuery);
-        if (fallbackRes.error) {
-          return NextResponse.json(
-            { error: `Database query failed: ${fallbackRes.error.message}` },
-            { status: 500, headers: { 'Cache-Control': 'no-store, max-age=0' } }
+    if (cursorPayload) {
+      const hasOffset = typeof cursorPayload.offset === 'number' && cursorPayload.offset > 0;
+      if (sort === 'desc') {
+        if (hasOffset) {
+          // Resume at the specific bill (inclusive) to continue remaining items
+          query = query.or(
+            `issued_at.lt.${cursorPayload.t},and(issued_at.eq.${cursorPayload.t},id.lte.${cursorPayload.id})`
+          );
+        } else {
+          // The previous bill was fully consumed; advance strictly to next bill
+          query = query.or(
+            `issued_at.lt.${cursorPayload.t},and(issued_at.eq.${cursorPayload.t},id.lt.${cursorPayload.id})`
           );
         }
-        rawBills = (fallbackRes.data || []) as unknown as Record<string, unknown>[];
+      } else {
+        if (hasOffset) {
+          query = query.or(
+            `issued_at.gt.${cursorPayload.t},and(issued_at.eq.${cursorPayload.t},id.gte.${cursorPayload.id})`
+          );
+        } else {
+          query = query.or(
+            `issued_at.gt.${cursorPayload.t},and(issued_at.eq.${cursorPayload.t},id.gt.${cursorPayload.id})`
+          );
+        }
       }
     }
 
-    const hasMore = rawBills.length > limit;
-    const pageData = hasMore ? rawBills.slice(0, limit) : rawBills;
-    let nextCursor: string | null = null;
+    query = query
+      .order('issued_at', { ascending: sort === 'asc' })
+      .order('id', { ascending: sort === 'asc' })
+      .limit(billsBatch);
 
-    if (hasMore && pageData.length > 0) {
-      const lastBill = pageData[pageData.length - 1];
-      nextCursor = encodeCursor(lastBill.issued_at as string, lastBill.id as string);
+    const { data: rawBills, error } = await query;
+
+    if (error) {
+      console.error('Bill items Excel export query failed:', error.message);
+      return NextResponse.json(
+        { error: 'Failed to query bill items' },
+        { status: 500, headers: { 'Cache-Control': 'no-store, max-age=0' } }
+      );
     }
 
+    const billsList = (rawBills || []) as Record<string, unknown>[];
     const items: Record<string, unknown>[] = [];
-    for (const b of pageData) {
-      const lineItems = (b.items_snapshot as BillItemSnapshot[]) || [];
-      for (const item of lineItems) {
-        const optionsStr = item.selected_options?.map((o) => o.name).join('; ') || '';
-        const unitPricePaise = Number(item.unit_price_paise) || 0;
-        const lineTotalPaise = Number(item.line_total_paise) || 0;
+    let nextCursor: string | null = null;
+    let hasMore = false;
 
-        items.push({
-          bill_id: b.id,
-          bill_number: b.bill_number,
-          order_number: Number(b.order_number),
-          item_id: item.id,
-          item_name: item.name,
-          item_type: item.is_custom ? 'Custom Item' : 'Catalogue',
-          quantity: Number(item.quantity) || 1,
-          unit_price_paise: unitPricePaise,
-          unit_price_inr: Math.round(unitPricePaise) / 100,
-          line_total_paise: lineTotalPaise,
-          line_total_inr: Math.round(lineTotalPaise) / 100,
-          selected_options: optionsStr,
-          item_note: item.note || '',
-          bill_status: b.status,
-          issued_at: b.issued_at,
-        });
+    const startItemOffset = cursorPayload?.offset ?? 0;
+
+    for (let bIndex = 0; bIndex < billsList.length; bIndex++) {
+      const b = billsList[bIndex];
+      const lineItems = (b.items_snapshot as BillItemSnapshot[]) || [];
+      const itemStart = bIndex === 0 ? startItemOffset : 0;
+
+      for (let i = itemStart; i < lineItems.length; i++) {
+        if (items.length < limit) {
+          const item = lineItems[i];
+          const optionsStr = item.selected_options?.map((o) => o.name).join('; ') || '';
+          const unitPricePaise = Number(item.unit_price_paise) || 0;
+          const lineTotalPaise = Number(item.line_total_paise) || 0;
+
+          items.push({
+            bill_id: b.id,
+            bill_number: b.bill_number,
+            order_number: Number(b.order_number),
+            item_id: item.id,
+            item_name: item.name,
+            item_type: item.is_custom ? 'Custom Item' : 'Catalogue',
+            quantity: Number(item.quantity) || 1,
+            unit_price_paise: unitPricePaise,
+            unit_price_inr: Math.round(unitPricePaise) / 100,
+            line_total_paise: lineTotalPaise,
+            line_total_inr: Math.round(lineTotalPaise) / 100,
+            selected_options: optionsStr,
+            item_note: item.note || '',
+            bill_status: b.status,
+            issued_at: b.issued_at,
+          });
+        } else {
+          // Reached item limit! The next item to fetch is item index `i` of bill `b`.
+          hasMore = true;
+          nextCursor = encodeCursor(b.issued_at as string, b.id as string, i);
+          break;
+        }
       }
+
+      if (hasMore) {
+        break;
+      }
+
+      // Check boundary if we reached limit on the last item of the bill
+      if (items.length === limit) {
+        if (bIndex < billsList.length - 1) {
+          hasMore = true;
+          nextCursor = encodeCursor(b.issued_at as string, b.id as string);
+          break;
+        } else if (billsList.length === billsBatch) {
+          hasMore = true;
+          nextCursor = encodeCursor(b.issued_at as string, b.id as string);
+          break;
+        }
+      }
+    }
+
+    // If items didn't reach limit but we exhausted the current batch of bills and more might exist
+    if (!hasMore && items.length > 0 && billsList.length === billsBatch) {
+      const lastBill = billsList[billsList.length - 1];
+      hasMore = true;
+      nextCursor = encodeCursor(lastBill.issued_at as string, lastBill.id as string);
     }
 
     return NextResponse.json(
@@ -140,9 +173,9 @@ export async function GET(req: NextRequest) {
       }
     );
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Internal Server Error';
+    console.error('Bill items Excel export unexpected failure:', err);
     return NextResponse.json(
-      { error: `Bill items export failed: ${message}` },
+      { error: 'Internal Server Error' },
       { status: 500, headers: { 'Cache-Control': 'no-store, max-age=0' } }
     );
   }
