@@ -242,12 +242,24 @@ export default function OrderBoard({
     }
   }
 
-  async function billOrderDirectly(orderId: string) {
+  async function billOrderDirectly(
+    orderId: string,
+    discount?: { type: 'fixed' | 'percentage'; value: number }
+  ) {
     setBusy(orderId);
     setError('');
     try {
       const res = await fetch(`/api/staff/orders/${orderId}/bill`, {
         method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(
+          discount
+            ? {
+                discount_type: discount.type,
+                discount_value: discount.value,
+              }
+            : {}
+        ),
       });
       const data = await res.json();
       if (!res.ok || !data.ok) {
@@ -292,10 +304,10 @@ export default function OrderBoard({
             tables={tables}
             menuItems={menu}
             onClose={() => setShowManualModal(false)}
-            onSuccess={async (newOrder) => {
+            onSuccess={async (newOrder, discount) => {
               setShowManualModal(false);
               router.refresh();
-              await billOrderDirectly(newOrder.order_id);
+              await billOrderDirectly(newOrder.order_id, discount);
             }}
           />
         )}

@@ -29,6 +29,22 @@ export interface BillBusinessSnapshot {
   bill_footer_text?: string | null;
 }
 
+export type DiscountType = "fixed" | "percentage";
+
+export interface DiscountInput {
+  type: DiscountType;
+  value: number; // in Rupees for fixed (e.g. 50), or percentage 0..100 (e.g. 10)
+}
+
+export interface DiscountCalculation {
+  subtotalBeforeDiscountPaise: number;
+  discountType: DiscountType | null;
+  discountValue: number | null;
+  discountPaise: number;
+  totalPaise: number;
+  hasDiscount: boolean;
+}
+
 export interface Bill {
   id: string;
   order_id: string;
@@ -44,6 +60,10 @@ export interface Bill {
   document_type: "bill" | "tax_invoice";
   business_snapshot: BillBusinessSnapshot;
   items_snapshot: BillItemSnapshot[];
+  subtotal_before_discount_paise?: number;
+  discount_type?: DiscountType | null;
+  discount_value?: number | null;
+  discount_paise?: number;
   subtotal_paise: number;
   tax_rate: number;
   tax_paise: number;
@@ -114,6 +134,10 @@ export const SAMPLE_BILL: Bill = {
       line_total_paise: 20000,
     },
   ],
+  subtotal_before_discount_paise: 35000,
+  discount_type: null,
+  discount_value: null,
+  discount_paise: 0,
   subtotal_paise: 35000,
   tax_rate: 0,
   tax_paise: 0,
@@ -141,6 +165,83 @@ export interface CreateManualOrderInput {
   items: ManualOrderItemInput[];
 }
 
+/**
+ * Calculates deterministic bill discount in paise.
+ * Base: bill total before discount.
+ * Fixed: value in INR converted to integer paise.
+ * Percentage: deterministic rounding to nearest paise Math.round((base * pct) / 100).
+ */
+export function calculateBillDiscount(
+  baseTotalPaise: number,
+  discount?: { type?: string | null; value?: number | null } | null
+): DiscountCalculation {
+  if (baseTotalPaise < 0) {
+    throw new Error("Invalid base total amount");
+  }
+
+  if (!discount || !discount.type || discount.value == null || discount.value === 0) {
+    return {
+      subtotalBeforeDiscountPaise: baseTotalPaise,
+      discountType: null,
+      discountValue: null,
+      discountPaise: 0,
+      totalPaise: baseTotalPaise,
+      hasDiscount: false,
+    };
+  }
+
+  const { type, value } = discount;
+
+  if (typeof value !== "number" || isNaN(value) || !isFinite(value)) {
+    throw new Error("Invalid discount value");
+  }
+
+  if (value < 0) {
+    throw new Error(
+      type === "fixed"
+        ? "Fixed discount amount must be greater than zero"
+        : "Percentage discount must be between 0 and 100"
+    );
+  }
+
+  if (type === "percentage") {
+    if (value > 100) {
+      throw new Error("Percentage discount must be between 0 and 100");
+    }
+    const roundedValue = Math.round(value * 100) / 100;
+    const discountPaise = Math.round((baseTotalPaise * roundedValue) / 100);
+    const totalPaise = Math.max(0, baseTotalPaise - discountPaise);
+    return {
+      subtotalBeforeDiscountPaise: baseTotalPaise,
+      discountType: "percentage",
+      discountValue: roundedValue,
+      discountPaise,
+      totalPaise,
+      hasDiscount: discountPaise > 0,
+    };
+  } else if (type === "fixed") {
+    if (value <= 0) {
+      throw new Error("Fixed discount amount must be greater than zero");
+    }
+    const roundedValue = Math.round(value * 100) / 100;
+    const discountPaise = Math.round(roundedValue * 100);
+    if (discountPaise > baseTotalPaise) {
+      throw new Error("Discount amount cannot exceed total bill amount");
+    }
+    const totalPaise = Math.max(0, baseTotalPaise - discountPaise);
+    return {
+      subtotalBeforeDiscountPaise: baseTotalPaise,
+      discountType: "fixed",
+      discountValue: roundedValue,
+      discountPaise,
+      totalPaise,
+      hasDiscount: discountPaise > 0,
+    };
+  } else {
+    throw new Error("Invalid discount type. Must be 'fixed' or 'percentage'");
+  }
+}
+
 export function friendlyBillingError(err: unknown): string {
   const msg =
     err instanceof Error
@@ -155,6 +256,15 @@ export function friendlyBillingError(err: unknown): string {
   if (msg.includes("URB:settings_missing")) return "Café settings are not configured in the database.";
   if (msg.includes("URB:tax_invoice_not_configured")) {
     return "GST Tax Invoices are not yet enabled pending itemized tax calculation. Please keep GST status as Pending Registration or Not Registered in Settings.";
+  }
+  if (msg.includes("URB:invalid_discount_type")) {
+    return "Invalid discount type. Please select Fixed Amount or Percentage.";
+  }
+  if (msg.includes("URB:invalid_discount_value")) {
+    return "Invalid discount value. Please enter a valid non-negative amount or percentage up to 100%.";
+  }
+  if (msg.includes("URB:discount_exceeds_total")) {
+    return "Discount cannot exceed the total bill amount.";
   }
   if (msg.includes("custom item name required")) return "Please enter a name for each custom line item.";
   if (msg.includes("invalid custom price")) return "Custom item price must be a valid non-negative amount.";
