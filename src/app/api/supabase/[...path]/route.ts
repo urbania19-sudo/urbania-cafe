@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { enforcePreviewWriteGuard } from '@/lib/preview-guard';
 
-const INTERNAL_SUPABASE_URL =
-  process.env.SUPABASE_INTERNAL_URL || 'http://127.0.0.1:54321';
-
 async function handle(
   req: NextRequest,
   ctx: { params: Promise<{ path: string[] }> }
@@ -18,7 +15,11 @@ async function handle(
     }
   }
   const search = req.nextUrl.search;
-  const targetUrl = `${INTERNAL_SUPABASE_URL}/${subpath}${search}`;
+  const internalSupabaseUrl =
+    process.env.SUPABASE_INTERNAL_URL ||
+    process.env.NEXT_PUBLIC_SUPABASE_URL ||
+    'http://127.0.0.1:54321';
+  const targetUrl = `${internalSupabaseUrl}/${subpath}${search}`;
 
   const headers = new Headers(req.headers);
   headers.delete('host');
