@@ -23,6 +23,12 @@ Preview deployments are permitted to perform write operations **only** when all 
 6. No configured database connection matches `PRODUCTION_SUPABASE_URL` or `PRODUCTION_DATABASE_URL`.
 7. All configured candidate URLs point to the same consistent staging database target. Missing or unrecognized database targets fail closed.
 
+### Supabase Auth Proxy Security Boundary (`/api/supabase/[...path]`)
+When Preview deployments share or inherit production configuration (read-only preview mode):
+- **Permitted Session Authentication Operations:** Staff sign-in (`POST /auth/v1/token?grant_type=password`), session token refresh (`POST /auth/v1/token?grant_type=refresh_token`), logout (`POST /auth/v1/logout`), and user checks (`GET /auth/v1/user`) remain available so staff can log in to view orders and test read-only workflows.
+- **Blocked Directory & Data Mutations:** Any operation mutating the user directory (`POST /auth/v1/signup`, `PUT /auth/v1/user`, `auth/v1/admin/*`), along with all database table writes and RPC calls (`/rest/v1/*`, `/rpc/*`), are intercepted and blocked with `HTTP 403 PREVIEW_READ_ONLY`. This ensures a misconfigured Preview deployment can never register new users, alter existing user credentials, or modify café records in a production Supabase project.
+- **In Isolated Staging Mode:** Once all isolated staging safety conditions are satisfied, write operations are safely permitted against the staging project.
+
 > [!CAUTION]
 > **Never set `ALLOW_PREVIEW_WRITES=true` or `ISOLATED_STAGING_DB=true` in Preview if any connection URL points to the production Supabase database.**
 

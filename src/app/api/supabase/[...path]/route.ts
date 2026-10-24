@@ -1,6 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { enforcePreviewWriteGuard } from '@/lib/preview-guard';
 
+/**
+ * Checks whether an incoming path is a legitimate session authentication operation
+ * (sign in, token refresh, token verification, logout) that must remain available for staff login.
+ * Directory mutations (user creation, profile modification, admin user manipulation) are not
+ * treated as session operations and remain subject to the Preview write guard.
+ */
+function isAuthSessionOperation(subpath: string): boolean {
+  const normalized = subpath.toLowerCase().split('?')[0].replace(/^\/+|\/+$/g, '');
+  return (
+    normalized === 'auth/v1/token' ||
+    normalized === 'auth/v1/logout' ||
+    normalized === 'auth/v1/verify'
+  );
+}
+
 async function handle(
   req: NextRequest,
   ctx: { params: Promise<{ path: string[] }> }
@@ -9,7 +24,10 @@ async function handle(
   const subpath = path.join('/');
 
   if (req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'OPTIONS') {
-    if (!subpath.startsWith('auth/v1')) {
+    // Only permit non-mutating session authentication operations (login, refresh, logout)
+    // to bypass the write guard. All other mutations (database writes, RPC, and Auth directory
+    // mutations such as signup, user update, admin operations) must enforce the Preview write guard.
+    if (!isAuthSessionOperation(subpath)) {
       const previewGuard = enforcePreviewWriteGuard();
       if (previewGuard) return previewGuard;
     }

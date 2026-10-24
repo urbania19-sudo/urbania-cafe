@@ -4,6 +4,7 @@ import {
   isPreviewWriteBlocked,
   enforcePreviewWriteGuard,
   KNOWN_PRODUCTION_PROJECT_REF,
+  extractProjectRef,
 } from '@/lib/preview-guard';
 
 vi.mock('@/lib/supabase/auth-server', () => ({
@@ -19,6 +20,11 @@ import { POST as placePublicOrder } from '@/app/api/orders/route';
 import { POST as createMenuItem, PATCH as updateMenuItem } from '@/app/api/admin/menu/route';
 import { POST as createCategory } from '@/app/api/admin/categories/route';
 import { PATCH as updateSettings } from '@/app/api/admin/settings/route';
+import {
+  POST as proxyPost,
+  PUT as proxyPut,
+  GET as proxyGet,
+} from '@/app/api/supabase/[...path]/route';
 
 describe('Preview Write Isolation Guard — 13 Core Safety Policy Cases', () => {
   const originalEnv = process.env;
@@ -322,6 +328,213 @@ describe('Preview Write Isolation Guard — 13 Core Safety Policy Cases', () => 
     expect(resState.status).toBe(400);
     const bodyState = await resState.json();
     expect(bodyState.error).toContain('Order is not in a billable state');
+  });
+});
+
+describe('Supabase Connection Pooler & Connection String Parsing (Issue 1)', () => {
+  const originalEnv = process.env;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env = { ...originalEnv };
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
+  it('extracts known production project reference from pooler connection string with postgres.<project-ref> username', () => {
+    const poolerUrl = `postgresql://postgres.${KNOWN_PRODUCTION_PROJECT_REF}:synthetic_pw@aws-0.pooler.supabase.com:6543/postgres`;
+    const ref = extractProjectRef(poolerUrl);
+    expect(ref).toBe(KNOWN_PRODUCTION_PROJECT_REF);
+  });
+
+  it('extracts synthetic staging project reference from pooler connection string with postgres.<project-ref> format', () => {
+    const stagingRef = 'staging_ref_456';
+    const poolerUrl = `postgresql://postgres.${stagingRef}:synthetic_pw@aws-0-ap-south-1.pooler.supabase.com:6543/postgres`;
+    const ref = extractProjectRef(poolerUrl);
+    expect(ref).toBe(stagingRef);
+  });
+
+  it('recognizes a staging API URL and its corresponding pooler URL as the same project', () => {
+    const stagingRef = 'staging-project-789';
+    const apiUrl = `https://${stagingRef}.supabase.co`;
+    const poolerUrl = `postgresql://postgres.${stagingRef}:synthetic_pw@aws-0.pooler.supabase.com:6543/postgres`;
+
+    const apiRef = extractProjectRef(apiUrl);
+    const poolerRef = extractProjectRef(poolerUrl);
+
+    expect(apiRef).toBe(stagingRef);
+    expect(poolerRef).toBe(stagingRef);
+    expect(apiRef).toBe(poolerRef);
+
+    // When configured together in Preview, guard recognizes them as consistent
+    process.env.VERCEL_ENV = 'preview';
+    process.env.ISOLATED_STAGING_DB = 'true';
+    process.env.ALLOW_PREVIEW_WRITES = 'true';
+    process.env.NEXT_PUBLIC_SUPABASE_URL = apiUrl;
+    process.env.POSTGRES_URL = poolerUrl;
+
+    const result = isPreviewWriteBlocked();
+    expect(result.blocked).toBe(false);
+  });
+
+  it('fails closed on invalid, malformed, or incomplete pooler connection strings', () => {
+    // Missing tenant username on pooler host
+    const incompletePooler = 'postgresql://aws-0.pooler.supabase.com:6543/postgres';
+    expect(extractProjectRef(incompletePooler)).toBeNull();
+
+    // Malformed connection string
+    expect(extractProjectRef('not-a-valid-connection-string')).toBeNull();
+
+    // When used in Preview with staging flags enabled, unrecognized target blocks writes
+    process.env.VERCEL_ENV = 'preview';
+    process.env.ISOLATED_STAGING_DB = 'true';
+    process.env.ALLOW_PREVIEW_WRITES = 'true';
+    process.env.POSTGRES_URL = incompletePooler;
+
+    const result = isPreviewWriteBlocked();
+    expect(result.blocked).toBe(true);
+    expect(result.code).toBe('PREVIEW_READ_ONLY');
+  });
+
+  it('ensures production pooler connections remain blocked even when all staging/allow flags are set', () => {
+    process.env.VERCEL_ENV = 'preview';
+    process.env.ISOLATED_STAGING_DB = 'true';
+    process.env.ALLOW_PREVIEW_WRITES = 'true';
+    process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://staging-isolated-ref123.supabase.co';
+    // Internal/server variable accidentally points to production pooler
+    process.env.DATABASE_URL = `postgresql://postgres.${KNOWN_PRODUCTION_PROJECT_REF}:secret@aws-0.pooler.supabase.com:6543/postgres`;
+
+    const result = isPreviewWriteBlocked();
+    expect(result.blocked).toBe(true);
+    expect(result.code).toBe('PREVIEW_READ_ONLY');
+  });
+});
+
+describe('Supabase Auth Proxy Security Boundary (/api/supabase/[...path]) (Issue 2)', () => {
+  const originalEnv = process.env;
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env = { ...originalEnv };
+    // Simulate standard Preview sharing production database
+    process.env.VERCEL_ENV = 'preview';
+    process.env.NEXT_PUBLIC_SUPABASE_URL = `https://${KNOWN_PRODUCTION_PROJECT_REF}.supabase.co`;
+
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    );
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+    globalThis.fetch = originalFetch;
+  });
+
+  it('permits staff login and token refresh (POST auth/v1/token) in Preview default read-only mode', async () => {
+    const req = new NextRequest('http://localhost/api/supabase/auth/v1/token?grant_type=password', {
+      method: 'POST',
+      body: JSON.stringify({ email: 'staff@urbania.cafe', password: 'secretpassword' }),
+    });
+    const res = await proxyPost(req, {
+      params: Promise.resolve({ path: ['auth', 'v1', 'token'] }),
+    });
+
+    // Must NOT be blocked with 403 PREVIEW_READ_ONLY
+    expect(res.status).toBe(200);
+    expect(globalThis.fetch).toHaveBeenCalled();
+  });
+
+  it('permits staff logout (POST auth/v1/logout) in Preview default read-only mode', async () => {
+    const req = new NextRequest('http://localhost/api/supabase/auth/v1/logout', {
+      method: 'POST',
+    });
+    const res = await proxyPost(req, {
+      params: Promise.resolve({ path: ['auth', 'v1', 'logout'] }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(globalThis.fetch).toHaveBeenCalled();
+  });
+
+  it('permits user checks (GET auth/v1/user) in Preview default read-only mode', async () => {
+    const req = new NextRequest('http://localhost/api/supabase/auth/v1/user', {
+      method: 'GET',
+    });
+    const res = await proxyGet(req, {
+      params: Promise.resolve({ path: ['auth', 'v1', 'user'] }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(globalThis.fetch).toHaveBeenCalled();
+  });
+
+  it('blocks user directory registration (POST auth/v1/signup) with HTTP 403 in Preview default mode', async () => {
+    const req = new NextRequest('http://localhost/api/supabase/auth/v1/signup', {
+      method: 'POST',
+      body: JSON.stringify({ email: 'newuser@urbania.cafe', password: 'password' }),
+    });
+    const res = await proxyPost(req, {
+      params: Promise.resolve({ path: ['auth', 'v1', 'signup'] }),
+    });
+
+    expect(res.status).toBe(403);
+    const data = await res.json();
+    expect(data.code).toBe('PREVIEW_READ_ONLY');
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it('blocks user profile updates (PUT auth/v1/user) with HTTP 403 in Preview default mode', async () => {
+    const req = new NextRequest('http://localhost/api/supabase/auth/v1/user', {
+      method: 'PUT',
+      body: JSON.stringify({ data: { display_name: 'Hacked' } }),
+    });
+    const res = await proxyPut(req, {
+      params: Promise.resolve({ path: ['auth', 'v1', 'user'] }),
+    });
+
+    expect(res.status).toBe(403);
+    const data = await res.json();
+    expect(data.code).toBe('PREVIEW_READ_ONLY');
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it('blocks database table mutations via proxy (POST rest/v1/orders) with HTTP 403 in Preview default mode', async () => {
+    const req = new NextRequest('http://localhost/api/supabase/rest/v1/orders', {
+      method: 'POST',
+      body: JSON.stringify({ customer_name: 'Test' }),
+    });
+    const res = await proxyPost(req, {
+      params: Promise.resolve({ path: ['rest', 'v1', 'orders'] }),
+    });
+
+    expect(res.status).toBe(403);
+    const data = await res.json();
+    expect(data.code).toBe('PREVIEW_READ_ONLY');
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it('permits mutations via proxy when verified isolated staging environment is configured', async () => {
+    process.env.ISOLATED_STAGING_DB = 'true';
+    process.env.ALLOW_PREVIEW_WRITES = 'true';
+    process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://staging-isolated-ref123.supabase.co';
+
+    const req = new NextRequest('http://localhost/api/supabase/rest/v1/orders', {
+      method: 'POST',
+      body: JSON.stringify({ customer_name: 'Staging Test' }),
+    });
+    const res = await proxyPost(req, {
+      params: Promise.resolve({ path: ['rest', 'v1', 'orders'] }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(globalThis.fetch).toHaveBeenCalled();
   });
 });
 

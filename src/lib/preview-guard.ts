@@ -29,23 +29,37 @@ export function extractProjectRef(url: string | null | undefined): string | null
     const host = parsed.hostname.toLowerCase();
     if (!host) return null;
 
-    if (host.endsWith('.supabase.co') || host.endsWith('.supabase.com')) {
-      const parts = host.split('.');
-      if (parts.length >= 3) {
-        if (parts[0] === 'db' && parts.length >= 4) {
-          return parts[1];
-        }
-        return parts[0];
-      }
-    }
-
+    // 1. Supabase connection poolers: username is formatted as postgres.<project-ref>
+    // e.g., postgresql://postgres.STAGING_REF:password@aws-0.pooler.supabase.com:6543/postgres
     if (parsed.username) {
       const userParts = parsed.username.split('.');
-      if (userParts.length === 2 && userParts[0] === 'postgres' && userParts[1]) {
+      if (userParts.length >= 2 && userParts[0].toLowerCase() === 'postgres' && userParts[1]) {
         return userParts[1].toLowerCase();
       }
     }
 
+    // 2. Pooler host without valid tenant username format is incomplete / unrecognized
+    if (host.includes('.pooler.supabase.')) {
+      return null;
+    }
+
+    // 3. Direct database host: db.<project-ref>.supabase.co or db.<project-ref>.supabase.com
+    if (host.startsWith('db.') && (host.endsWith('.supabase.co') || host.endsWith('.supabase.com'))) {
+      const parts = host.split('.');
+      if (parts.length >= 4) {
+        return parts[1].toLowerCase();
+      }
+    }
+
+    // 4. Standard Supabase API host: <project-ref>.supabase.co or <project-ref>.supabase.com
+    if (host.endsWith('.supabase.co') || host.endsWith('.supabase.com')) {
+      const parts = host.split('.');
+      if (parts.length >= 3) {
+        return parts[0].toLowerCase();
+      }
+    }
+
+    // 5. Other custom hosts (e.g., custom domain or localhost)
     return host;
   } catch {
     // If not a standard URL, check if the string itself is a valid 20-character Supabase project ref
