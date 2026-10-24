@@ -741,4 +741,249 @@ describe('Excel Power Query Reporting Endpoints', () => {
       expect(event.event_time_ist).toBeDefined();
     });
   });
+
+  describe('8. Power Query Client Error Transparency Simulation', () => {
+    // Simulates the exact Power Query M evaluation logic from docs/excel-power-query.md
+    async function simulatePowerQueryFetch(
+      fetchPageFn: (cursor: string | null) => Promise<{ status: number; body: any }>
+    ) {
+      const fetchPage = async (cursor: string | null) => {
+        const res = await fetchPageFn(cursor);
+        const httpStatus = res.status;
+        const parsedJson = res.body;
+
+        const serverErrorMessage =
+          parsedJson && parsedJson.error ? parsedJson.error : `HTTP ${httpStatus}`;
+
+        if (httpStatus >= 400) {
+          throw new Error(`Urbania Café API error (${httpStatus}): ${serverErrorMessage}`);
+        }
+
+        if (!parsedJson || !Array.isArray(parsedJson.data)) {
+          throw new Error('Invalid API response structure: missing data array');
+        }
+
+        return parsedJson;
+      };
+
+      // M List.Generate equivalent
+      const pages: any[][] = [];
+      let currentPage = await fetchPage(null);
+
+      while (currentPage && Array.isArray(currentPage.data)) {
+        pages.push(currentPage.data);
+        if (currentPage.has_more === true && currentPage.next_cursor) {
+          currentPage = await fetchPage(currentPage.next_cursor);
+        } else {
+          break;
+        }
+      }
+
+      // M List.Combine
+      return pages.flat();
+    }
+
+    it('Power Query evaluation fails visibly on HTTP 401 and never silently creates an empty table', async () => {
+      // Calling getBills without Authorization header results in 401
+      const fetcher = async () => {
+        const req = new NextRequest('http://localhost/api/reports/excel/bills');
+        const res = await getBills(req);
+        return { status: res.status, body: await res.json() };
+      };
+
+      await expect(simulatePowerQueryFetch(fetcher)).rejects.toThrow(
+        /Urbania Café API error \(401\): Unauthorized/
+      );
+    });
+
+    it('Power Query evaluation fails visibly on HTTP 500 when database error occurs', async () => {
+      mockQueryBuilder.limit.mockResolvedValueOnce({
+        data: null,
+        error: { message: 'Database connection failed' },
+      });
+
+      const fetcher = async () => {
+        const req = new NextRequest('http://localhost/api/reports/excel/bills', {
+          headers: { Authorization: `Bearer ${TEST_TOKEN}` },
+        });
+        const res = await getBills(req);
+        return { status: res.status, body: await res.json() };
+      };
+
+      await expect(simulatePowerQueryFetch(fetcher)).rejects.toThrow(
+        /Urbania Café API error \(500\): Failed to query bills/
+      );
+    });
+
+    it('Power Query evaluation continues through a valid empty page when has_more is true', async () => {
+      // Page 1 returns empty items with has_more: true
+      const page1 = {
+        data: [],
+        next_cursor: encodeCursor('2026-10-24T10:00:00.000Z', 'uuid-1'),
+        has_more: true,
+        page_size: 0,
+      };
+      // Page 2 returns actual items with has_more: false
+      const page2 = {
+        data: [{ item_id: 'item-2', item_name: 'Hot Chocolate' }],
+        next_cursor: null,
+        has_more: false,
+        page_size: 1,
+      };
+
+      let callCount = 0;
+      const fetcher = async () => {
+        callCount++;
+        return { status: 200, body: callCount === 1 ? page1 : page2 };
+      };
+
+      const result = await simulatePowerQueryFetch(fetcher);
+      expect(result.length).toBe(1);
+      expect(result[0].item_id).toBe('item-2');
+      expect(callCount).toBe(2);
+    });
+  });
+
+  describe('9. Multi-Batch Scanning Across Bills With Empty Item Snapshots', () => {
+    const makeAuthReq = (url: string) =>
+      new NextRequest(url, { headers: { Authorization: `Bearer ${TEST_TOKEN}` } });
+
+    it('scans through a first batch of bills with no items and returns valid items from a later batch in the same request', async () => {
+      // When limit = 1, billsBatch = 6.
+      // Batch 1 has 6 bills, all with empty items_snapshot: []
+      const emptyBatch = Array.from({ length: 6 }, (_, i) => ({
+        id: `empty-bill-${i + 1}`,
+        bill_number: `UB-E${i + 1}`,
+        issued_at: new Date(1700000000000 - i * 1000).toISOString(),
+        items_snapshot: [],
+      }));
+
+      // Batch 2 has 2 bills with items
+      const validBatch = [
+        {
+          id: 'valid-bill-1',
+          bill_number: 'UB-V1',
+          issued_at: new Date(1700000000000 - 10000).toISOString(),
+          items_snapshot: [
+            { id: 'item-v1', name: 'Masala Chai', unit_price_paise: 4000, quantity: 1, line_total_paise: 4000 },
+          ],
+        },
+      ];
+
+      // First query returns the full empty batch (length = 6 = billsBatch)
+      mockQueryBuilder.limit.mockResolvedValueOnce({ data: emptyBatch, error: null });
+      // Second query returns the batch with items
+      mockQueryBuilder.limit.mockResolvedValueOnce({ data: validBatch, error: null });
+
+      const res = await getItems(makeAuthReq('http://localhost/api/reports/excel/items?limit=1'));
+      expect(res.status).toBe(200);
+
+      const json = await res.json();
+      expect(json.data.length).toBe(1);
+      expect(json.data[0].item_id).toBe('item-v1');
+      expect(json.data[0].item_name).toBe('Masala Chai');
+    });
+
+    it('scans through multiple consecutive empty batches before finding bills with valid items', async () => {
+      // Batch 1: 6 empty bills
+      const emptyBatch1 = Array.from({ length: 6 }, (_, i) => ({
+        id: `empty-b1-${i}`,
+        bill_number: `UB-E1-${i}`,
+        issued_at: new Date(1700000000000 - i * 1000).toISOString(),
+        items_snapshot: [],
+      }));
+      // Batch 2: 6 empty bills
+      const emptyBatch2 = Array.from({ length: 6 }, (_, i) => ({
+        id: `empty-b2-${i}`,
+        bill_number: `UB-E2-${i}`,
+        issued_at: new Date(1700000000000 - (6 + i) * 1000).toISOString(),
+        items_snapshot: [],
+      }));
+      // Batch 3: 1 bill with item
+      const batchWithItem = [
+        {
+          id: 'item-bill-3',
+          bill_number: 'UB-I3',
+          issued_at: new Date(1700000000000 - 20000).toISOString(),
+          items_snapshot: [
+            { id: 'item-3x', name: 'Filter Coffee', unit_price_paise: 6000, quantity: 1, line_total_paise: 6000 },
+          ],
+        },
+      ];
+
+      mockQueryBuilder.limit.mockResolvedValueOnce({ data: emptyBatch1, error: null });
+      mockQueryBuilder.limit.mockResolvedValueOnce({ data: emptyBatch2, error: null });
+      mockQueryBuilder.limit.mockResolvedValueOnce({ data: batchWithItem, error: null });
+
+      const res = await getItems(makeAuthReq('http://localhost/api/reports/excel/items?limit=1'));
+      expect(res.status).toBe(200);
+
+      const json = await res.json();
+      expect(json.data.length).toBe(1);
+      expect(json.data[0].item_id).toBe('item-3x');
+      expect(json.data[0].item_name).toBe('Filter Coffee');
+    });
+
+    it('preserves stable cursor ordering without skipping or duplicating items when resuming after empty batches', async () => {
+      // 1 empty bill, then Bill A with 2 items, then 1 empty bill, then Bill B with 1 item
+      const billEmpty1 = {
+        id: 'bill-e1',
+        bill_number: 'UB-E1',
+        issued_at: '2026-10-24T12:00:00.000Z',
+        items_snapshot: [],
+      };
+      const billA = {
+        id: 'bill-a',
+        bill_number: 'UB-A',
+        issued_at: '2026-10-24T11:00:00.000Z',
+        items_snapshot: [
+          { id: 'item-a1', name: 'Item A1', unit_price_paise: 1000, quantity: 1, line_total_paise: 1000 },
+          { id: 'item-a2', name: 'Item A2', unit_price_paise: 2000, quantity: 1, line_total_paise: 2000 },
+        ],
+      };
+      const billEmpty2 = {
+        id: 'bill-e2',
+        bill_number: 'UB-E2',
+        issued_at: '2026-10-24T10:00:00.000Z',
+        items_snapshot: [],
+      };
+      const billB = {
+        id: 'bill-b',
+        bill_number: 'UB-B',
+        issued_at: '2026-10-24T09:00:00.000Z',
+        items_snapshot: [
+          { id: 'item-b1', name: 'Item B1', unit_price_paise: 3000, quantity: 1, line_total_paise: 3000 },
+        ],
+      };
+
+      // Page 1 with limit = 2
+      mockQueryBuilder.limit.mockResolvedValueOnce({
+        data: [billEmpty1, billA, billEmpty2, billB],
+        error: null,
+      });
+
+      const res1 = await getItems(makeAuthReq('http://localhost/api/reports/excel/items?limit=2'));
+      const json1 = await res1.json();
+
+      expect(json1.data.length).toBe(2);
+      expect(json1.data.map((i: any) => i.item_id)).toEqual(['item-a1', 'item-a2']);
+      expect(json1.has_more).toBe(true);
+
+      // Page 2 resuming from cursor
+      mockQueryBuilder.limit.mockResolvedValueOnce({
+        data: [billEmpty2, billB],
+        error: null,
+      });
+
+      const res2 = await getItems(
+        makeAuthReq(`http://localhost/api/reports/excel/items?limit=2&cursor=${json1.next_cursor}`)
+      );
+      const json2 = await res2.json();
+
+      expect(json2.data.length).toBe(1);
+      expect(json2.data[0].item_id).toBe('item-b1');
+      expect(json2.has_more).toBe(false);
+      expect(json2.next_cursor).toBeNull();
+    });
+  });
 });

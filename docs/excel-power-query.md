@@ -131,7 +131,7 @@ let
     Token = UrbaniaExportToken,
     PageLimit = 200,
 
-    // Helper function to fetch a single page
+    // Helper function to fetch a single page with visible error handling
     FetchPage = (cursor as nullable text) =>
         let
             QueryParams = [
@@ -147,16 +147,30 @@ let
                     #"Authorization" = "Bearer " & Token,
                     #"Accept" = "application/json"
                 ],
-                ManualStatusHandling = {400, 401, 403, 500}
+                ManualStatusHandling = {400, 401, 403, 404, 405, 500}
             ]),
-            Json = Json.Document(Source)
-        in
-            Json,
 
-    // Paginate through all records using List.Generate until next_cursor is null
+            ResponseMeta = Value.Metadata(Source),
+            HttpStatus = Record.FieldOrDefault(ResponseMeta, "Response.Status", 200),
+            
+            // Parse response body
+            ParsedJson = try Json.Document(Source) otherwise null,
+            ServerErrorMessage = if ParsedJson <> null and Record.HasFields(ParsedJson, "error") 
+                then Text.From(ParsedJson[error]) 
+                else "HTTP " & Text.From(HttpStatus)
+        in
+            if HttpStatus >= 400 then
+                error Error.Record("UrbaniaApiError", "Urbania Café API error (" & Text.From(HttpStatus) & "): " & ServerErrorMessage, [Status = HttpStatus])
+            else if ParsedJson = null or not Record.HasFields(ParsedJson, "data") or not (ParsedJson[data] is list) then
+                error Error.Record("UrbaniaApiError", "Invalid API response structure: missing 'data' array", [Status = HttpStatus])
+            else
+                ParsedJson,
+
+    // Paginate through all records using List.Generate until next_cursor is null.
+    // Continues through valid empty pages when has_more is true.
     Pages = List.Generate(
         () => FetchPage(null),
-        each _ <> null and Record.HasFields(_, "data") and List.Count([data]) > 0,
+        each _ <> null and Record.HasFields(_, "data"),
         each if Record.FieldOrDefault(_, "has_more", false) = true and Record.FieldOrDefault(_, "next_cursor", null) <> null
              then FetchPage([next_cursor])
              else null,
@@ -210,7 +224,7 @@ in
 
 ## 5. Query 2: Bill Line Items (`UrbaniaBillItems`)
 
-This query imports individual item rows with enforced maximum page sizing and stable ordering across bill boundaries.
+This query imports individual item rows with enforced maximum page sizing, automatic multi-batch scanning, and stable ordering across bill boundaries.
 
 ### Step 1: Create Blank Query
 1. In Power Query Editor, click **Home** → **New Source** → **Blank Query**.
@@ -225,7 +239,7 @@ let
     Token = UrbaniaExportToken,
     PageLimit = 200,
 
-    // Helper function to fetch a single page of items
+    // Helper function to fetch a single page of items with visible error handling
     FetchPage = (cursor as nullable text) =>
         let
             QueryParams = [
@@ -241,16 +255,30 @@ let
                     #"Authorization" = "Bearer " & Token,
                     #"Accept" = "application/json"
                 ],
-                ManualStatusHandling = {400, 401, 403, 500}
+                ManualStatusHandling = {400, 401, 403, 404, 405, 500}
             ]),
-            Json = Json.Document(Source)
-        in
-            Json,
 
-    // Paginate through all batches until next_cursor is null
+            ResponseMeta = Value.Metadata(Source),
+            HttpStatus = Record.FieldOrDefault(ResponseMeta, "Response.Status", 200),
+            
+            // Parse response body
+            ParsedJson = try Json.Document(Source) otherwise null,
+            ServerErrorMessage = if ParsedJson <> null and Record.HasFields(ParsedJson, "error") 
+                then Text.From(ParsedJson[error]) 
+                else "HTTP " & Text.From(HttpStatus)
+        in
+            if HttpStatus >= 400 then
+                error Error.Record("UrbaniaApiError", "Urbania Café API error (" & Text.From(HttpStatus) & "): " & ServerErrorMessage, [Status = HttpStatus])
+            else if ParsedJson = null or not Record.HasFields(ParsedJson, "data") or not (ParsedJson[data] is list) then
+                error Error.Record("UrbaniaApiError", "Invalid API response structure: missing 'data' array", [Status = HttpStatus])
+            else
+                ParsedJson,
+
+    // Paginate through all batches until next_cursor is null.
+    // Continues through valid empty pages when has_more is true.
     Pages = List.Generate(
         () => FetchPage(null),
-        each _ <> null and Record.HasFields(_, "data") and List.Count([data]) > 0,
+        each _ <> null and Record.HasFields(_, "data"),
         each if Record.FieldOrDefault(_, "has_more", false) = true and Record.FieldOrDefault(_, "next_cursor", null) <> null
              then FetchPage([next_cursor])
              else null,
@@ -306,7 +334,7 @@ let
     Token = UrbaniaExportToken,
     PageLimit = 200,
 
-    // Helper function to fetch a single page of audit events
+    // Helper function to fetch a single page of audit events with visible error handling
     FetchPage = (cursor as nullable text) =>
         let
             QueryParams = [
@@ -322,16 +350,30 @@ let
                     #"Authorization" = "Bearer " & Token,
                     #"Accept" = "application/json"
                 ],
-                ManualStatusHandling = {400, 401, 403, 500}
+                ManualStatusHandling = {400, 401, 403, 404, 405, 500}
             ]),
-            Json = Json.Document(Source)
-        in
-            Json,
 
-    // Paginate through all audit events until next_cursor is null
+            ResponseMeta = Value.Metadata(Source),
+            HttpStatus = Record.FieldOrDefault(ResponseMeta, "Response.Status", 200),
+            
+            // Parse response body
+            ParsedJson = try Json.Document(Source) otherwise null,
+            ServerErrorMessage = if ParsedJson <> null and Record.HasFields(ParsedJson, "error") 
+                then Text.From(ParsedJson[error]) 
+                else "HTTP " & Text.From(HttpStatus)
+        in
+            if HttpStatus >= 400 then
+                error Error.Record("UrbaniaApiError", "Urbania Café API error (" & Text.From(HttpStatus) & "): " & ServerErrorMessage, [Status = HttpStatus])
+            else if ParsedJson = null or not Record.HasFields(ParsedJson, "data") or not (ParsedJson[data] is list) then
+                error Error.Record("UrbaniaApiError", "Invalid API response structure: missing 'data' array", [Status = HttpStatus])
+            else
+                ParsedJson,
+
+    // Paginate through all audit events until next_cursor is null.
+    // Continues through valid empty pages when has_more is true.
     Pages = List.Generate(
         () => FetchPage(null),
-        each _ <> null and Record.HasFields(_, "data") and List.Count([data]) > 0,
+        each _ <> null and Record.HasFields(_, "data"),
         each if Record.FieldOrDefault(_, "has_more", false) = true and Record.FieldOrDefault(_, "next_cursor", null) <> null
              then FetchPage([next_cursor])
              else null,
