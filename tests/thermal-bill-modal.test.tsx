@@ -107,4 +107,11 @@ describe('ThermalBillModal Clean Receipt Viewer (View Image Action)', () => {
     expect(styleEl?.innerHTML).toContain('vercel-live-feedback');
     expect(styleEl?.innerHTML).toContain('58mm auto');
   });
+
+  it('does NOT render any "Open Standalone Print Page" link underneath receipt', () => {
+    const onClose = vi.fn();
+    render(<ThermalBillModal bill={mockBill} onClose={onClose} isReprint={false} />);
+    expect(screen.queryByText(/Open Standalone Print Page/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Standalone/i })).not.toBeInTheDocument();
+  });
 });

@@ -21,19 +21,19 @@ export default async function Staff() {
   let orders: any[] = [];
   let error: unknown = null;
 
-  // Attempt query with billed_at; if column not yet applied via migration, fall back gracefully
+  // Attempt query with billed_at and full order items; if columns not yet applied via migration, fall back gracefully
   const [activeRes, completedRes] = await Promise.all([
     db
       .from('orders')
       .select(
-        'id,order_number,status,customer_name,guest_count,total_paise,created_at,billed_at,cafe_tables(label),order_items(menu_item_id,item_name_snapshot,quantity)'
+        'id,order_number,status,customer_name,customer_note,guest_count,total_paise,created_at,billed_at,service_mode,order_source,cafe_tables(label),order_items(id,menu_item_id,item_name_snapshot,quantity,unit_price_paise,item_note,is_custom,selected_options_snapshot)'
       )
       .in('status', ['NEW', 'ACCEPTED', 'PREPARING', 'READY'])
       .order('created_at'),
     db
       .from('orders')
       .select(
-        'id,order_number,status,customer_name,guest_count,total_paise,created_at,billed_at,cafe_tables(label),order_items(menu_item_id,item_name_snapshot,quantity)'
+        'id,order_number,status,customer_name,customer_note,guest_count,total_paise,created_at,billed_at,service_mode,order_source,cafe_tables(label),order_items(id,menu_item_id,item_name_snapshot,quantity,unit_price_paise,item_note,is_custom,selected_options_snapshot)'
       )
       .eq('status', 'COMPLETED')
       .order('created_at', { ascending: false })

@@ -838,15 +838,6 @@ export default function ReportsManager({
           onSuccess={(created) => {
             setShowManualModal(false);
             setRefreshKey((k) => k + 1);
-            // Automatically prompt to open thermal bill
-            fetch(`/api/staff/orders/${created.order_id}/bill`, { method: 'POST' })
-              .then((r) => r.json())
-              .then((d) => {
-                if (d.ok && d.bill) {
-                  setThermalBill({ bill: d.bill, isReprint: false });
-                }
-              })
-              .catch(() => {});
           }}
         />
       )}

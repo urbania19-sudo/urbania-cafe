@@ -276,6 +276,9 @@ export function friendlyBillingError(err: unknown): string {
   if (msg.includes("URB:discount_exceeds_total")) {
     return "Discount cannot exceed the total bill amount.";
   }
+  if (msg.includes("in the schema cache") || msg.includes("PGRST202")) {
+    return "Database billing function was not found in the schema cache. Please reload the Supabase schema cache or apply migrations.";
+  }
   if (msg.includes("custom item name required")) return "Please enter a name for each custom line item.";
   if (msg.includes("invalid custom price")) return "Custom item price must be a valid non-negative amount.";
   if (msg.includes("already been billed")) return "This order has already been billed and cannot be edited.";

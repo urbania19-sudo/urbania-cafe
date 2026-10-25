@@ -181,8 +181,8 @@ describe('Mobile Viewports (320px, 360px, 375px, 390px, 414px) Responsiveness', 
         fireEvent.click(minusBtn);
         expect(screen.queryByText(/₹560.00/i)).not.toBeInTheDocument();
 
-        // Verify Create & Generate Bill is enabled and styled
-        const submitBtn = screen.getByRole('button', { name: 'Create & Generate Bill' });
+        // Verify Create Order is enabled and styled
+        const submitBtn = screen.getByRole('button', { name: 'Create Order' });
         expect(submitBtn).toBeInTheDocument();
         expect(submitBtn).not.toBeDisabled();
 

@@ -1,7 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
-import { calculateBillDiscount, type DiscountType } from '@/lib/billing';
+import { useState, useEffect } from 'react';
 
 interface TableOption {
   id: string;
@@ -35,8 +34,7 @@ export default function ManualOrderModal({
   menuItems?: MenuItemOption[];
   onClose: () => void;
   onSuccess: (
-    order: { order_id: string; order_number: number; total_paise: number },
-    discount?: { type: DiscountType; value: number }
+    order: { order_id: string; order_number: number; total_paise: number }
   ) => void;
 }) {
   const [serviceMode, setServiceMode] = useState<'dine_in' | 'takeaway' | 'counter' | 'delivery'>('dine_in');
@@ -55,11 +53,6 @@ export default function ManualOrderModal({
   const [customNote, setCustomNote] = useState('');
   const [customQty, setCustomQty] = useState(1);
   const [isAddingCustom, setIsAddingCustom] = useState(false);
-
-  // Bill-level discount state
-  const [discountEnabled, setDiscountEnabled] = useState(false);
-  const [discountType, setDiscountType] = useState<DiscountType>('fixed');
-  const [discountValue, setDiscountValue] = useState<string>('');
 
   function addCatalogueItem() {
     const item = menuItems.find((m) => m.id === selectedMenuItemId);
@@ -139,39 +132,6 @@ export default function ManualOrderModal({
 
   const totalPaise = items.reduce((acc, i) => acc + Math.round(i.unitPriceRupees * 100) * i.quantity, 0);
 
-  const numDiscountValue = parseFloat(discountValue) || 0;
-  const discountCalc = useMemo(() => {
-    if (!discountEnabled || numDiscountValue <= 0) {
-      return {
-        subtotalBeforeDiscountPaise: totalPaise,
-        discountType: null,
-        discountValue: null,
-        discountPaise: 0,
-        totalPaise: totalPaise,
-        hasDiscount: false,
-        error: null,
-      };
-    }
-    try {
-      const calc = calculateBillDiscount(totalPaise, {
-        type: discountType,
-        value: numDiscountValue,
-      });
-      return { ...calc, error: null };
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : 'Invalid discount';
-      return {
-        subtotalBeforeDiscountPaise: totalPaise,
-        discountType: null,
-        discountValue: null,
-        discountPaise: 0,
-        totalPaise: totalPaise,
-        hasDiscount: false,
-        error: msg,
-      };
-    }
-  }, [discountEnabled, numDiscountValue, discountType, totalPaise]);
-
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape' && !submitting) {
@@ -182,7 +142,7 @@ export default function ManualOrderModal({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose, submitting]);
 
-  async function handleSubmit(autoBill: boolean = true) {
+  async function handleSubmit() {
     if (items.length === 0) {
       setError('Please add at least one item to the order.');
       return;
@@ -219,15 +179,7 @@ export default function ManualOrderModal({
         throw new Error(data.error || 'Failed to create order');
       }
 
-      if (discountCalc.error) {
-        setError(discountCalc.error);
-        return;
-      }
-      if (discountCalc.hasDiscount) {
-        onSuccess(data, { type: discountType, value: numDiscountValue });
-      } else {
-        onSuccess(data);
-      }
+      onSuccess(data);
     } catch (err) {
       console.error('Manual order submit error:', err);
       setError(err instanceof Error ? err.message : 'Could not create order.');
@@ -776,198 +728,21 @@ export default function ManualOrderModal({
                   ))}
                 </div>
 
-                {/* Optional Bill-level Discount Controls */}
+                {/* Order Total */}
                 <div
                   style={{
-                    padding: '10px 12px',
-                    background: 'rgba(255,255,255,0.02)',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    padding: '12px 14px',
+                    background: 'rgba(255,255,255,0.05)',
+                    fontWeight: 700,
+                    fontSize: 15,
                     borderTop: '1px solid var(--line, #3d2d24)',
-                    fontSize: 13,
                   }}
                 >
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      flexWrap: 'wrap',
-                      gap: 8,
-                    }}
-                  >
-                    <label
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        cursor: 'pointer',
-                        fontWeight: 600,
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={discountEnabled}
-                        onChange={(e) => {
-                          setDiscountEnabled(e.target.checked);
-                          if (!e.target.checked) setDiscountValue('');
-                        }}
-                        style={{
-                          width: 16,
-                          height: 16,
-                          cursor: 'pointer',
-                          accentColor: 'var(--accent, #c89f65)',
-                        }}
-                      />
-                      <span>Apply bill discount</span>
-                    </label>
-
-                    {discountEnabled && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setDiscountEnabled(false);
-                          setDiscountValue('');
-                        }}
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          color: '#df6d5d',
-                          fontSize: 12,
-                          cursor: 'pointer',
-                          padding: 0,
-                          textDecoration: 'underline',
-                        }}
-                      >
-                        Remove discount
-                      </button>
-                    )}
-                  </div>
-
-                  {discountEnabled && (
-                    <div style={{ marginTop: 10, display: 'grid', gap: 10 }}>
-                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                        <button
-                          type="button"
-                          className="chip"
-                          onClick={() => setDiscountType('fixed')}
-                          style={
-                            discountType === 'fixed'
-                              ? { background: 'var(--accent, #c89f65)', color: '#2b1b16', fontWeight: 700 }
-                              : { fontSize: 12 }
-                          }
-                        >
-                          Fixed Amount (₹)
-                        </button>
-                        <button
-                          type="button"
-                          className="chip"
-                          onClick={() => setDiscountType('percentage')}
-                          style={
-                            discountType === 'percentage'
-                              ? { background: 'var(--accent, #c89f65)', color: '#2b1b16', fontWeight: 700 }
-                              : { fontSize: 12 }
-                          }
-                        >
-                          Percentage (%)
-                        </button>
-                      </div>
-
-                      <div>
-                        <label
-                          htmlFor="bill-discount-value"
-                          style={{
-                            display: 'block',
-                            fontSize: 12,
-                            marginBottom: 4,
-                            color: 'var(--muted, #998377)',
-                          }}
-                        >
-                          {discountType === 'fixed'
-                            ? 'Discount amount in Rupees (₹)'
-                            : 'Discount percentage (%)'}
-                        </label>
-                        <input
-                          id="bill-discount-value"
-                          type="number"
-                          min="0"
-                          max={discountType === 'percentage' ? 100 : totalPaise / 100}
-                          step={discountType === 'percentage' ? '0.1' : '1'}
-                          placeholder={discountType === 'fixed' ? 'e.g. 50' : 'e.g. 10'}
-                          value={discountValue}
-                          onChange={(e) => setDiscountValue(e.target.value)}
-                          style={{
-                            width: '100%',
-                            padding: '8px 12px',
-                            borderRadius: 6,
-                            border: '1px solid var(--line, #3d2d24)',
-                            background: 'rgba(0,0,0,0.2)',
-                            color: 'var(--ink, #f5ead9)',
-                            fontSize: 14,
-                            outline: 'none',
-                          }}
-                        />
-                        {discountCalc.error && (
-                          <p style={{ color: '#df6d5d', fontSize: 12, margin: '4px 0 0' }}>
-                            {discountCalc.error}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  )}
+                  <span>Total Amount:</span>
+                  <span>₹{(totalPaise / 100).toFixed(2)}</span>
                 </div>
-
-                {/* Calculation Preview & Final Amount */}
-                {discountCalc.hasDiscount ? (
-                  <div
-                    style={{
-                      padding: '10px 12px',
-                      background: 'rgba(255,255,255,0.05)',
-                      fontSize: 13,
-                      borderTop: '1px solid var(--line, #3d2d24)',
-                      display: 'grid',
-                      gap: 4,
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--muted, #998377)' }}>
-                      <span>Bill Total:</span>
-                      <span>₹{(discountCalc.subtotalBeforeDiscountPaise / 100).toFixed(2)}</span>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', color: '#10b981' }}>
-                      <span>
-                        Discount ({discountType === 'percentage' ? `${numDiscountValue}%` : `₹${numDiscountValue}`}):
-                      </span>
-                      <span>-₹{(discountCalc.discountPaise / 100).toFixed(2)}</span>
-                    </div>
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        fontWeight: 700,
-                        fontSize: 15,
-                        marginTop: 2,
-                        paddingTop: 4,
-                        borderTop: '1px dashed var(--line, #3d2d24)',
-                      }}
-                    >
-                      <span>Amount to Pay:</span>
-                      <span>₹{(discountCalc.totalPaise / 100).toFixed(2)}</span>
-                    </div>
-                  </div>
-                ) : (
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      padding: '10px 12px',
-                      background: 'rgba(255,255,255,0.05)',
-                      fontWeight: 700,
-                      fontSize: 14,
-                      borderTop: '1px solid var(--line, #3d2d24)',
-                    }}
-                  >
-                    <span>Total Amount:</span>
-                    <span>₹{(totalPaise / 100).toFixed(2)}</span>
-                  </div>
-                )}
               </div>
             )}
           </div>
@@ -1000,17 +775,17 @@ export default function ManualOrderModal({
             type="button"
             className="btn"
             disabled={submitting || items.length === 0}
-            onClick={() => handleSubmit(true)}
+            onClick={handleSubmit}
             style={{
               backgroundColor: 'var(--accent, #c89f65)',
               color: '#2b1b16',
               minHeight: 44,
-              padding: '10px 20px',
+              padding: '10px 24px',
               fontWeight: 800,
               opacity: submitting || items.length === 0 ? 0.5 : 1,
             }}
           >
-            {submitting ? 'Creating...' : 'Create & Generate Bill'}
+            {submitting ? 'Creating...' : 'Create Order'}
           </button>
         </div>
       </div>

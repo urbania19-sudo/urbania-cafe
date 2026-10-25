@@ -471,10 +471,14 @@ describe('Thermal Canvas Receipt Generator (384px for Fun Print / MX11)', () => 
     expect(canvas.height).toBeGreaterThan(150);
 
     // Order number and token
+    expect(filledTexts).toContain('URBANIA CAFE — KITCHEN TOKEN');
     expect(filledTexts).toContain('ORDER #108');
     expect(filledTexts).toContain('TABLE 4');
     expect(filledTexts.some((t) => t.includes('Namit'))).toBe(true);
     expect(filledTexts.some((t) => t.includes('No spicy sauce'))).toBe(true);
+
+    // Section header
+    expect(filledTexts).toContain('ITEMS TO PREPARE');
 
     // Items
     expect(filledTexts).toContain('2× Paneer Tikka Sandwich');
@@ -486,7 +490,7 @@ describe('Thermal Canvas Receipt Generator (384px for Fun Print / MX11)', () => 
     expect(filledTexts.some((t) => t.includes('Very hot'))).toBe(true);
 
     // Kitchen copy footer
-    expect(filledTexts).toContain('*** KITCHEN COPY (NOT A BILL) ***');
+    expect(filledTexts).toContain('*** KITCHEN COPY — NOT A BILL ***');
 
     // EXCLUDE all financial information
     expect(filledTexts.some((t) => t.includes('₹'))).toBe(false);

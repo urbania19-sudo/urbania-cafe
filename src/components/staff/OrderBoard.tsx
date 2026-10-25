@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation';
 import { type Bill, type DiscountType } from '@/lib/billing';
 import ThermalBillModal from '@/components/staff/ThermalBillModal';
 import ManualOrderModal from '@/components/staff/ManualOrderModal';
-import KitchenTicketModal from '@/components/staff/KitchenTicketModal';
 import BillDiscountModal from '@/components/staff/BillDiscountModal';
 
 type Order = {
@@ -13,6 +12,7 @@ type Order = {
   order_number: number;
   status: string;
   customer_name: string | null;
+  customer_note?: string | null;
   guest_count: number | null;
   total_paise: number;
   created_at: string;
@@ -29,6 +29,7 @@ type Order = {
     item_note?: string | null;
     is_custom?: boolean;
     selected_options?: { name: string }[];
+    selected_options_snapshot?: { name: string }[];
   }[];
 };
 
@@ -99,7 +100,6 @@ export default function OrderBoard({
   const [adding, setAdding] = useState('');
   const [activeBill, setActiveBill] = useState<{ bill: Bill; isReprint: boolean } | null>(null);
   const [billingOrder, setBillingOrder] = useState<Order | null>(null);
-  const [activeKitchenOrder, setActiveKitchenOrder] = useState<Order | null>(null);
   const [showManualModal, setShowManualModal] = useState(false);
   const [filterTab, setFilterTab] = useState<'all' | 'active' | 'completed'>('all');
 
@@ -434,7 +434,6 @@ export default function OrderBoard({
     } catch (err) {
       console.error('Billing error:', err);
       setError(err instanceof Error ? err.message : 'Could not generate bill.');
-      throw err;
     } finally {
       setBusy(undefined);
     }
@@ -467,10 +466,10 @@ export default function OrderBoard({
             tables={tables}
             menuItems={menu}
             onClose={() => setShowManualModal(false)}
-            onSuccess={async (newOrder, discount) => {
+            onSuccess={(newOrder) => {
               setShowManualModal(false);
+              setBillingOrder(null);
               router.refresh();
-              await billOrderDirectly(newOrder.order_id, discount);
             }}
           />
         )}
@@ -481,15 +480,10 @@ export default function OrderBoard({
             subtotalPaise={billingOrder.total_paise}
             onClose={() => setBillingOrder(null)}
             onConfirm={async (discount) => {
-              await billOrderDirectly(billingOrder.id, discount);
+              const targetOrderId = billingOrder.id;
+              setBillingOrder(null);
+              await billOrderDirectly(targetOrderId, discount);
             }}
-          />
-        )}
-
-        {activeKitchenOrder && (
-          <KitchenTicketModal
-            order={activeKitchenOrder}
-            onClose={() => setActiveKitchenOrder(null)}
           />
         )}
 
@@ -576,7 +570,15 @@ export default function OrderBoard({
         {visibleOrders.map((o) => {
           const following = next[o.status];
           const isCompleted = o.status === 'COMPLETED';
-          const canViewReceipt = isCompleted || Boolean(o.billed_at);
+          const isCancelled = o.status === 'CANCELLED';
+          const isBilled = Boolean(o.billed_at);
+          const canViewReceipt = isCompleted || isBilled;
+          const canEdit =
+            !isBilled &&
+            !isCompleted &&
+            !isCancelled &&
+            ['NEW', 'ACCEPTED', 'PREPARING', 'READY'].includes(o.status) &&
+            editing?.orderId !== o.id;
 
           return (
             <article className="card" key={o.id} style={{ padding: 18, minWidth: 0 }}>
@@ -911,15 +913,16 @@ export default function OrderBoard({
                       Reject
                     </button>
                   )}
-                  {['NEW', 'ACCEPTED'].includes(o.status) && !o.billed_at && editing?.orderId !== o.id && (
+                  {canEdit && (
                     <button className="chip" onClick={() => startEdit(o)}>
                       Edit items
                     </button>
                   )}
-                  {o.status !== 'CANCELLED' && (
+                  {!isCancelled && (
                     <button
+                      type="button"
                       className="chip"
-                      onClick={() => setActiveKitchenOrder(o)}
+                      onClick={() => router.push(`/staff/orders/${o.id}/kitchen-token/print`)}
                       title="Print Kitchen Ticket"
                       style={{ fontWeight: 600 }}
                     >
@@ -933,6 +936,17 @@ export default function OrderBoard({
                       onClick={() => advance(o)}
                     >
                       {busy === o.id ? 'Updating…' : action[o.status]}
+                    </button>
+                  )}
+                  {!isBilled && !isCancelled && ['ACCEPTED', 'PREPARING', 'READY'].includes(o.status) && (
+                    <button
+                      className="chip"
+                      disabled={busy === o.id}
+                      onClick={() => openBill(o)}
+                      style={{ fontWeight: 600 }}
+                      title="Issue bill for this accepted order"
+                    >
+                      Generate Bill
                     </button>
                   )}
                   {canViewReceipt && (
@@ -958,10 +972,10 @@ export default function OrderBoard({
           tables={tables}
           menuItems={menu}
           onClose={() => setShowManualModal(false)}
-          onSuccess={async (newOrder, discount) => {
+          onSuccess={(newOrder) => {
             setShowManualModal(false);
+            setBillingOrder(null);
             router.refresh();
-            await billOrderDirectly(newOrder.order_id, discount);
           }}
         />
       )}
@@ -972,15 +986,10 @@ export default function OrderBoard({
           subtotalPaise={billingOrder.total_paise}
           onClose={() => setBillingOrder(null)}
           onConfirm={async (discount) => {
-            await billOrderDirectly(billingOrder.id, discount);
+            const targetOrderId = billingOrder.id;
+            setBillingOrder(null);
+            await billOrderDirectly(targetOrderId, discount);
           }}
-        />
-      )}
-
-      {activeKitchenOrder && (
-        <KitchenTicketModal
-          order={activeKitchenOrder}
-          onClose={() => setActiveKitchenOrder(null)}
         />
       )}
 

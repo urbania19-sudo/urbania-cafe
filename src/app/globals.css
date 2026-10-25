@@ -172,3 +172,11 @@ nav button.chip {
     border-radius: 10px;
   }
 }
+
+@media print {
+  .no-print,
+  [data-no-print] {
+    display: none !important;
+    visibility: hidden !important;
+  }
+}

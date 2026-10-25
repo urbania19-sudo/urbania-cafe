@@ -49,19 +49,32 @@ export default function ReceiptPrintView({
     };
   }, [bill, isReprint]);
 
+  useEffect(() => {
+    if (isReprint && bill.id && bill.id !== 'sample' && bill.id !== '00000000-0000-0000-0000-000000000000') {
+      fetch(`/api/staff/bills/${bill.id}/reprint`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'view_image', source: 'view_image_action' }),
+      }).catch(() => {});
+    }
+  }, [isReprint, bill.id]);
+
   return (
     <div
       style={{
         background: '#ffffff',
-        minHeight: '100vh',
+        width: '100%',
+        maxWidth: 384,
+        margin: '0 auto',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
         padding: 0,
-        margin: 0,
+        height: 'auto',
+        minHeight: 0,
       }}
     >
-      {/* 58mm Thermal Printer CSS: 0mm margins, pure white, hide any .no-print elements, suppress Vercel toolbar */}
+      {/* 58mm Thermal Printer CSS: 0mm margins, pure white, content-height trimmed, suppress UI and portal overlays */}
       <style
         dangerouslySetInnerHTML={{
           __html: `
@@ -75,8 +88,17 @@ export default function ReceiptPrintView({
               margin: 0 !important;
               padding: 0 !important;
               width: 100% !important;
+              height: auto !important;
+              min-height: 0 !important;
             }
             @media print {
+              html, body {
+                height: auto !important;
+                min-height: 0 !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                overflow: visible !important;
+              }
               .no-print {
                 display: none !important;
               }
@@ -85,7 +107,10 @@ export default function ReceiptPrintView({
                 print-color-adjust: exact;
               }
             }
-            /* Exclude Vercel Preview Toolbar and overlay widgets from print and view */
+            /* Exclude Vercel Preview Toolbar, Next.js Dev tools, and overlay widgets from print and view */
+            nextjs-portal,
+            [data-nextjs-dev-tools-button],
+            #next-logo,
             vercel-live-feedback,
             [data-vercel-toolbar],
             [class*="vercel-toolbar"],
@@ -117,6 +142,8 @@ export default function ReceiptPrintView({
           flexDirection: 'column',
           alignItems: 'center',
           padding: 0,
+          height: 'auto',
+          minHeight: 0,
           cursor: 'pointer',
         }}
       >
@@ -134,6 +161,7 @@ export default function ReceiptPrintView({
               display: 'block',
               margin: '0 auto',
               background: '#ffffff',
+              imageRendering: '-webkit-optimize-contrast',
             }}
           />
         )}

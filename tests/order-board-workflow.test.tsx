@@ -377,4 +377,152 @@ describe('OrderBoard Simplified Workflow & Clean Interface', () => {
     expect(screen.getByRole('button', { name: 'Completed' })).not.toBeDisabled();
     expect(screen.queryByText('Updating…')).toBeNull();
   });
+
+  it('allows staff to edit items, adjust quantities, add catalogue dishes, and add custom dishes on eligible unbilled orders', async () => {
+    const orders = [
+      {
+        id: 'ord-edit-1',
+        order_number: 109,
+        status: 'ACCEPTED',
+        customer_name: 'Vikram',
+        guest_count: 2,
+        total_paise: 16000,
+        created_at: new Date().toISOString(),
+        billed_at: null,
+        service_mode: 'dine_in',
+        order_source: 'manual',
+        cafe_tables: { label: 'Table 3' },
+        order_items: [
+          {
+            id: 'oi-1',
+            menu_item_id: 'item-1',
+            item_name_snapshot: 'Cold Coffee Frappe',
+            quantity: 1,
+            unit_price_paise: 16000,
+          },
+        ],
+      },
+    ];
+
+    render(<OrderBoard initial={orders} menu={mockMenu} tables={mockTables} />);
+
+    // "Edit items" button is available on unbilled ACCEPTED order
+    const editBtn = screen.getByRole('button', { name: 'Edit items' });
+    expect(editBtn).toBeInTheDocument();
+    fireEvent.click(editBtn);
+
+    // Edit interface opens with order items
+    expect(screen.getByText('Edit Order Items:')).toBeInTheDocument();
+    expect(screen.getByText('New Order Total:')).toBeInTheDocument();
+
+    // Increase quantity using '+'
+    const plusBtn = screen.getByRole('button', { name: 'More' });
+    fireEvent.click(plusBtn);
+
+    // Add a custom non-catalogue dish
+    const customToggleBtn = screen.getByRole('button', { name: /\+ Add Custom Dish/i });
+    fireEvent.click(customToggleBtn);
+
+    const customNameInput = screen.getByPlaceholderText(/Dish name/i);
+    const customPriceInput = screen.getByPlaceholderText(/Price \(₹\)/i);
+    const customNoteInput = screen.getByPlaceholderText(/Special instructions/i);
+
+    fireEvent.change(customNameInput, { target: { value: 'Extra Garlic Toast' } });
+    fireEvent.change(customPriceInput, { target: { value: '80' } });
+    fireEvent.change(customNoteInput, { target: { value: 'Crispy' } });
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Add to Order' }));
+
+    // Verify custom item added
+    expect(screen.getByText('Extra Garlic Toast')).toBeInTheDocument();
+    expect(screen.getByText('Note: Crispy')).toBeInTheDocument();
+
+    // Click Save changes
+    globalFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ ok: true }),
+    });
+
+    const saveBtn = screen.getByRole('button', { name: 'Save changes' });
+    fireEvent.click(saveBtn);
+
+    await waitFor(() => {
+      expect(globalFetch).toHaveBeenCalledWith(
+        '/api/staff/orders/ord-edit-1/items',
+        expect.objectContaining({
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            items: [
+              {
+                isCustom: false,
+                menuItemId: 'item-1',
+                quantity: 2,
+                note: null,
+              },
+              {
+                isCustom: true,
+                name: 'Extra Garlic Toast',
+                unitPricePaise: 8000,
+                quantity: 1,
+                note: 'Crispy',
+              },
+            ],
+          }),
+        })
+      );
+    });
+  });
+
+  it('strictly preserves immutability by hiding Edit Items for billed, completed, or cancelled orders', () => {
+    const orders = [
+      {
+        id: 'ord-billed',
+        order_number: 110,
+        status: 'ACCEPTED',
+        customer_name: 'Ananya',
+        guest_count: 1,
+        total_paise: 16000,
+        created_at: new Date().toISOString(),
+        billed_at: '2026-10-25T10:00:00Z',
+        service_mode: 'counter',
+        order_source: 'manual',
+        cafe_tables: null,
+        order_items: [{ menu_item_id: 'item-1', item_name_snapshot: 'Cold Coffee Frappe', quantity: 1 }],
+      },
+      {
+        id: 'ord-comp',
+        order_number: 111,
+        status: 'COMPLETED',
+        customer_name: 'Karan',
+        guest_count: 2,
+        total_paise: 12000,
+        created_at: new Date().toISOString(),
+        billed_at: '2026-10-25T10:30:00Z',
+        service_mode: 'dine_in',
+        order_source: 'qr',
+        cafe_tables: { label: 'Table 1' },
+        order_items: [{ menu_item_id: 'item-2', item_name_snapshot: 'Grilled Sandwich', quantity: 1 }],
+      },
+      {
+        id: 'ord-canc',
+        order_number: 112,
+        status: 'CANCELLED',
+        customer_name: 'Dev',
+        guest_count: 1,
+        total_paise: 12000,
+        created_at: new Date().toISOString(),
+        billed_at: null,
+        service_mode: 'takeaway',
+        order_source: 'manual',
+        cafe_tables: null,
+        order_items: [{ menu_item_id: 'item-2', item_name_snapshot: 'Grilled Sandwich', quantity: 1 }],
+      },
+    ];
+
+    render(<OrderBoard initial={orders} menu={mockMenu} tables={mockTables} />);
+
+    // None of the orders should render an "Edit items" button
+    expect(screen.queryByRole('button', { name: 'Edit items' })).toBeNull();
+  });
 });

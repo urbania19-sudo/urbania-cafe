@@ -107,7 +107,7 @@ describe('ManualOrderModal Component', () => {
     fireEvent.change(nameInput, { target: { value: 'Rohan Sharma' } });
 
     // Submit order
-    const submitBtn = screen.getByRole('button', { name: 'Create & Generate Bill' });
+    const submitBtn = screen.getByRole('button', { name: 'Create Order' });
     fireEvent.click(submitBtn);
 
     await waitFor(() => {
@@ -118,5 +118,22 @@ describe('ManualOrderModal Component', () => {
     });
 
     expect(onSuccess).toHaveBeenCalledWith(mockOrderResponse);
+  });
+
+  it('ensures discount controls are not displayed during order creation', () => {
+    render(
+      <ManualOrderModal
+        tables={mockTables}
+        menuItems={mockMenu}
+        onClose={vi.fn()}
+        onSuccess={vi.fn()}
+      />
+    );
+
+    // Verify discount controls do not exist during initial order creation
+    expect(screen.queryByText(/Apply bill discount/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Percentage \(%\)/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Fixed Amount/i)).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText(/Discount/i)).not.toBeInTheDocument();
   });
 });
