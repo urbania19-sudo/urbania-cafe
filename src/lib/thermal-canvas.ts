@@ -3,18 +3,24 @@ import type { Bill } from "@/lib/billing";
 export interface ReceiptCanvasOptions {
   scale?: number; // 1 = 384px (exact 1:1 hardware dot pitch), 2 = 768px (crisp 2x)
   isReprint?: boolean;
+  ticketType?: "new" | "addon" | "reprint";
+  ticketNumber?: number;
 }
 
 export interface KitchenTicketOrderItem {
   id?: string;
+  menu_item_id?: string | null;
   name?: string;
   item_name_snapshot?: string;
   quantity: number;
+  quantity_display?: string;
+  unit_price_paise?: number;
   note?: string | null;
   item_note?: string | null;
   is_custom?: boolean;
   selected_options?: { name: string }[];
   selected_options_snapshot?: { name: string }[] | unknown;
+  is_addition_increase?: boolean;
 }
 
 export interface KitchenTicketOrder {
@@ -29,6 +35,8 @@ export interface KitchenTicketOrder {
   table_label?: string | null;
   cafe_tables?: { label: string } | null;
   order_items: KitchenTicketOrderItem[];
+  ticket_type?: "new" | "addon" | "reprint";
+  ticket_number?: number;
 }
 
 export const SAMPLE_KITCHEN_ORDER: KitchenTicketOrder = {
@@ -750,7 +758,8 @@ export function layoutKitchenItem(
   fontMono: string,
 ): PreparedKitchenItem {
   const rawName = item.item_name_snapshot || item.name || "Dish";
-  const displayName = `${item.quantity}× ${item.is_custom ? `[CUSTOM] ${rawName}` : rawName}`;
+  const qtyPrefix = item.quantity_display || `${item.quantity}×`;
+  const displayName = `${qtyPrefix} ${item.is_custom ? `[CUSTOM] ${rawName}` : rawName}`;
 
   ctx.font = `bold 21px ${fontSans}`;
   const nameLines = wrapText(ctx, displayName, maxContentWidth);
@@ -826,10 +835,35 @@ export function renderKitchenTicketToCanvas(
 
   const guestCountStr = order.guest_count ? ` (${order.guest_count} guests)` : "";
 
+  const explicitType = options.ticketType || order.ticket_type;
+  const isAddon = explicitType === "addon";
+  const isFullReprint = explicitType === "reprint" || isReprint;
+  const isNewExplicit = explicitType === "new";
+
+  let orderTitle = `ORDER #${order.order_number}`;
+  let bannerText: string | null = null;
+
+  if (isAddon) {
+    orderTitle = `ADD-ON ORDER #${order.order_number}`;
+    bannerText = "*** ADD-ON ITEMS ONLY ***";
+  } else if (isNewExplicit) {
+    orderTitle = `NEW ORDER — ORDER #${order.order_number}`;
+  } else if (isFullReprint) {
+    bannerText = "*** DUPLICATE KITCHEN TICKET — FULL ORDER ***";
+  }
+
   // Pre-calculate item layouts using ctx so that Pass 1 and Pass 2 share identical line measurements
   const preparedItems = (order.order_items || []).map((item) =>
     layoutKitchenItem(ctx, item, maxContentWidth, fontSans, fontMono),
   );
+
+  // Measure title font size dynamically to fit within 356px maxContentWidth
+  let titleFontSize = 34;
+  ctx.font = `bold ${titleFontSize}px ${fontMono}`;
+  while (titleFontSize > 20 && ctx.measureText(orderTitle).width > maxContentWidth) {
+    titleFontSize -= 2;
+    ctx.font = `bold ${titleFontSize}px ${fontMono}`;
+  }
 
   // ---------------------------------------------------------------------------
   // Height dry-run calculation (Pass 1)
@@ -840,13 +874,13 @@ export function renderKitchenTicketToCanvas(
   ctx.font = `bold 17px ${fontMono}`;
   y += 36; // line height to order number
 
-  // Order / Token Number: ORDER #X (Prominent 34px bold mono)
-  ctx.font = `bold 34px ${fontMono}`;
-  if (isReprint) {
+  // Order / Token Number: Prominent bold mono
+  ctx.font = `bold ${titleFontSize}px ${fontMono}`;
+  y += 32; // line height to banner or table
+  if (bannerText) {
     ctx.font = `bold 14px ${fontMono}`;
     y += 24;
   }
-  y += 32; // line height to table
 
   // Table / Service Mode (19px bold mono)
   ctx.font = `bold 19px ${fontMono}`;
@@ -939,19 +973,18 @@ export function renderKitchenTicketToCanvas(
   renderCtx.fillText("URBANIA CAFE — KITCHEN TOKEN", leftX, curY);
   curY += 36;
 
-  // Token / Order Number (Prominent 34px bold mono for distant visibility)
-  renderCtx.font = `bold 34px ${fontMono}`;
+  // Token / Order Number (Prominent bold mono for distant visibility)
+  renderCtx.font = `bold ${titleFontSize}px ${fontMono}`;
   renderCtx.textAlign = "left";
-  renderCtx.fillText(`ORDER #${order.order_number}`, leftX, curY);
+  renderCtx.fillText(orderTitle, leftX, curY);
+  curY += 32;
 
-  if (isReprint) {
-    curY += 24;
+  if (bannerText) {
     renderCtx.font = `bold 14px ${fontMono}`;
     renderCtx.textAlign = "left";
-    renderCtx.fillText("*** DUPLICATE KITCHEN TICKET ***", leftX, curY);
+    renderCtx.fillText(bannerText, leftX, curY);
+    curY += 24;
   }
-
-  curY += 32;
 
   // Service Mode & Table (19px bold mono)
   renderCtx.font = `bold 19px ${fontMono}`;

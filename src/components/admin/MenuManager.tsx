@@ -192,7 +192,7 @@ export default function MenuManager({
       {/* Category Creation */}
       <form
         onSubmit={addCategory}
-        className="card"
+        className="card menu-category-form"
         style={{ padding: 14, margin: '10px 0', display: 'flex', gap: 8, flexWrap: 'wrap' }}
       >
         <input
@@ -209,7 +209,7 @@ export default function MenuManager({
       {/* Item Creation Form */}
       <form
         onSubmit={addItem}
-        className="card"
+        className="card menu-create-form"
         style={{ padding: 16, margin: '14px 0', display: 'grid', gap: 12 }}
       >
         <b style={{ fontFamily: 'Georgia, serif', fontSize: '1.2rem' }}>Add new menu dish</b>
@@ -385,7 +385,7 @@ export default function MenuManager({
             <div style={{ display: 'grid', gap: 10 }}>
               {list.map((i) => (
                 <article
-                  className="card"
+                  className="card menu-edit-card"
                   style={{
                     padding: 16,
                     display: 'grid',

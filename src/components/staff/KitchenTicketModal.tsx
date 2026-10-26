@@ -4,17 +4,27 @@ import { useState, useEffect } from 'react';
 import {
   renderKitchenTicketToCanvas,
   type KitchenTicketOrder,
+  type KitchenTicketOrderItem,
 } from '@/lib/thermal-canvas';
 
 export default function KitchenTicketModal({
   order,
+  fullOrderItems,
   onClose,
+  onAcknowledge,
   isReprint = false,
+  ticketType = 'new',
 }: {
   order: KitchenTicketOrder;
+  fullOrderItems?: KitchenTicketOrderItem[];
   onClose: () => void;
+  onAcknowledge?: (ticket: any) => void;
   isReprint?: boolean;
+  ticketType?: 'new' | 'addon' | 'reprint';
 }) {
+  const [acknowledging, setAcknowledging] = useState(false);
+  const [acknowledged, setAcknowledged] = useState(false);
+  const [ackError, setAckError] = useState('');
   const [ticketMeta, setTicketMeta] = useState<{
     dataUrl: string;
     width: number;
@@ -22,7 +32,7 @@ export default function KitchenTicketModal({
   } | null>(() => {
     if (typeof window === 'undefined' || typeof document === 'undefined') return null;
     try {
-      const canvas = renderKitchenTicketToCanvas(order, { scale: 1, isReprint });
+      const canvas = renderKitchenTicketToCanvas(order, { scale: 1, isReprint, ticketType });
       return {
         dataUrl: canvas.toDataURL('image/png'),
         width: canvas.width,
@@ -38,7 +48,7 @@ export default function KitchenTicketModal({
     requestAnimationFrame(() => {
       if (!isMounted) return;
       try {
-        const canvas = renderKitchenTicketToCanvas(order, { scale: 1, isReprint });
+        const canvas = renderKitchenTicketToCanvas(order, { scale: 1, isReprint, ticketType });
         setTicketMeta({
           dataUrl: canvas.toDataURL('image/png'),
           width: canvas.width,
@@ -51,7 +61,35 @@ export default function KitchenTicketModal({
     return () => {
       isMounted = false;
     };
-  }, [order, isReprint]);
+  }, [order, isReprint, ticketType]);
+
+  async function handleAcknowledge(e: React.MouseEvent) {
+    e.stopPropagation();
+    setAcknowledging(true);
+    setAckError('');
+    try {
+      const res = await fetch(`/api/staff/orders/${order.id}/kitchen-token/ack`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          ticketType,
+          itemsSnapshot: order.order_items,
+          fullOrderSnapshot: fullOrderItems || order.order_items,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || 'Failed to acknowledge ticket');
+      }
+      setAcknowledged(true);
+      onAcknowledge?.(data.ticket);
+    } catch (err: any) {
+      console.error('Error acknowledging kitchen ticket:', err);
+      setAckError(err.message || 'Could not mark ticket as sent to kitchen.');
+    } finally {
+      setAcknowledging(false);
+    }
+  }
 
   function handlePrint(e: React.MouseEvent) {
     e.stopPropagation();
@@ -232,50 +270,87 @@ export default function KitchenTicketModal({
           borderRadius: 8,
           boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
           display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
+          flexDirection: 'column',
+          gap: 8,
           padding: '10px 14px',
           marginBottom: 16,
           zIndex: 10,
         }}
       >
-        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ink, #f5ead9)' }}>
-          Kitchen Token #{order.order_number}
-        </span>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button
-            type="button"
-            onClick={handlePrint}
-            style={{
-              padding: '6px 14px',
-              fontSize: 12,
-              fontWeight: 700,
-              background: 'var(--accent, #c89f65)',
-              color: '#2b1b16',
-              border: 'none',
-              borderRadius: 6,
-              cursor: 'pointer',
-            }}
-          >
-            🖨️ Print
-          </button>
-          <button
-            type="button"
-            onClick={onClose}
-            style={{
-              padding: '6px 12px',
-              fontSize: 12,
-              fontWeight: 600,
-              background: 'rgba(255,255,255,0.1)',
-              color: 'var(--ink, #f5ead9)',
-              border: '1px solid var(--line, #4d3327)',
-              borderRadius: 6,
-              cursor: 'pointer',
-            }}
-          >
-            Close
-          </button>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ink, #f5ead9)' }}>
+            {ticketType === 'addon'
+              ? `Add-on Token #${order.order_number}`
+              : isReprint || ticketType === 'reprint'
+              ? `Reprint Token #${order.order_number}`
+              : `Kitchen Token #${order.order_number}`}
+          </span>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={handlePrint}
+              style={{
+                padding: '6px 12px',
+                fontSize: 12,
+                fontWeight: 700,
+                background: 'var(--accent, #c89f65)',
+                color: '#2b1b16',
+                border: 'none',
+                borderRadius: 6,
+                cursor: 'pointer',
+              }}
+            >
+              🖨️ Print
+            </button>
+            {!isReprint && ticketType !== 'reprint' && (
+              acknowledged ? (
+                <span style={{ color: '#10b981', fontWeight: 700, fontSize: 12, padding: '4px 6px' }}>
+                  ✓ Sent to Kitchen
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleAcknowledge}
+                  disabled={acknowledging}
+                  style={{
+                    padding: '6px 12px',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    background: acknowledging ? '#4b5563' : '#10b981',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: 6,
+                    cursor: acknowledging ? 'wait' : 'pointer',
+                  }}
+                  title="Acknowledge that this ticket has been sent to the kitchen"
+                >
+                  {acknowledging ? 'Saving…' : 'Mark as Sent to Kitchen'}
+                </button>
+              )
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                padding: '6px 10px',
+                fontSize: 12,
+                fontWeight: 600,
+                background: 'rgba(255,255,255,0.1)',
+                color: 'var(--ink, #f5ead9)',
+                border: '1px solid var(--line, #4d3327)',
+                borderRadius: 6,
+                cursor: 'pointer',
+              }}
+            >
+              Close
+            </button>
+          </div>
         </div>
+        {ackError && (
+          <div style={{ color: '#ef4444', fontSize: 12, background: 'rgba(239,68,68,0.1)', padding: '4px 8px', borderRadius: 4 }}>
+            {ackError}
+          </div>
+        )}
       </div>
 
       {/* Clean 384px Kitchen Ticket printable container */}

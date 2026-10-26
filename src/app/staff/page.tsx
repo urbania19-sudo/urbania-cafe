@@ -81,22 +81,47 @@ export default async function Staff() {
     });
   }
 
-  const { data: menu } = await db
-    .from('menu_items')
-    .select('id,name,price_paise,is_available')
-    .order('name');
+  const [{ data: menuData }, { data: tables }, { data: kotData }] = await Promise.all([
+    db
+      .from('menu_items')
+      .select('id,name,price_paise,is_available,category_id,menu_categories(id,name,is_active,sort_order)')
+      .order('name'),
+    db
+      .from('cafe_tables')
+      .select('id,table_number,label')
+      .eq('is_active', true)
+      .order('table_number'),
+    db
+      .from('order_kitchen_tickets')
+      .select('id,order_id,ticket_number,ticket_type,full_order_snapshot,created_at')
+      .order('ticket_number', { ascending: false }),
+  ]);
 
-  const { data: tables } = await db
-    .from('cafe_tables')
-    .select('id,table_number,label')
-    .eq('is_active', true)
-    .order('table_number');
+  const menu = (menuData ?? [])
+    .filter((m: any) => m.is_available && (m.menu_categories ? m.menu_categories.is_active : true))
+    .map((m: any) => ({
+      id: m.id,
+      name: m.name,
+      price_paise: m.price_paise,
+      is_available: m.is_available,
+      category_id: m.category_id ?? null,
+      category_name: m.menu_categories?.name ?? 'Other',
+      category_sort_order: m.menu_categories?.sort_order ?? 999,
+    }));
+
+  const initialKots: Record<string, any> = {};
+  for (const kot of (kotData ?? [])) {
+    if (!initialKots[kot.order_id]) {
+      initialKots[kot.order_id] = kot;
+    }
+  }
 
   const activeCount = orders.filter((o) => o.status !== 'COMPLETED').length;
 
   return (
     <main className="shell" style={{ maxWidth: 1060, paddingTop: 32 }}>
       <header
+        className="page-header"
         style={{
           display: 'flex',
           justifyContent: 'space-between',
@@ -142,6 +167,7 @@ export default async function Staff() {
       </header>
 
       <section
+        className="workflow-strip"
         style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(auto-fit,minmax(170px,1fr))',
@@ -154,7 +180,7 @@ export default async function Staff() {
           ['2', 'Accepted', 'Prepare & fulfill order'],
           ['3', 'Completed', 'Mark done & View Image'],
         ].map(([n, label, info]) => (
-          <div className="card" style={{ padding: 14 }} key={n}>
+          <div className="card workflow-step" style={{ padding: 14 }} key={n}>
             <span style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 800 }}>
               STEP {n}
             </span>
@@ -166,7 +192,7 @@ export default async function Staff() {
 
       {error ? (
         <section
-          className="card"
+          className="card alert-card"
           role="alert"
           style={{ padding: 18, borderLeft: '3px solid #df6d5d' }}
         >
@@ -177,7 +203,7 @@ export default async function Staff() {
           </p>
         </section>
       ) : (
-        <OrderBoard initial={orders} menu={menu ?? []} tables={tables ?? []} />
+        <OrderBoard initial={orders} menu={menu} tables={tables ?? []} initialKots={initialKots} />
       )}
     </main>
   );

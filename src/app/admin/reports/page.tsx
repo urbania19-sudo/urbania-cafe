@@ -38,6 +38,7 @@ export default async function AdminReportsPage() {
   return (
     <main className="shell" style={{ maxWidth: 1060, paddingTop: 32 }}>
       <header
+        className="page-header"
         style={{
           display: 'flex',
           justifyContent: 'space-between',

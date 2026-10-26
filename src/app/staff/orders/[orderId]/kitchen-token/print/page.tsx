@@ -1,7 +1,12 @@
 import { redirect, notFound } from 'next/navigation';
 import { authDb } from '@/lib/supabase/auth-server';
 import KitchenTokenPrintView from '@/components/kitchen/KitchenTokenPrintView';
-import { SAMPLE_KITCHEN_ORDER, type KitchenTicketOrder } from '@/lib/thermal-canvas';
+import {
+  SAMPLE_KITCHEN_ORDER,
+  type KitchenTicketOrder,
+  type KitchenTicketOrderItem,
+} from '@/lib/thermal-canvas';
+import { computeKitchenTicketDelta, createFullReprintTicket } from '@/lib/kitchen-tickets';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,11 +15,11 @@ export default async function KitchenTokenPrintPage({
   searchParams,
 }: {
   params: Promise<{ orderId: string }>;
-  searchParams: Promise<{ reprint?: string }>;
+  searchParams: Promise<{ reprint?: string; mode?: string }>;
 }) {
   const { orderId } = await params;
-  const { reprint } = await searchParams;
-  const isReprint = reprint === 'true';
+  const { reprint, mode } = await searchParams;
+  const isReprint = reprint === 'true' || mode === 'full';
 
   // Sample token for thermal printer testing (e.g. Fun Print MX11) without requiring auth or DB
   if (orderId === 'sample' || orderId === '00000000-0000-0000-0000-000000000000') {
@@ -57,5 +62,54 @@ export default async function KitchenTokenPrintPage({
     notFound();
   }
 
-  return <KitchenTokenPrintView order={order as unknown as KitchenTicketOrder} isReprint={isReprint} />;
+  const currentItems = (order.order_items || []) as unknown as KitchenTicketOrderItem[];
+
+  if (isReprint) {
+    const reprintTicket = createFullReprintTicket(order as unknown as KitchenTicketOrder);
+    return (
+      <KitchenTokenPrintView
+        order={reprintTicket}
+        isReprint={true}
+        ticketType="reprint"
+      />
+    );
+  }
+
+  let latestKot: any = null;
+  try {
+    const kotQuery = db.from?.('order_kitchen_tickets')?.select(
+      'id,ticket_number,ticket_type,full_order_snapshot,created_at'
+    );
+    if (kotQuery) {
+      const { data } = await kotQuery
+        .eq('order_id', orderId)
+        .order('ticket_number', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      latestKot = data;
+    }
+  } catch {
+    latestKot = null;
+  }
+
+  const delta = computeKitchenTicketDelta(
+    currentItems,
+    latestKot?.full_order_snapshot as unknown as KitchenTicketOrderItem[] | null
+  );
+
+  if (delta.ticketType === 'none') notFound();
+
+  const printOrder: KitchenTicketOrder = {
+    ...(order as unknown as KitchenTicketOrder),
+    ticket_type: delta.ticketType,
+    order_items: delta.deltaItems,
+  };
+
+  return (
+    <KitchenTokenPrintView
+      order={printOrder}
+      isReprint={false}
+      ticketType={delta.ticketType}
+    />
+  );
 }

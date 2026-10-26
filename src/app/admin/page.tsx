@@ -47,6 +47,7 @@ export default async function Admin() {
   return (
     <main className="shell" style={{ maxWidth: 1060, paddingTop: 32 }}>
       <header
+        className="page-header"
         style={{
           display: 'flex',
           justifyContent: 'space-between',
@@ -116,11 +117,12 @@ export default async function Admin() {
           gridTemplateColumns: 'repeat(auto-fit,minmax(170px,1fr))',
           gap: 12,
         }}
+        className="metric-grid"
       >
         {metrics.map(([label, value, note], index) => (
           <article
             key={label}
-            className="card"
+            className="card metric-card"
             style={{ padding: 18, borderTop: index === 0 ? '3px solid var(--accent)' : undefined }}
           >
             <div className="muted">{label}</div>
@@ -138,7 +140,7 @@ export default async function Admin() {
           </article>
         ))}
       </section>
-      <section style={{ marginTop: 30 }}>
+      <section className="section-block" style={{ marginTop: 30 }}>
         <div
           style={{
             display: 'flex',
@@ -159,7 +161,7 @@ export default async function Admin() {
           rows.map((o) => {
             const t = o.cafe_tables as unknown as { label: string } | null;
             return (
-              <details className="card" style={{ padding: 14, margin: '8px 0' }} key={o.id}>
+              <details className="card order-summary" style={{ padding: 14, margin: '8px 0' }} key={o.id}>
                 <summary style={{ cursor: 'pointer' }}>
                   <b>
                     #{o.order_number} · {o.status}

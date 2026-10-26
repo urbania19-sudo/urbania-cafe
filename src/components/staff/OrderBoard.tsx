@@ -6,6 +6,8 @@ import { type Bill, type DiscountType } from '@/lib/billing';
 import ThermalBillModal from '@/components/staff/ThermalBillModal';
 import ManualOrderModal from '@/components/staff/ManualOrderModal';
 import BillDiscountModal from '@/components/staff/BillDiscountModal';
+import { computeKitchenTicketDelta } from '@/lib/kitchen-tickets';
+import type { KitchenTicketOrderItem } from '@/lib/thermal-canvas';
 
 type Order = {
   id: string;
@@ -33,11 +35,14 @@ type Order = {
   }[];
 };
 
-type MenuItem = {
+export type MenuItem = {
   id: string;
   name: string;
   price_paise: number;
   is_available: boolean;
+  category_id?: string | null;
+  category_name?: string | null;
+  category_sort_order?: number;
 };
 
 type TableOption = {
@@ -87,10 +92,12 @@ export default function OrderBoard({
   initial,
   menu,
   tables = [],
+  initialKots = {},
 }: {
   initial: Order[];
   menu: MenuItem[];
   tables?: TableOption[];
+  initialKots?: Record<string, any>;
 }) {
   const router = useRouter();
   const [statusById, setStatusById] = useState<Record<string, string>>({});
@@ -102,6 +109,59 @@ export default function OrderBoard({
   const [billingOrder, setBillingOrder] = useState<Order | null>(null);
   const [showManualModal, setShowManualModal] = useState(false);
   const [filterTab, setFilterTab] = useState<'all' | 'active' | 'completed'>('all');
+  const [kotsByOrderId, setKotsByOrderId] = useState<Record<string, any>>(initialKots);
+  const [searchCatalogueQuery, setSearchCatalogueQuery] = useState('');
+  const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('ALL');
+
+  function openKitchenTicket(order: Order, forceReprint: boolean = false) {
+    const latestKot = kotsByOrderId[order.id];
+    const delta = computeKitchenTicketDelta(
+      (order.order_items || []) as unknown as KitchenTicketOrderItem[],
+      latestKot?.full_order_snapshot
+    );
+
+    if (!forceReprint && delta.ticketType === 'none') {
+      setError(`All items for Order #${order.order_number} have already been sent to the kitchen. Use Reprint Full for another copy.`);
+      return;
+    }
+
+    router.push(`/staff/orders/${order.id}/kitchen-token/print${forceReprint ? '?reprint=true' : ''}`);
+  }
+
+  async function acknowledgeKitchenTicket(order: Order) {
+    const latestKot = kotsByOrderId[order.id] ?? null;
+    const currentItems = (order.order_items || []) as unknown as KitchenTicketOrderItem[];
+    const delta = computeKitchenTicketDelta(currentItems, latestKot?.full_order_snapshot);
+    if (delta.ticketType === 'none') {
+      setError(`There are no pending kitchen items for Order #${order.order_number}.`);
+      return;
+    }
+
+    setBusy(order.id);
+    setError('');
+    try {
+      const response = await fetch(`/api/staff/orders/${order.id}/kitchen-token/ack`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          ticketType: delta.ticketType,
+          itemsSnapshot: delta.deltaItems,
+          fullOrderSnapshot: currentItems,
+          expectedPreviousTicketId: latestKot?.id ?? null,
+        }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.ok) {
+        throw new Error(data?.error || 'Could not mark this kitchen ticket as sent.');
+      }
+      setKotsByOrderId((previous) => ({ ...previous, [order.id]: data.ticket }));
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not mark this kitchen ticket as sent.');
+    } finally {
+      setBusy(undefined);
+    }
+  }
 
   const nameOf = (id: string, o?: Order) =>
     menu.find((m) => m.id === id)?.name ??
@@ -580,8 +640,14 @@ export default function OrderBoard({
             ['NEW', 'ACCEPTED', 'PREPARING', 'READY'].includes(o.status) &&
             editing?.orderId !== o.id;
 
+          const latestKot = kotsByOrderId[o.id];
+          const kotDelta = computeKitchenTicketDelta(
+            (o.order_items || []) as unknown as KitchenTicketOrderItem[],
+            latestKot?.full_order_snapshot
+          );
+
           return (
-            <article className="card" key={o.id} style={{ padding: 18, minWidth: 0 }}>
+            <article className="card staff-order-card" key={o.id} style={{ padding: 18, minWidth: 0 }}>
               <div
                 style={{
                   display: 'flex',
@@ -624,6 +690,21 @@ export default function OrderBoard({
                   </p>
                 </div>
                 <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                  {kotDelta.ticketType === 'new' && !isCancelled && (
+                    <span className="chip" style={{ fontSize: 11, borderColor: '#f59e0b88', color: '#f59e0b', fontWeight: 600 }}>
+                      ● Kitchen: {kotDelta.addedItemsCount} pending
+                    </span>
+                  )}
+                  {kotDelta.ticketType === 'addon' && !isCancelled && (
+                    <span className="chip" style={{ fontSize: 11, borderColor: '#3b82f688', color: '#3b82f6', fontWeight: 600 }}>
+                      ● Kitchen add-on: +{kotDelta.addedItemsCount}
+                    </span>
+                  )}
+                  {kotDelta.ticketType === 'none' && latestKot && !isCancelled && (
+                    <span className="chip" style={{ fontSize: 11, borderColor: '#10b98188', color: '#10b981', fontWeight: 600 }}>
+                      ✓ KOT Sent
+                    </span>
+                  )}
                   {o.billed_at && (
                     <span className="chip" style={{ fontSize: 11, borderColor: '#d5a84b66', color: 'var(--accent)' }}>
                       ✓ Billed
@@ -712,7 +793,180 @@ export default function OrderBoard({
                     </div>
                   ))}
 
-                  {/* Add Catalogue Item Dropdown */}
+                  {/* Searchable, Scrollable Dish Catalogue Browser (Issue 2) */}
+                  <div style={{ display: 'grid', gap: 8, padding: '10px 0', borderTop: '1px solid var(--line, #ffffff18)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--accent, #c89f65)' }}>
+                        Menu Catalogue ({menu.filter((m) => m.is_available).length} dishes available)
+                      </span>
+                      {searchCatalogueQuery && (
+                        <button
+                          type="button"
+                          className="chip"
+                          onClick={() => setSearchCatalogueQuery('')}
+                          style={{ fontSize: 11, padding: '1px 6px' }}
+                        >
+                          Clear search
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Category Filter Chips */}
+                    <div
+                      style={{
+                        display: 'flex',
+                        gap: 6,
+                        overflowX: 'auto',
+                        paddingBottom: 4,
+                        WebkitOverflowScrolling: 'touch',
+                      }}
+                    >
+                      {['ALL', ...Array.from(new Set(menu.map((m) => m.category_name || 'Other').filter(Boolean)))].map((cat) => {
+                        const isCatSelected = selectedCategoryFilter === cat;
+                        return (
+                          <button
+                            key={cat}
+                            type="button"
+                            className="chip"
+                            onClick={() => setSelectedCategoryFilter(cat)}
+                            style={{
+                              fontSize: 11,
+                              padding: '3px 8px',
+                              whiteSpace: 'nowrap',
+                              background: isCatSelected ? 'var(--accent, #c89f65)' : 'rgba(255,255,255,0.06)',
+                              color: isCatSelected ? '#2b1b16' : 'inherit',
+                              fontWeight: isCatSelected ? 700 : 500,
+                              borderColor: isCatSelected ? 'var(--accent, #c89f65)' : 'var(--line, #ffffff18)',
+                            }}
+                          >
+                            {cat}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Search Input Field */}
+                    <input
+                      type="text"
+                      aria-label="Search menu dishes"
+                      placeholder="Search catalogue by name or category (e.g. Fries, Sandwich, Chai)..."
+                      value={searchCatalogueQuery}
+                      onChange={(e) => setSearchCatalogueQuery(e.target.value)}
+                      style={{
+                        padding: '8px 12px',
+                        borderRadius: 6,
+                        border: '1px solid var(--line, #ffffff24)',
+                        background: '#ffffff10',
+                        color: 'var(--ink, #f5ead9)',
+                        fontSize: 13,
+                        outline: 'none',
+                        width: '100%',
+                        boxSizing: 'border-box',
+                      }}
+                    />
+
+                    {/* Scrollable Dish List Container */}
+                    <div
+                      style={{
+                        maxHeight: 220,
+                        overflowY: 'auto',
+                        borderRadius: 6,
+                        border: '1px solid var(--line, #ffffff18)',
+                        background: 'rgba(0,0,0,0.2)',
+                        padding: 6,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 4,
+                      }}
+                    >
+                      {(() => {
+                        const eligibleDishes = menu.filter((m) => {
+                          if (!m.is_available) return false;
+                          if (selectedCategoryFilter !== 'ALL' && (m.category_name || 'Other') !== selectedCategoryFilter) {
+                            return false;
+                          }
+                          if (searchCatalogueQuery.trim()) {
+                            const q = searchCatalogueQuery.trim().toLowerCase();
+                            const matchName = m.name.toLowerCase().includes(q);
+                            const matchCat = (m.category_name || '').toLowerCase().includes(q);
+                            return matchName || matchCat;
+                          }
+                          return true;
+                        });
+
+                        if (eligibleDishes.length === 0) {
+                          return (
+                            <div style={{ padding: '16px 12px', textAlign: 'center', fontSize: 12, color: 'var(--muted, #999)' }}>
+                              No dishes match &ldquo;{searchCatalogueQuery}&rdquo;. Try another term or add a custom dish below.
+                            </div>
+                          );
+                        }
+
+                        return eligibleDishes.map((m) => {
+                          const existingInOrder = editing.items.find((it) => !it.isCustom && it.menuItemId === m.id);
+                          const inOrderQty = existingInOrder?.quantity ?? 0;
+
+                          return (
+                            <div
+                              key={m.id}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                padding: '6px 10px',
+                                borderRadius: 4,
+                                background: inOrderQty > 0 ? 'rgba(200, 159, 101, 0.1)' : 'rgba(255,255,255,0.04)',
+                                border: inOrderQty > 0 ? '1px solid rgba(200, 159, 101, 0.3)' : '1px solid transparent',
+                                gap: 8,
+                                flexWrap: 'wrap',
+                              }}
+                            >
+                              <div style={{ minWidth: 0, flex: 1 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                  <span style={{ fontWeight: 600, fontSize: 13 }}>🍽️ {m.name}</span>
+                                  {m.category_name && (
+                                    <span className="chip" style={{ fontSize: 10, padding: '1px 5px', color: 'var(--muted, #a89485)' }}>
+                                      {m.category_name}
+                                    </span>
+                                  )}
+                                  <span style={{ fontSize: 12, color: 'var(--accent, #c89f65)' }}>
+                                    ₹{(m.price_paise / 100).toFixed(2)}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                {inOrderQty > 0 && (
+                                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent, #c89f65)' }}>
+                                    {inOrderQty} in order
+                                  </span>
+                                )}
+                                <button
+                                  type="button"
+                                  className="chip"
+                                  aria-label={`Add ${m.name} to order`}
+                                  onClick={() => addCatalogueItemToEdit(m.id)}
+                                  style={{
+                                    fontSize: 11,
+                                    padding: '4px 10px',
+                                    fontWeight: 700,
+                                    background: inOrderQty > 0 ? 'rgba(255,255,255,0.1)' : 'var(--accent, #c89f65)',
+                                    color: inOrderQty > 0 ? 'inherit' : '#2b1b16',
+                                    cursor: 'pointer',
+                                  }}
+                                  title={`Add ${m.name} to order`}
+                                >
+                                  {inOrderQty > 0 ? '+ Add Another' : '+ Add'}
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        });
+                      })()}
+                    </div>
+                  </div>
+
+                  {/* Add Catalogue Item Dropdown (Accessible Quick Select) */}
                   <select
                     aria-label="Add an item to order"
                     value={adding}
@@ -919,15 +1173,46 @@ export default function OrderBoard({
                     </button>
                   )}
                   {!isCancelled && (
-                    <button
-                      type="button"
-                      className="chip"
-                      onClick={() => router.push(`/staff/orders/${o.id}/kitchen-token/print`)}
-                      title="Print Kitchen Ticket"
-                      style={{ fontWeight: 600 }}
-                    >
-                      Kitchen Ticket
-                    </button>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        className="chip"
+                        onClick={() => openKitchenTicket(o, false)}
+                        title="Open the print-only kitchen ticket page"
+                        style={{
+                          fontWeight: 600,
+                          background: kotDelta.hasAdditions ? 'rgba(200, 159, 101, 0.15)' : undefined,
+                          borderColor: kotDelta.hasAdditions ? 'var(--accent)' : undefined,
+                        }}
+                      >
+                        {kotDelta.ticketType === 'addon'
+                          ? `Kitchen Ticket (+${kotDelta.addedItemsCount} new)`
+                          : 'Kitchen Ticket'}
+                      </button>
+                      {kotDelta.hasAdditions && (
+                        <button
+                          type="button"
+                          className="chip"
+                          disabled={busy === o.id}
+                          onClick={() => acknowledgeKitchenTicket(o)}
+                          title="Confirm the currently pending ticket was sent to the kitchen"
+                          style={{ fontWeight: 700, minHeight: 34, borderColor: '#10b98188', color: '#10b981' }}
+                        >
+                          {busy === o.id ? 'Saving…' : 'Mark sent'}
+                        </button>
+                      )}
+                      {latestKot && (
+                        <button
+                          type="button"
+                          className="chip"
+                          onClick={() => openKitchenTicket(o, true)}
+                          title="Reprint entire kitchen ticket"
+                          style={{ minHeight: 34, color: 'var(--muted, #a89485)' }}
+                        >
+                          Reprint Full
+                        </button>
+                      )}
+                    </div>
                   )}
                   {following && (
                     <button
@@ -1003,6 +1288,7 @@ export default function OrderBoard({
           }}
         />
       )}
+
     </>
   );
 }

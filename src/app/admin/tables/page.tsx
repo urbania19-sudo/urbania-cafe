@@ -29,6 +29,7 @@ export default async function Tables() {
   return (
     <main className="shell" style={{ maxWidth: 960, paddingTop: 32 }}>
       <header
+        className="page-header"
         style={{
           display: 'flex',
           justifyContent: 'space-between',
@@ -93,7 +94,7 @@ export default async function Tables() {
 
       <section style={{ display: 'grid', gap: 12, marginTop: 12 }}>
         {(tables ?? []).map((t) => (
-          <article className="card" style={{ padding: 16 }} key={t.id}>
+          <article className="card table-qr-card" style={{ padding: 16 }} key={t.id}>
             <b>{t.label}</b>
             <p className="muted" style={{ margin: '4px 0 12px' }}>
               {t.is_active ? 'Active' : 'Disabled'}

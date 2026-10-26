@@ -9,9 +9,11 @@ import {
 export default function KitchenTokenPrintView({
   order,
   isReprint = false,
+  ticketType = 'new',
 }: {
   order: KitchenTicketOrder;
   isReprint?: boolean;
+  ticketType?: 'new' | 'addon' | 'reprint';
 }) {
   const [ticketMeta, setTicketMeta] = useState<{
     dataUrl: string;
@@ -20,7 +22,7 @@ export default function KitchenTokenPrintView({
   } | null>(() => {
     if (typeof window === 'undefined' || typeof document === 'undefined') return null;
     try {
-      const canvas = renderKitchenTicketToCanvas(order, { scale: 1, isReprint });
+      const canvas = renderKitchenTicketToCanvas(order, { scale: 1, isReprint, ticketType: order.ticket_type || ticketType });
       return {
         dataUrl: canvas.toDataURL('image/png'),
         width: canvas.width,
@@ -36,7 +38,7 @@ export default function KitchenTokenPrintView({
     requestAnimationFrame(() => {
       if (!isMounted) return;
       try {
-        const canvas = renderKitchenTicketToCanvas(order, { scale: 1, isReprint });
+        const canvas = renderKitchenTicketToCanvas(order, { scale: 1, isReprint, ticketType: order.ticket_type || ticketType });
         setTicketMeta({
           dataUrl: canvas.toDataURL('image/png'),
           width: canvas.width,
@@ -49,7 +51,7 @@ export default function KitchenTokenPrintView({
     return () => {
       isMounted = false;
     };
-  }, [order, isReprint]);
+  }, [order, isReprint, ticketType]);
 
   return (
     <div

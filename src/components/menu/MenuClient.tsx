@@ -143,7 +143,7 @@ export default function MenuClient({
 
   return (
     <main className="shell" style={{ paddingBottom: 'max(110px, calc(90px + env(safe-area-inset-bottom, 16px)))' }}>
-      <header>
+      <header className="menu-header">
         <p style={{ color: 'var(--accent)', fontSize: 12, letterSpacing: '.16em', textTransform: 'uppercase' }}>
           Dine in · {table.label}
         </p>
@@ -167,6 +167,7 @@ export default function MenuClient({
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         placeholder="Search the menu"
+        className="menu-search"
         style={{
           width: '100%',
           padding: 13,
@@ -201,9 +202,9 @@ export default function MenuClient({
         ))}
       </div>
 
-      <section style={{ display: 'grid', gap: 12 }}>
+      <section className="menu-list" style={{ display: 'grid', gap: 12 }}>
         {visible.map((i) => (
-          <article className="card" key={i.id} style={{ padding: 15, display: 'flex', gap: 12, minWidth: 0 }}>
+          <article className="card menu-item-card" key={i.id} style={{ padding: 15, display: 'flex', gap: 12, minWidth: 0 }}>
             {i.image_url ? (
               <img
                 src={i.image_url}
@@ -212,6 +213,7 @@ export default function MenuClient({
               />
             ) : (
               <div
+                className="menu-item-art"
                 aria-hidden
                 style={{
                   width: 76,
@@ -282,7 +284,7 @@ export default function MenuClient({
 
       {/* Persistent Fixed Bottom Cart Bar */}
       <aside
-        className="card"
+        className="card cart-bar"
         aria-label="Current Cart"
         style={{
           position: 'fixed',
