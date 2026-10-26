@@ -353,6 +353,34 @@ a.chip:hover {
   border-left: 3px solid color-mix(in srgb, var(--accent) 65%, var(--line));
 }
 
+.staff-order-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.staff-order-card-details {
+  min-width: 0;
+  flex: 1 1 240px;
+}
+
+.staff-order-card-badges {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.staff-order-card .staff-order-card-badges .chip {
+  min-height: 28px;
+  padding: 4px 10px;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
 .staff-order-card ul {
   padding-left: 20px;
 }
@@ -463,9 +491,37 @@ a.chip:hover {
     padding: 14px !important;
   }
 
+  .staff-order-card-header {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 10px !important;
+  }
+
+  .staff-order-card-details {
+    width: 100% !important;
+    flex: none !important;
+  }
+
+  .staff-order-card-badges {
+    width: 100% !important;
+    justify-content: flex-start !important;
+    gap: 6px !important;
+  }
+
   .staff-order-card .btn,
   .staff-order-card .chip {
     min-height: 42px;
+  }
+
+  .staff-order-card .staff-order-card-badges .chip {
+    min-height: 28px !important;
+    padding: 4px 10px !important;
+    font-size: 11px !important;
+    line-height: 1.3 !important;
+  }
+
+  .staff-order-card-actions {
+    justify-content: flex-start !important;
   }
 }
 

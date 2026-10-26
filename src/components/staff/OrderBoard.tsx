@@ -649,6 +649,7 @@ export default function OrderBoard({
           return (
             <article className="card staff-order-card" key={o.id} style={{ padding: 18, minWidth: 0 }}>
               <div
+                className="staff-order-card-header"
                 style={{
                   display: 'flex',
                   justifyContent: 'space-between',
@@ -657,7 +658,7 @@ export default function OrderBoard({
                   flexWrap: 'wrap',
                 }}
               >
-                <div style={{ minWidth: 0, flex: 1 }}>
+                <div className="staff-order-card-details" style={{ minWidth: 0, flex: '1 1 240px' }}>
                   <span
                     style={{
                       color: 'var(--accent)',
@@ -666,6 +667,7 @@ export default function OrderBoard({
                       fontWeight: 600,
                       display: 'block',
                       overflowWrap: 'break-word',
+                      wordBreak: 'normal',
                     }}
                   >
                     {o.cafe_tables?.label
@@ -680,16 +682,20 @@ export default function OrderBoard({
                       margin: '5px 0',
                       fontSize: 'clamp(1.2rem, 4vw, 1.5rem)',
                       overflowWrap: 'break-word',
+                      wordBreak: 'normal',
                     }}
                   >
                     Order #{o.order_number}
                   </h2>
-                  <p className="muted" style={{ margin: '0 0 4px', overflowWrap: 'break-word' }}>
+                  <p className="muted" style={{ margin: '0 0 4px', overflowWrap: 'break-word', wordBreak: 'normal' }}>
                     {o.customer_name || 'Guest'} · {o.guest_count ?? 1}{' '}
                     {o.guest_count === 1 ? 'person' : 'people'}
                   </p>
                 </div>
-                <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                <div
+                  className="staff-order-card-badges"
+                  style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}
+                >
                   {kotDelta.ticketType === 'new' && !isCancelled && (
                     <span className="chip" style={{ fontSize: 11, borderColor: '#f59e0b88', color: '#f59e0b', fontWeight: 600 }}>
                       ● Kitchen: {kotDelta.addedItemsCount} pending
@@ -1150,6 +1156,7 @@ export default function OrderBoard({
               )}
 
               <div
+                className="staff-order-card-footer"
                 style={{
                   display: 'flex',
                   justifyContent: 'space-between',
@@ -1161,7 +1168,10 @@ export default function OrderBoard({
                 }}
               >
                 <b style={{ fontSize: '1.15rem' }}>₹{(o.total_paise / 100).toFixed(2)}</b>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center' }}>
+                <div
+                  className="staff-order-card-actions"
+                  style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center' }}
+                >
                   {o.status === 'NEW' && (
                     <button className="chip" disabled={busy === o.id} onClick={() => reject(o)}>
                       Reject
