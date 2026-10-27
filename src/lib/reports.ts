@@ -28,7 +28,7 @@ export interface CafeReportMetrics {
   netSalesPaise: number; // customer billed sales after discounts
   cashCollectedPaise: number; // cash customer payments collected today
   onlineCollectedPaise: number; // online/UPI customer payments collected today
-  customerCollectedPaise: number; // total customer collections (cash + online - refunds)
+  customerCollectedPaise: number; // net recorded customer collections, including unclassified legacy receipts
   customerRefundsPaise: number; // net refunds recorded today
   unclassifiedCollectedPaise: number; // legacy/other-method collections not safely attributable to cash or UPI
   customerOutstandingPaise: number; // unpaid/partial customer bill balances
