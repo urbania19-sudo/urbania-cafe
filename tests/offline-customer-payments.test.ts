@@ -473,6 +473,7 @@ describe('Urbania Café POS — Offline Customer Payment Methods', () => {
       const mockPayments = [
         {
           id: 'p-1',
+          bill_id: 'b-1',
           payment_method: 'cash',
           amount_paise: 30000,
           status: 'completed',
@@ -480,6 +481,7 @@ describe('Urbania Café POS — Offline Customer Payment Methods', () => {
         },
         {
           id: 'p-2',
+          bill_id: 'b-2',
           payment_method: 'upi',
           amount_paise: 50000,
           status: 'completed',
