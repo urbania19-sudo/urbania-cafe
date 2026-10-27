@@ -73,6 +73,9 @@ export async function POST(
     if (msg.includes("URB:forbidden")) {
       return NextResponse.json({ error: "Forbidden: Staff or Admin role required." }, { status: 403 });
     }
+    if (msg.includes("URB:idempotency_conflict")) {
+      return NextResponse.json({ error: "This payment retry key was already used for different payment details." }, { status: 409 });
+    }
     if (msg.includes("URB:invalid_amount") || msg.includes("URB:invalid_payment_method")) {
       return NextResponse.json({ error: "Invalid payment amount or method." }, { status: 400 });
     }
