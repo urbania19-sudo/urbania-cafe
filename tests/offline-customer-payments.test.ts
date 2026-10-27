@@ -541,6 +541,57 @@ describe('Urbania Café POS — Offline Customer Payment Methods', () => {
       expect(metrics.cashCollectedPaise + metrics.onlineCollectedPaise + metrics.adminCreditSettledTodayPaise).toBe(metrics.totalCollectedPaise);
     });
 
+    it('keeps legacy paid bills unclassified instead of guessing Cash or UPI', async () => {
+      const mockDb = {
+        from: (table: string) => ({
+          select: () => ({
+            gte: () => ({
+              lte: () => Promise.resolve({
+                data: table === 'orders'
+                  ? [{ id: 'o-legacy', order_number: 7, status: 'COMPLETED', total_paise: 1000, subtotal_paise: 1000, order_source: 'manual', payment_status: 'paid', paid_paise: 1000, created_at: '2026-10-28T10:00:00Z' }]
+                  : table === 'bills'
+                  ? [{ id: 'b-legacy', order_id: 'o-legacy', order_number: 7, status: 'issued', total_paise: 1000, subtotal_paise: 1000, discount_paise: 0, order_source: 'manual', payment_status: 'paid', payment_method: null, paid_paise: 1000, issued_at: '2026-10-28T10:05:00Z' }]
+                  : [],
+                error: null,
+              }),
+            }),
+          }),
+        }),
+      };
+
+      const metrics = await getDailyServiceMetrics(mockDb as any, '2026-10-28', 'Asia/Kolkata');
+      expect(metrics.cashCollectedPaise).toBe(0);
+      expect(metrics.onlineCollectedPaise).toBe(0);
+      expect(metrics.unclassifiedCollectedPaise).toBe(1000);
+      expect(metrics.customerCollectedPaise).toBe(1000);
+    });
+
+    it('does not subtract a fully refunded payment twice', async () => {
+      const mockDb = {
+        from: (table: string) => ({
+          select: () => ({
+            gte: () => ({
+              lte: () => Promise.resolve({
+                data: table === 'orders'
+                  ? [{ id: 'o-refund', order_number: 8, status: 'COMPLETED', total_paise: 1000, subtotal_paise: 1000, order_source: 'manual', payment_status: 'paid', paid_paise: 1000, created_at: '2026-10-28T10:00:00Z' }]
+                  : table === 'bills'
+                  ? [{ id: 'b-refund', order_id: 'o-refund', order_number: 8, status: 'issued', total_paise: 1000, subtotal_paise: 1000, discount_paise: 0, order_source: 'manual', payment_status: 'paid', payment_method: 'cash', paid_paise: 1000, issued_at: '2026-10-28T10:05:00Z' }]
+                  : table === 'customer_payments'
+                  ? [{ bill_id: 'b-refund', payment_method: 'cash', amount_paise: 1000, status: 'refunded', paid_at: '2026-10-28T10:06:00Z' }]
+                  : [],
+                error: null,
+              }),
+            }),
+          }),
+        }),
+      };
+
+      const metrics = await getDailyServiceMetrics(mockDb as any, '2026-10-28', 'Asia/Kolkata');
+      expect(metrics.cashCollectedPaise).toBe(0);
+      expect(metrics.customerRefundsPaise).toBe(1000);
+      expect(metrics.customerCollectedPaise).toBe(0);
+    });
+
     it('respects Asia/Kolkata timezone business day boundary', () => {
       // 2026-10-28 in Asia/Kolkata (+05:30):
       // Start is 2026-10-27T18:30:00.000Z
