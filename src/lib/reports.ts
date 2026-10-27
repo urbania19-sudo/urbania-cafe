@@ -269,6 +269,12 @@ export async function getDailyServiceMetrics(
   }
 
   for (const payment of customerPayments) {
+    if (payment.status === 'refunded') {
+      // A refunded status means the original payment was reversed in full.
+      // Show it as a refund for audit, but do not subtract it again from net collections.
+      customerRefundsPaise += payment.amount_paise || 0;
+      continue;
+    }
     if (payment.status !== 'completed') continue;
     if (payment.payment_method === 'cash') cashCollectedPaise += payment.amount_paise || 0;
     else if (payment.payment_method === 'upi' || payment.payment_method === 'online') {
@@ -289,9 +295,11 @@ export async function getDailyServiceMetrics(
     else unclassifiedCollectedPaise += amount;
   }
 
+  // Refunded rows are excluded above, so subtracting customerRefundsPaise here would
+  // double-count a full refund. Partial refunds require a separate refund transaction model.
   const customerCollectedPaise = Math.max(
     0,
-    cashCollectedPaise + onlineCollectedPaise + unclassifiedCollectedPaise - customerRefundsPaise
+    cashCollectedPaise + onlineCollectedPaise + unclassifiedCollectedPaise
   );
 
   // Outstanding customer balance on today's issued customer bills
