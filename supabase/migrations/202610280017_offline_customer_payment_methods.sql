@@ -75,6 +75,18 @@ begin
   if p_idempotency_key is not null and trim(p_idempotency_key) != '' then
     select * into v_existing_payment from public.customer_payments where idempotency_key = trim(p_idempotency_key);
     if found then
+      -- An idempotency key may only replay the exact same bill/amount/method operation.
+      -- Reusing a key for a different payment must not silently return another bill.
+      if v_existing_payment.bill_id <> p_bill_id
+         or v_existing_payment.amount_paise <> p_amount_paise
+         or v_existing_payment.payment_method <> (
+           case when lower(trim(p_payment_method)) = 'online'
+             then 'upi'
+             else lower(trim(p_payment_method))
+           end
+         ) then
+        raise exception 'URB:idempotency_conflict';
+      end if;
       select * into v_bill from public.bills where id = v_existing_payment.bill_id;
       return jsonb_build_object(
         'ok', true,
