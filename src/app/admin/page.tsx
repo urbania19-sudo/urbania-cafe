@@ -48,7 +48,7 @@ export default async function Admin() {
     ["Today's orders", dailyMetrics.orderCount, `${dailyMetrics.completedOrderCount} completed · ${dailyMetrics.activeOrderCount} in service`],
     ['Active in kitchen', dailyMetrics.activeOrderCount, 'NEW, ACCEPTED, PREPARING, READY'],
     ['Customer sales (Net)', `₹${(dailyMetrics.netSalesPaise / 100).toFixed(2)}`, `Gross: ₹${(dailyMetrics.grossSalesPaise / 100).toFixed(2)} · Disc: ₹${(dailyMetrics.discountsPaise / 100).toFixed(2)}`],
-    ['Actual collections', `₹${(dailyMetrics.collectedPaise / 100).toFixed(2)}`, `Cash: ₹${(dailyMetrics.cashCollectedPaise / 100).toFixed(2)} · Online/UPI: ₹${(dailyMetrics.onlineCollectedPaise / 100).toFixed(2)}`],
+    ['Actual collections', `₹${(dailyMetrics.collectedPaise / 100).toFixed(2)}`, `Cash: ₹${(dailyMetrics.cashCollectedPaise / 100).toFixed(2)} · Online/UPI: ₹${(dailyMetrics.onlineCollectedPaise / 100).toFixed(2)} · Unclassified: ₹${(dailyMetrics.unclassifiedCollectedPaise / 100).toFixed(2)}`],
   ];
 
   if (dailyMetrics.customerOutstandingPaise > 0) {
