@@ -62,7 +62,15 @@ In the Supabase SQL Editor for the **staging project only**, execute the migrati
 9. `supabase/migrations/202610210009_billing_audit_and_manual_orders.sql` — Audit events, reprint tracking, manual orders.
 10. `supabase/migrations/202610210010_harden_billing_audit_events.sql` — Audit event immutability.
 11. `supabase/migrations/202610220011_edit_order_items_and_status_transitions.sql` — Item editing and direct status transitions.
-12. *(If bill discount PR is merged)* `supabase/migrations/202610240012_bill_level_discounts.sql` — Bill-level discounts and generate_bill RPC update.
+12. `supabase/migrations/202610240012_bill_level_discounts.sql` — Bill-level discounts and generate_bill RPC update.
+13. `supabase/migrations/202610250013_custom_items_in_order_edit.sql` — Custom items in order editing.
+14. `supabase/migrations/202610260014_incremental_kitchen_tickets.sql` — Incremental kitchen tickets.
+15. `supabase/migrations/202610260015_reconcile_kitchen_ticket_acknowledgement_rpc.sql` — Kitchen ticket acknowledgement reconciliation.
+16. `supabase/migrations/202610280016_operational_improvements.sql` — Admin credit settlements and external delivery platforms.
+17. `supabase/migrations/202610280017_offline_customer_payment_methods.sql` — Customer payment ledger and atomic payment RPC.
+18. `supabase/migrations/202610280018_payment_reconciliation_hardening.sql` — Legacy payment reconciliation, append-only payment ledger, and unpaid defaults for new bills/orders.
+
+**Important:** apply migrations 0012–0018 only after their preceding schema migrations, and verify the staging schema before testing. Do not run rollback scripts as part of deployment.
 
 ### Step 4: Seed Staging Data
 Run `supabase/seed.sql` in the staging SQL editor:
