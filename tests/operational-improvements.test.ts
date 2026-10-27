@@ -395,6 +395,10 @@ describe('Urbania Café POS — Operational Improvements Test Suite', () => {
           subtotal_paise: 30000,
           discount_paise: 3000,
           total_paise: 27000,
+          // Legacy paid bill with no customer_payments ledger row.
+          payment_status: 'paid',
+          payment_method: 'cash',
+          paid_paise: 27000,
           order_source: 'qr',
           issued_at: '2026-10-28T10:30:00Z',
         },
@@ -419,7 +423,11 @@ describe('Urbania Café POS — Operational Improvements Test Suite', () => {
                     ? mockOrders
                     : table === 'bills'
                     ? mockBills
-                    : mockSettlements,
+                    : table === 'customer_payments'
+                    ? []
+                    : table === 'admin_credit_settlements'
+                    ? mockSettlements
+                    : [],
                 error: null,
               }),
             }),
