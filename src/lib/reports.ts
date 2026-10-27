@@ -29,7 +29,8 @@ export interface CafeReportMetrics {
   cashCollectedPaise: number; // cash customer payments collected today
   onlineCollectedPaise: number; // online/UPI customer payments collected today
   customerCollectedPaise: number; // total customer collections (cash + online - refunds)
-  customerRefundsPaise: number; // refunds recorded today
+  customerRefundsPaise: number; // net refunds recorded today
+  unclassifiedCollectedPaise: number; // legacy/other-method collections not safely attributable to cash or UPI
   customerOutstandingPaise: number; // unpaid/partial customer bill balances
   collectedPaise: number; // actual money collected by Urbania (customer payments + settled admin credit)
   totalCollectedPaise: number; // total money collected (customer + admin credit settlements)
@@ -152,53 +153,69 @@ export async function getDailyServiceMetrics(
   const { startUtcIso, endUtcIso } = getTimezoneDateBounds(dateStr, timezone);
 
   // 1. Query all orders placed on this business day
-  const { data: rawOrders } = await db
+  const ordersResult = await db
     .from('orders')
     .select('id, order_number, status, total_paise, subtotal_paise, order_source, payment_status, paid_paise, created_at')
     .gte('created_at', startUtcIso)
     .lte('created_at', endUtcIso);
-
-  const orders = rawOrders || [];
+  if (ordersResult.error) throw new Error(`Unable to load orders for report: ${ordersResult.error.message}`);
+  const orders = ordersResult.data || [];
 
   // 2. Query all bills issued on this business day
-  const { data: rawBills } = await db
+  const billsResult = await db
     .from('bills')
     .select('id, order_id, order_number, status, total_paise, discount_paise, tax_paise, subtotal_paise, order_source, payment_status, payment_method, paid_paise, issued_at')
     .gte('issued_at', startUtcIso)
     .lte('issued_at', endUtcIso);
-
-  const bills = rawBills || [];
+  if (billsResult.error) throw new Error(`Unable to load bills for report: ${billsResult.error.message}`);
+  const bills = billsResult.data || [];
 
   // 3. Query all customer payments recorded on this business day
   let customerPayments: {
+    bill_id: string;
     payment_method: string;
     amount_paise: number;
     status: string;
     paid_at: string;
   }[] = [];
   try {
-    const { data: rawPayments } = await db
+    const paymentResult = await db
       .from('customer_payments')
-      .select('payment_method, amount_paise, status, paid_at')
+      .select('bill_id, payment_method, amount_paise, status, paid_at')
       .gte('paid_at', startUtcIso)
       .lte('paid_at', endUtcIso);
-    customerPayments = rawPayments || [];
-  } catch {
-    // Table may not exist yet in older migration test environments
+    if (paymentResult.error) {
+      const code = (paymentResult.error as { code?: string }).code;
+      if (code !== '42P01' && code !== 'PGRST205' && code !== 'PGRST200') {
+        throw new Error(`Unable to load customer payments for report: ${paymentResult.error.message}`);
+      }
+    } else {
+      customerPayments = paymentResult.data || [];
+    }
+  } catch (error) {
+    // Older test/staging schemas may not have migration 0017 yet; unexpected errors must surface.
+    if (error instanceof Error && error.message.startsWith('Unable to load customer payments')) throw error;
     customerPayments = [];
   }
 
   // 4. Query all admin credit settlements received on this business day
-  let settlements: { amount_paise: number }[] = [];
+  let settlements: { amount_paise: number; settled_at?: string }[] = [];
   try {
-    const { data: rawSettlements } = await db
+    const settlementResult = await db
       .from('admin_credit_settlements')
       .select('amount_paise, settled_at')
       .gte('settled_at', startUtcIso)
       .lte('settled_at', endUtcIso);
-    settlements = rawSettlements || [];
-  } catch {
-    // Table may not exist yet in older migration test environments
+    if (settlementResult.error) {
+      const code = (settlementResult.error as { code?: string }).code;
+      if (code !== '42P01' && code !== 'PGRST205' && code !== 'PGRST200') {
+        throw new Error(`Unable to load admin credit settlements for report: ${settlementResult.error.message}`);
+      }
+    } else {
+      settlements = settlementResult.data || [];
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('Unable to load admin credit settlements')) throw error;
     settlements = [];
   }
 
@@ -238,47 +255,44 @@ export async function getDailyServiceMetrics(
   // Customer Payment Breakdown
   let cashCollectedPaise = 0;
   let onlineCollectedPaise = 0;
+  let unclassifiedCollectedPaise = 0;
   let customerRefundsPaise = 0;
 
-  const validPayments = customerPayments.filter(
-    (p) => (p.status === 'completed' || p.status === 'refunded') && Boolean(p.payment_method)
-  );
+  // The current schema uses status='refunded' to mark a payment record as refunded,
+  // not as a separate refund transaction. Exclude it from gross receipts and do not
+  // subtract it a second time. Partial refunds require a separate refund ledger/event.
+  const paymentsByBill = new Map<string, typeof customerPayments>();
+  for (const payment of customerPayments) {
+    const rows = paymentsByBill.get(payment.bill_id) || [];
+    rows.push(payment);
+    paymentsByBill.set(payment.bill_id, rows);
+  }
 
-  if (validPayments.length > 0) {
-    for (const p of validPayments) {
-      if (p.status === 'completed') {
-        if (p.payment_method === 'cash') {
-          cashCollectedPaise += p.amount_paise || 0;
-        } else if (p.payment_method === 'upi' || p.payment_method === 'online') {
-          onlineCollectedPaise += p.amount_paise || 0;
-        }
-      } else if (p.status === 'refunded') {
-        customerRefundsPaise += p.amount_paise || 0;
-      }
-    }
-  } else {
-    // Fallback: derive from customerBills if payments table is empty or mocked without customer_payments
-    const hasExplicitPaymentStatus = customerBills.some(
-      (b) => b.payment_status === 'paid' || b.payment_status === 'unpaid' || b.paid_paise !== undefined
-    );
-    if (hasExplicitPaymentStatus) {
-      for (const b of customerBills) {
-        if (b.payment_status === 'paid' || (b.paid_paise && b.paid_paise > 0)) {
-          const amount = b.paid_paise ?? b.total_paise ?? 0;
-          if (b.payment_method === 'upi' || b.payment_method === 'online') {
-            onlineCollectedPaise += amount;
-          } else {
-            cashCollectedPaise += amount;
-          }
-        }
-      }
+  for (const payment of customerPayments) {
+    if (payment.status !== 'completed') continue;
+    if (payment.payment_method === 'cash') cashCollectedPaise += payment.amount_paise || 0;
+    else if (payment.payment_method === 'upi' || payment.payment_method === 'online') {
+      onlineCollectedPaise += payment.amount_paise || 0;
     } else {
-      // Legacy test fallback: all issued customer bills assumed cash collections
-      cashCollectedPaise = netSalesPaise;
+      unclassifiedCollectedPaise += payment.amount_paise || 0;
     }
   }
 
-  const customerCollectedPaise = Math.max(0, cashCollectedPaise + onlineCollectedPaise - customerRefundsPaise);
+  // Reconcile older bills that predate the transaction ledger. Preserve their recorded
+  // paid balance but do not invent Cash/UPI. A bill with ledger rows is never counted twice.
+  for (const bill of customerBills) {
+    if (paymentsByBill.has(bill.id)) continue;
+    const amount = Math.max(0, bill.paid_paise ?? (bill.payment_status === 'paid' ? bill.total_paise : 0));
+    if (!amount) continue;
+    if (bill.payment_method === 'cash') cashCollectedPaise += amount;
+    else if (bill.payment_method === 'upi' || bill.payment_method === 'online') onlineCollectedPaise += amount;
+    else unclassifiedCollectedPaise += amount;
+  }
+
+  const customerCollectedPaise = Math.max(
+    0,
+    cashCollectedPaise + onlineCollectedPaise + unclassifiedCollectedPaise - customerRefundsPaise
+  );
 
   // Outstanding customer balance on today's issued customer bills
   let customerOutstandingPaise = 0;
@@ -320,6 +334,7 @@ export async function getDailyServiceMetrics(
     onlineCollectedPaise,
     customerCollectedPaise,
     customerRefundsPaise,
+    unclassifiedCollectedPaise,
     customerOutstandingPaise,
     collectedPaise,
     totalCollectedPaise,
