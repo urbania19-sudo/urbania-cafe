@@ -36,9 +36,11 @@ grant all on public.customer_payments to service_role;
 
 alter table public.customer_payments enable row level security;
 
+drop policy if exists "staff read customer payments" on public.customer_payments;
 create policy "staff read customer payments" on public.customer_payments
   for select using (public.is_staff());
 
+drop policy if exists "admins manage customer payments" on public.customer_payments;
 create policy "admins manage customer payments" on public.customer_payments
   for all using (public.is_admin()) with check (public.is_admin());
 
