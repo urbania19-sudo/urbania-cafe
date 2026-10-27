@@ -79,3 +79,9 @@ create policy "staff read customer payments"
 revoke insert, update, delete on public.customer_payments from authenticated;
 grant select on public.customer_payments to authenticated;
 grant all on public.customer_payments to service_role;
+
+
+-- New customer bills/orders begin unpaid until record_customer_payment succeeds.
+-- Historical records were reconciled above before changing these defaults.
+alter table public.bills alter column payment_status set default 'unpaid';
+alter table public.orders alter column payment_status set default 'unpaid';
