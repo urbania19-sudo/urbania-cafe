@@ -139,106 +139,67 @@ export async function POST(
     return NextResponse.json({ error: friendlyBillingError(error) }, { status: 400 });
   }
 
-  // Handle optional payment method selection & payment confirmation
+  // Handle payment confirmation only after the bill exists. The database RPC is the
+  // sole writer of payment transactions and balances; never emulate it with separate writes.
   if (data?.bill && payment_method) {
-    const normMethod = payment_method === "online" ? "upi" : payment_method;
-    const isConfirmed = Boolean(confirm_payment);
-    const billTotalPaise = data.bill.total_paise || 0;
-    const paidPaise = isConfirmed
+    const normalizedMethod = payment_method === "online" ? "upi" : payment_method;
+    const confirmed = Boolean(confirm_payment);
+    const billTotalPaise = Number(data.bill.total_paise || 0);
+    const requestedPaidPaise = confirmed
       ? paid_amount_rupees != null
-        ? Math.min(billTotalPaise, Math.round(paid_amount_rupees * 100))
+        ? Math.round(paid_amount_rupees * 100)
         : billTotalPaise
       : 0;
 
-    const newPaymentStatus = isConfirmed
-      ? paidPaise >= billTotalPaise
-        ? "paid"
-        : "partially_paid"
-      : "unpaid";
+    if (requestedPaidPaise > billTotalPaise) {
+      return NextResponse.json(
+        { error: "Payment amount cannot exceed the bill total.", bill: data.bill },
+        { status: 400 }
+      );
+    }
 
-    try {
-      if (isConfirmed && paidPaise > 0) {
-        // Record payment transaction
-        const { data: rpcPayment } = await db.rpc("record_customer_payment", {
-          p_bill_id: data.bill.id,
-          p_amount_paise: paidPaise,
-          p_payment_method: normMethod,
-          p_notes: "Payment recorded at bill generation",
-          p_idempotency_key: idempotency_key || null,
-        });
+    if (confirmed && requestedPaidPaise > 0) {
+      const { data: paymentResult, error: paymentError } = await db.rpc("record_customer_payment", {
+        p_bill_id: data.bill.id,
+        p_amount_paise: requestedPaidPaise,
+        p_payment_method: normalizedMethod,
+        p_notes: "Payment recorded at bill generation",
+        p_idempotency_key: idempotency_key || null,
+      });
 
-        if (rpcPayment?.ok && rpcPayment?.bill) {
-          data.bill = rpcPayment.bill;
-        } else {
-          // Direct fallback if RPC is not yet registered
-          if (typeof db.from === "function") {
-            try {
-              await db.from("customer_payments").insert({
-                bill_id: data.bill.id,
-                order_id: data.bill.order_id,
-                payment_method: normMethod,
-                amount_paise: paidPaise,
-                status: "completed",
-                received_by: user.id,
-                idempotency_key: idempotency_key || null,
-              });
-
-              await db
-                .from("bills")
-                .update({
-                  paid_paise: paidPaise,
-                  payment_status: newPaymentStatus,
-                  payment_method: normMethod,
-                })
-                .eq("id", data.bill.id);
-
-              await db
-                .from("orders")
-                .update({
-                  paid_paise: paidPaise,
-                  payment_status: newPaymentStatus,
-                  payment_method: normMethod,
-                })
-                .eq("id", data.bill.order_id);
-            } catch {
-              // Ignore if table doesn't exist
-            }
-          }
-          data.bill.paid_paise = paidPaise;
-          data.bill.payment_status = newPaymentStatus;
-          data.bill.payment_method = normMethod;
-        }
-      } else {
-        // Unpaid bill: record selected method without payment transaction
-        if (typeof db.from === "function") {
-          try {
-            await db
-              .from("bills")
-              .update({
-                paid_paise: 0,
-                payment_status: "unpaid",
-                payment_method: normMethod,
-              })
-              .eq("id", data.bill.id);
-
-            await db
-              .from("orders")
-              .update({
-                paid_paise: 0,
-                payment_status: "unpaid",
-                payment_method: normMethod,
-              })
-              .eq("id", data.bill.order_id);
-          } catch {
-            // Ignore if columns don't exist
-          }
-        }
-        data.bill.paid_paise = 0;
-        data.bill.payment_status = "unpaid";
-        data.bill.payment_method = normMethod;
+      if (paymentError || !paymentResult?.ok) {
+        console.error("Payment recording failed after bill issuance:", paymentError);
+        // The bill remains issued and unpaid. Staff can retry using Collect Payment;
+        // never report a payment as successful when the atomic ledger write failed.
+        return NextResponse.json(
+          {
+            error: "Bill issued, but payment was not recorded. The bill remains unpaid; use Collect Payment to retry.",
+            code: "BILL_ISSUED_PAYMENT_PENDING",
+            bill_id: data.bill.id,
+            bill: data.bill,
+          },
+          { status: 503 }
+        );
       }
-    } catch (payErr) {
-      console.warn("Payment recording notice:", payErr);
+
+      data.bill = paymentResult.bill || data.bill;
+    } else {
+      // The bill defaults to unpaid. Store the selected method for the pending balance,
+      // and check the update results rather than silently ignoring schema or DB errors.
+      const [billUpdate, orderUpdate] = await Promise.all([
+        db.from("bills").update({ payment_status: "unpaid", paid_paise: 0, payment_method: normalizedMethod }).eq("id", data.bill.id),
+        db.from("orders").update({ payment_status: "unpaid", paid_paise: 0, payment_method: normalizedMethod }).eq("id", data.bill.order_id),
+      ]);
+      if (billUpdate.error || orderUpdate.error) {
+        console.error("Could not persist unpaid bill state:", billUpdate.error || orderUpdate.error);
+        return NextResponse.json(
+          { error: "Bill issued but payment status could not be confirmed. Check the bill before retrying.", bill_id: data.bill.id },
+          { status: 500 }
+        );
+      }
+      data.bill.paid_paise = 0;
+      data.bill.payment_status = "unpaid";
+      data.bill.payment_method = normalizedMethod;
     }
   }
 
