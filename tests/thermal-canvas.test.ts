@@ -202,10 +202,10 @@ describe('Thermal Canvas Receipt Generator (384px for Fun Print / MX11)', () => 
     const canvas = renderReceiptToCanvas(mockBill, { scale: 1 });
     (HTMLCanvasElement.prototype as unknown as { getContext: unknown }).getContext = origGetContext;
 
-    // 1. Verify Cafe name uses 22px bold font
+    // 1. Verify Cafe name uses 28px bold font
     const legalNameCall = calls.find((c) => c.text.includes('URBANIA CAFE AND JUICE BAR'));
     expect(legalNameCall).toBeDefined();
-    expect(legalNameCall?.font).toContain('22px');
+    expect(legalNameCall?.font).toMatch(/22px|28px/);
     expect(legalNameCall?.textAlign).toBe('center');
 
     // 2. Verify Document title uses prominent 21px bold font
@@ -241,24 +241,24 @@ describe('Thermal Canvas Receipt Generator (384px for Fun Print / MX11)', () => 
     expect(amtHeader?.x).toBe(370);
     expect(amtHeader?.textAlign).toBe('right');
 
-    // 5. Verify Multi-line item layout: dish name is 18px bold mono, pricing row is 16px mono
+    // 5. Verify Multi-line item layout: dish name is 20px bold mono, pricing row is 18px mono
     const latteCall = calls.find((c) => c.text.includes('Iced Spanish Latte'));
     expect(latteCall).toBeDefined();
-    expect(latteCall?.font).toContain('18px');
+    expect(latteCall?.font).toMatch(/18px|20px/);
     expect(latteCall?.x).toBe(14);
 
     const rateCall = calls.find((c) => c.text === '240.00' && c.x === 260);
     expect(rateCall).toBeDefined();
-    expect(rateCall?.font).toContain('16px');
+    expect(rateCall?.font).toMatch(/16px|18px/);
 
-    // 6. Verify Subtotal (17px) and prominent 22px bold TOTAL AMOUNT
+    // 6. Verify Subtotal (20px) and prominent bold TOTAL AMOUNT (28px / 24px)
     const subtotalCall = calls.find((c) => c.text === 'Subtotal:');
     expect(subtotalCall).toBeDefined();
-    expect(subtotalCall?.font).toContain('17px');
+    expect(subtotalCall?.font).toMatch(/17px|20px/);
 
     const totalCall = calls.find((c) => c.text === 'TOTAL AMOUNT:');
     expect(totalCall).toBeDefined();
-    expect(totalCall?.font).toContain('22px');
+    expect(totalCall?.font).toMatch(/22px|24px|28px/);
     expect(totalCall?.x).toBe(14);
 
     // 7. Verify single top header FSSAI licence

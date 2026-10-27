@@ -53,6 +53,8 @@ export default function KitchenTokenPrintView({
     };
   }, [order, isReprint, ticketType]);
 
+  const pageHeightMm = ticketMeta ? Math.ceil(ticketMeta.height / 8 + 4) : 150;
+
   return (
     <div
       style={{
@@ -73,7 +75,8 @@ export default function KitchenTokenPrintView({
         dangerouslySetInnerHTML={{
           __html: `
             @page {
-              size: 58mm auto;
+              /* 58mm auto */
+              size: 48mm ${pageHeightMm}mm;
               margin: 0mm;
             }
             html, body {

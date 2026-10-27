@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { authDb } from '@/lib/supabase/auth-server';
 import LogoutButton from '@/components/auth/LogoutButton';
+import { getDailyServiceMetrics, getTimezoneDateBounds } from '@/lib/reports';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,23 +28,52 @@ export default async function Admin() {
     .eq('user_id', user.id)
     .maybeSingle();
   if (!profile || profile.role === 'staff') redirect('/admin/login');
+
+  // Unified business-day reporting using cafe timezone
+  const dailyMetrics = await getDailyServiceMetrics(db);
+  const { startUtcIso, endUtcIso } = getTimezoneDateBounds(dailyMetrics.date, dailyMetrics.timezone);
+
   const { data: orders } = await db
     .from('orders')
     .select(
-      'id,order_number,status,total_paise,created_at,customer_name,guest_count,cafe_tables(label),order_items(item_name_snapshot,quantity)'
+      'id,order_number,status,total_paise,created_at,customer_name,guest_count,order_source,payment_status,external_platform_name,external_platform_ref,cafe_tables(label),order_items(item_name_snapshot,quantity)'
     )
-    .order('created_at', { ascending: false })
-    .limit(100);
+    .gte('created_at', startUtcIso)
+    .lte('created_at', endUtcIso)
+    .order('created_at', { ascending: false });
+
   const rows = orders ?? [];
-  const count = (s: string) => rows.filter((o) => o.status === s).length;
-  const total = rows.filter((o) => o.status !== 'CANCELLED').reduce((a, o) => a + o.total_paise, 0);
-  const metrics = [
-    ['New orders', count('NEW'), 'Needs acceptance'],
-    ['Accepted', count('ACCEPTED') + count('PREPARING') + count('READY'), 'In preparation & service'],
-    ['Completed', count('COMPLETED'), 'Fulfilled & billed'],
-    ['Total orders', rows.length, 'All order statuses'],
-    ['Order value', `₹${(total / 100).toFixed(2)}`, 'Excludes cancelled orders'],
+
+  const metrics: [string, string | number, string][] = [
+    ["Today's orders", dailyMetrics.orderCount, `${dailyMetrics.completedOrderCount} completed · ${dailyMetrics.activeOrderCount} in service`],
+    ['Active in kitchen', dailyMetrics.activeOrderCount, 'NEW, ACCEPTED, PREPARING, READY'],
+    ['Customer sales (Net)', `₹${(dailyMetrics.netSalesPaise / 100).toFixed(2)}`, `Gross: ₹${(dailyMetrics.grossSalesPaise / 100).toFixed(2)} · Disc: ₹${(dailyMetrics.discountsPaise / 100).toFixed(2)}`],
+    ['Actual collections', `₹${(dailyMetrics.collectedPaise / 100).toFixed(2)}`, `Cash: ₹${(dailyMetrics.cashCollectedPaise / 100).toFixed(2)} · Online/UPI: ₹${(dailyMetrics.onlineCollectedPaise / 100).toFixed(2)}`],
   ];
+
+  if (dailyMetrics.customerOutstandingPaise > 0) {
+    metrics.push([
+      'Customer balance due',
+      `₹${(dailyMetrics.customerOutstandingPaise / 100).toFixed(2)}`,
+      'Uncollected balance on today’s customer bills',
+    ]);
+  }
+
+  if (dailyMetrics.externalPlatformCount > 0) {
+    metrics.push([
+      'Delivery platforms',
+      dailyMetrics.externalPlatformCount,
+      `₹${(dailyMetrics.externalPlatformValuePaise / 100).toFixed(2)} · Swiggy / Zomato (Paid externally)`
+    ]);
+  }
+
+  if (dailyMetrics.adminCreditCount > 0 || dailyMetrics.adminCreditOutstandingPaise > 0) {
+    metrics.push([
+      'Admin credit',
+      `₹${(dailyMetrics.adminCreditTotalPaise / 100).toFixed(2)}`,
+      `Outstanding: ₹${(dailyMetrics.adminCreditOutstandingPaise / 100).toFixed(2)}`
+    ]);
+  }
   return (
     <main className="shell" style={{ maxWidth: 1060, paddingTop: 32 }}>
       <header
@@ -107,6 +137,9 @@ export default async function Admin() {
         <Link className="chip" href="/admin/reports">
           Audit &amp; Reports
         </Link>
+        <Link className="chip" href="/admin/credit-orders">
+          Admin Credit
+        </Link>
         <Link className="chip" href="/staff">
           Open staff queue
         </Link>
@@ -160,13 +193,20 @@ export default async function Admin() {
         {rows.length ? (
           rows.map((o) => {
             const t = o.cafe_tables as unknown as { label: string } | null;
+            const sourceBadge =
+              o.order_source === 'admin_credit'
+                ? `Admin Credit · ${o.payment_status === 'paid' ? 'Paid' : o.payment_status === 'partially_paid' ? 'Partially Paid' : 'Unpaid'}`
+                : o.external_platform_name
+                  ? `${o.external_platform_name} ${o.external_platform_ref || ''} (Paid Externally)`
+                  : t?.label ?? 'Counter / Takeaway';
+
             return (
               <details className="card order-summary" style={{ padding: 14, margin: '8px 0' }} key={o.id}>
                 <summary style={{ cursor: 'pointer' }}>
                   <b>
                     #{o.order_number} · {o.status}
                   </b>{' '}
-                  · {t?.label ?? 'Table ?'} · ₹{(o.total_paise / 100).toFixed(2)}{' '}
+                  · {sourceBadge} · ₹{(o.total_paise / 100).toFixed(2)}{' '}
                   <span className="muted">
                     {new Date(o.created_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
                   </span>

@@ -26,14 +26,14 @@ export default async function Staff() {
     db
       .from('orders')
       .select(
-        'id,order_number,status,customer_name,customer_note,guest_count,total_paise,created_at,billed_at,service_mode,order_source,cafe_tables(label),order_items(id,menu_item_id,item_name_snapshot,quantity,unit_price_paise,item_note,is_custom,selected_options_snapshot)'
+        'id,order_number,status,customer_name,customer_note,guest_count,total_paise,created_at,billed_at,service_mode,order_source,payment_status,payment_method,paid_paise,external_platform_name,external_platform_ref,cafe_tables(label),order_items(id,menu_item_id,item_name_snapshot,quantity,unit_price_paise,item_note,is_custom,selected_options_snapshot)'
       )
       .in('status', ['NEW', 'ACCEPTED', 'PREPARING', 'READY'])
       .order('created_at'),
     db
       .from('orders')
       .select(
-        'id,order_number,status,customer_name,customer_note,guest_count,total_paise,created_at,billed_at,service_mode,order_source,cafe_tables(label),order_items(id,menu_item_id,item_name_snapshot,quantity,unit_price_paise,item_note,is_custom,selected_options_snapshot)'
+        'id,order_number,status,customer_name,customer_note,guest_count,total_paise,created_at,billed_at,service_mode,order_source,payment_status,payment_method,paid_paise,external_platform_name,external_platform_ref,cafe_tables(label),order_items(id,menu_item_id,item_name_snapshot,quantity,unit_price_paise,item_note,is_custom,selected_options_snapshot)'
       )
       .eq('status', 'COMPLETED')
       .order('created_at', { ascending: false })

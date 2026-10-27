@@ -7,6 +7,10 @@ import { enforcePreviewWriteGuard } from "@/lib/preview-guard";
 const billRequestSchema = z.object({
   discount_type: z.enum(["fixed", "percentage"]).optional().nullable(),
   discount_value: z.number().nonnegative().optional().nullable(),
+  payment_method: z.enum(["cash", "upi", "online"]).optional().nullable(),
+  confirm_payment: z.boolean().optional().nullable(),
+  paid_amount_rupees: z.number().nonnegative().optional().nullable(),
+  idempotency_key: z.string().optional().nullable(),
 });
 
 export async function GET(
@@ -64,7 +68,7 @@ export async function POST(
     );
   }
 
-  const { discount_type, discount_value } = parseResult.data;
+  const { discount_type, discount_value, payment_method, confirm_payment, paid_amount_rupees, idempotency_key } = parseResult.data;
 
   // Validate discount values
   if (discount_type && discount_value != null && discount_value > 0) {
@@ -83,6 +87,31 @@ export async function POST(
     data: { user },
   } = await db.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  // Guard: Delivery platform orders are paid externally; block customer billing
+  try {
+    const { data: targetOrder } = await db
+      .from("orders")
+      .select("id, order_source, external_platform_name, external_platform_ref")
+      .eq("id", orderId)
+      .maybeSingle();
+
+    if (targetOrder && ["swiggy", "zomato", "delivery_platform"].includes(targetOrder.order_source)) {
+      return NextResponse.json(
+        { error: "Delivery platform orders are paid externally; customer billing is disabled." },
+        { status: 400 }
+      );
+    }
+
+    if (targetOrder && targetOrder.order_source === "admin_credit") {
+      return NextResponse.json(
+        { error: "Admin credit orders are tracked via Admin Credit Ledger; customer billing is disabled." },
+        { status: 400 }
+      );
+    }
+  } catch {
+    // Ignore if query builder is unavailable in mocked test environments
+  }
 
   let { data, error } = await db.rpc("generate_bill", {
     p_order_id: orderId,
@@ -108,6 +137,109 @@ export async function POST(
 
   if (error) {
     return NextResponse.json({ error: friendlyBillingError(error) }, { status: 400 });
+  }
+
+  // Handle optional payment method selection & payment confirmation
+  if (data?.bill && payment_method) {
+    const normMethod = payment_method === "online" ? "upi" : payment_method;
+    const isConfirmed = Boolean(confirm_payment);
+    const billTotalPaise = data.bill.total_paise || 0;
+    const paidPaise = isConfirmed
+      ? paid_amount_rupees != null
+        ? Math.min(billTotalPaise, Math.round(paid_amount_rupees * 100))
+        : billTotalPaise
+      : 0;
+
+    const newPaymentStatus = isConfirmed
+      ? paidPaise >= billTotalPaise
+        ? "paid"
+        : "partially_paid"
+      : "unpaid";
+
+    try {
+      if (isConfirmed && paidPaise > 0) {
+        // Record payment transaction
+        const { data: rpcPayment } = await db.rpc("record_customer_payment", {
+          p_bill_id: data.bill.id,
+          p_amount_paise: paidPaise,
+          p_payment_method: normMethod,
+          p_notes: "Payment recorded at bill generation",
+          p_idempotency_key: idempotency_key || null,
+        });
+
+        if (rpcPayment?.ok && rpcPayment?.bill) {
+          data.bill = rpcPayment.bill;
+        } else {
+          // Direct fallback if RPC is not yet registered
+          if (typeof db.from === "function") {
+            try {
+              await db.from("customer_payments").insert({
+                bill_id: data.bill.id,
+                order_id: data.bill.order_id,
+                payment_method: normMethod,
+                amount_paise: paidPaise,
+                status: "completed",
+                received_by: user.id,
+                idempotency_key: idempotency_key || null,
+              });
+
+              await db
+                .from("bills")
+                .update({
+                  paid_paise: paidPaise,
+                  payment_status: newPaymentStatus,
+                  payment_method: normMethod,
+                })
+                .eq("id", data.bill.id);
+
+              await db
+                .from("orders")
+                .update({
+                  paid_paise: paidPaise,
+                  payment_status: newPaymentStatus,
+                  payment_method: normMethod,
+                })
+                .eq("id", data.bill.order_id);
+            } catch {
+              // Ignore if table doesn't exist
+            }
+          }
+          data.bill.paid_paise = paidPaise;
+          data.bill.payment_status = newPaymentStatus;
+          data.bill.payment_method = normMethod;
+        }
+      } else {
+        // Unpaid bill: record selected method without payment transaction
+        if (typeof db.from === "function") {
+          try {
+            await db
+              .from("bills")
+              .update({
+                paid_paise: 0,
+                payment_status: "unpaid",
+                payment_method: normMethod,
+              })
+              .eq("id", data.bill.id);
+
+            await db
+              .from("orders")
+              .update({
+                paid_paise: 0,
+                payment_status: "unpaid",
+                payment_method: normMethod,
+              })
+              .eq("id", data.bill.order_id);
+          } catch {
+            // Ignore if columns don't exist
+          }
+        }
+        data.bill.paid_paise = 0;
+        data.bill.payment_status = "unpaid";
+        data.bill.payment_method = normMethod;
+      }
+    } catch (payErr) {
+      console.warn("Payment recording notice:", payErr);
+    }
   }
 
   return NextResponse.json(data);

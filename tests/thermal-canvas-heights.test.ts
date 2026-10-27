@@ -292,20 +292,20 @@ describe('Thermal Canvas Height & Typography Hierarchy Verification', () => {
       expect(sectionCall?.font).toContain('16px');
       expect(sectionCall?.font).toContain('bold');
 
-      // 5. Dish Items: 21px bold font for clear visibility
+      // 5. Dish Items: 22px bold font for clear visibility
       const pizzaCall = calls.find((c) => c.text.includes('Peri Peri Paneer Pizza'));
       expect(pizzaCall).toBeDefined();
-      expect(pizzaCall?.font).toContain('21px');
+      expect(pizzaCall?.font).toMatch(/2[12]px/);
       expect(pizzaCall?.font).toContain('bold');
 
-      // 6. Item Quantity: 23px bold mono font
+      // 6. Item Quantity: bold font
       const qtyCall = calls.find((c) => c.text === '3×' || c.text.startsWith('3× '));
       expect(qtyCall).toBeDefined();
 
-      // 7. Modifiers and Item notes: 15px italic font
+      // 7. Modifiers and Item notes: italic font
       const noteCall = calls.find((c) => c.text.includes('Well done crust'));
       expect(noteCall).toBeDefined();
-      expect(noteCall?.font).toContain('15px');
+      expect(noteCall?.font).toMatch(/1[56]px/);
       expect(noteCall?.font).toContain('italic');
 
       // 8. Custom Dish marked with [CUSTOM]

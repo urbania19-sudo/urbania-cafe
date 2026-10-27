@@ -34,6 +34,10 @@ export interface KitchenTicketOrder {
   service_mode?: string | null;
   table_label?: string | null;
   cafe_tables?: { label: string } | null;
+  order_source?: string | null;
+  payment_status?: string | null;
+  external_platform_name?: string | null;
+  external_platform_ref?: string | null;
   order_items: KitchenTicketOrderItem[];
   ticket_type?: "new" | "addon" | "reprint";
   ticket_number?: number;
@@ -97,11 +101,11 @@ export function isPlaceholderTagline(text?: string | null): boolean {
  * Returns a meaningful subtitle/tagline if present and non-placeholder.
  * Avoids echoing redundant names when cafe_name is essentially identical to legal_name.
  */
-export function getMeaningfulTagline(biz: {
+export function getMeaningfulTagline(biz?: {
   cafe_name?: string | null;
   legal_name?: string | null;
-}): string | null {
-  if (!biz.cafe_name) return null;
+} | null): string | null {
+  if (!biz || !biz.cafe_name) return null;
   const name = biz.cafe_name.trim();
   if (isPlaceholderTagline(name)) return null;
 
@@ -243,19 +247,19 @@ export function layoutReceiptItem(
   fontMono: string,
   fontSans: string,
 ): PreparedReceiptItem {
-  ctx.font = `bold 18px ${fontMono}`;
+  ctx.font = `bold 20px ${fontMono}`;
   const nameLines = wrapText(ctx, item.name, maxContentWidth);
 
   let optionLines: string[] = [];
   if (item.selected_options && item.selected_options.length > 0) {
-    ctx.font = `italic 14px ${fontMono}`;
+    ctx.font = `italic 15px ${fontMono}`;
     const optText = `+ ${item.selected_options.map((m) => m.name).join(", ")}`;
     optionLines = wrapText(ctx, optText, maxContentWidth - 8);
   }
 
   let noteLines: string[] = [];
   if (item.note) {
-    ctx.font = `italic 14px ${fontSans}`;
+    ctx.font = `italic 15px ${fontSans}`;
     noteLines = wrapText(ctx, `Note: ${item.note}`, maxContentWidth - 8);
   }
 
@@ -280,7 +284,7 @@ export function renderReceiptToCanvas(
   const scale = options.scale ?? 1;
   const baseWidth = 384;
   const isReprint = !!options.isReprint;
-  const biz = bill.business_snapshot;
+  const biz = bill.business_snapshot || {};
   const hasDiscount = Boolean(bill.discount_paise && bill.discount_paise > 0);
 
   // Create canvas for measuring and rendering
@@ -307,7 +311,7 @@ export function renderReceiptToCanvas(
   const meaningfulTagline = getMeaningfulTagline(biz);
 
   // Pre-calculate line layouts for 100% mathematical parity between Pass 1 and Pass 2
-  ctx.font = `bold 22px ${fontSans}`;
+  ctx.font = `bold 28px ${fontSans}`;
   const legalName = (biz.legal_name || "URBANIA CAFE AND JUICE BAR").toUpperCase();
   const legalLines = wrapText(ctx, legalName, maxContentWidth);
 
@@ -342,8 +346,8 @@ export function renderReceiptToCanvas(
   // ---------------------------------------------------------------------------
   let y = 20;
 
-  // Header height: Café legal name (22px bold)
-  y += (legalLines.length - 1) * 28;
+  // Header height: Café legal name (28px bold)
+  y += (legalLines.length - 1) * 32;
 
   if (tagLines.length > 0) {
     y += tagLines.length * 20;
@@ -379,22 +383,22 @@ export function renderReceiptToCanvas(
   // Table column headers (15px bold mono: ITEM, QTY, RATE, AMOUNT)
   y += 9; // divider under column headers
 
-  // Items list (Multi-line item layout: 18px bold dish name + 16px pricing row)
+  // Items list (Multi-line item layout: 20px bold dish name + 18px pricing row)
   for (const prepared of preparedReceiptItems) {
     y += 24; // first line of dish name (10px clear space below divider or previous item)
     if (prepared.nameLines.length > 1) {
-      y += (prepared.nameLines.length - 1) * 22;
+      y += (prepared.nameLines.length - 1) * 24;
     }
 
     // Line 2: QTY, RATE, AMOUNT
-    y += 20;
+    y += 22;
 
-    // Modifiers / options (14px italic mono)
+    // Modifiers / options (15px italic mono)
     if (prepared.optionLines.length > 0) {
       y += prepared.optionLines.length * 18;
     }
 
-    // Preparation notes (14px italic sans)
+    // Preparation notes (15px italic sans)
     if (prepared.noteLines.length > 0) {
       y += prepared.noteLines.length * 18;
     }
@@ -403,10 +407,11 @@ export function renderReceiptToCanvas(
   }
 
   // Divider + Totals
-  y += 10 + 23; // divider clearance (10) + subtotal ascender & breathing room (23)
-  if (bill.tax_paise > 0 && biz.gst_status === "registered") y += 22; // GST (17px mono)
-  if (hasDiscount) y += 22; // Discount row (17px mono)
-  y += 10 + 28; // divider clearance (10) + final amount ascender & breathing room (28)
+  y += 10 + 24; // divider clearance (10) + subtotal ascender & breathing room (24)
+  if (bill.tax_paise > 0 && biz.gst_status === "registered") y += 24; // GST (20px mono)
+  if (hasDiscount) y += 24; // Discount row (20px mono)
+  y += 10 + 32; // divider clearance (10) + final amount ascender & breathing room (32)
+  if (bill.payment_method) y += 24; // Payment method row
   y += 12 + 21; // divider clearance (12) + footer ascender & breathing room (21)
 
   // Footer text
@@ -456,12 +461,12 @@ export function renderReceiptToCanvas(
   // ---------------------------------------------------------------------------
   let curY = 20;
 
-  // 1. Café Legal Name (22px bold — prominent primary branding)
-  renderCtx.font = `bold 22px ${fontSans}`;
+  // 1. Café Legal Name (28px bold — prominent primary branding)
+  renderCtx.font = `bold 28px ${fontSans}`;
   renderCtx.textAlign = "center";
   renderCtx.fillText(legalLines[0] || legalName, centerX, curY);
   for (let k = 1; k < legalLines.length; k++) {
-    curY += 28;
+    curY += 32;
     renderCtx.fillText(legalLines[k] || "", centerX, curY);
   }
 
@@ -597,27 +602,27 @@ export function renderReceiptToCanvas(
   curY += 9;
   drawDashedLine(curY);
 
-  // 10. Items list (Multi-line layout: 18px bold dish name + 16px QTY/RATE/AMOUNT)
+  // 10. Items list (Multi-line layout: 20px bold dish name + 18px QTY/RATE/AMOUNT)
   for (const prepared of preparedReceiptItems) {
     curY += 24; // first line of dish name (10px clear space below divider or previous item)
     const item = prepared.item;
     const unitPaise = item.unit_price_paise ?? (item as unknown as { unit_price_cents: number }).unit_price_cents ?? 0;
     const linePaise = item.line_total_paise ?? (item as unknown as { line_total_cents: number }).line_total_cents ?? (unitPaise * item.quantity);
 
-    // Line 1: Item dish name (18px bold mono, full printable width)
-    renderCtx.font = `bold 18px ${fontMono}`;
+    // Line 1: Item dish name (20px bold mono, full printable width)
+    renderCtx.font = `bold 20px ${fontMono}`;
     renderCtx.textAlign = "left";
     renderCtx.fillText(prepared.nameLines[0] || item.name, leftX, curY);
 
     // Subsequent wrapped lines for long names (indented 8px)
     for (let k = 1; k < prepared.nameLines.length; k++) {
-      curY += 22;
+      curY += 24;
       renderCtx.fillText(prepared.nameLines[k] || "", leftX + 8, curY);
     }
 
-    // Line 2: Pricing row (16px mono, clearly aligned with column headers)
-    curY += 20;
-    renderCtx.font = `16px ${fontMono}`;
+    // Line 2: Pricing row (18px mono, clearly aligned with column headers)
+    curY += 22;
+    renderCtx.font = `18px ${fontMono}`;
     renderCtx.textAlign = "center";
     renderCtx.fillText(String(item.quantity), colQtyX, curY);
 
@@ -625,9 +630,9 @@ export function renderReceiptToCanvas(
     renderCtx.fillText((unitPaise / 100).toFixed(2), colRateRight, curY);
     renderCtx.fillText((linePaise / 100).toFixed(2), colAmtRight, curY);
 
-    // Selected options / modifiers (14px italic mono, indented 8px)
+    // Selected options / modifiers (15px italic mono, indented 8px)
     if (prepared.optionLines.length > 0) {
-      renderCtx.font = `italic 14px ${fontMono}`;
+      renderCtx.font = `italic 15px ${fontMono}`;
       renderCtx.textAlign = "left";
       for (const line of prepared.optionLines) {
         curY += 18;
@@ -635,9 +640,9 @@ export function renderReceiptToCanvas(
       }
     }
 
-    // Preparation note (14px italic sans, indented 8px)
+    // Preparation note (15px italic sans, indented 8px)
     if (prepared.noteLines.length > 0) {
-      renderCtx.font = `italic 14px ${fontSans}`;
+      renderCtx.font = `italic 15px ${fontSans}`;
       renderCtx.textAlign = "left";
       for (const line of prepared.noteLines) {
         curY += 18;
@@ -650,9 +655,9 @@ export function renderReceiptToCanvas(
 
   curY += 10;
   drawDashedLine(curY);
-  curY += 23;
+  curY += 24;
 
-  // 11. Summary totals (17px mono subtotal & tax, 22px bold total)
+  // 11. Summary totals (20px mono subtotal & tax)
   const subtotalPaise = bill.subtotal_paise ?? (bill as unknown as { subtotal_cents: number }).subtotal_cents ?? 0;
   const taxPaise = bill.tax_paise ?? (bill as unknown as { tax_cents: number }).tax_cents ?? 0;
   const totalPaise = bill.total_paise ?? (bill as unknown as { total_cents: number }).total_cents ?? 0;
@@ -660,14 +665,14 @@ export function renderReceiptToCanvas(
   const subtotalBeforeDiscountPaise =
     bill.subtotal_before_discount_paise ?? (totalPaise + discountPaise);
 
-  renderCtx.font = `17px ${fontMono}`;
+  renderCtx.font = `20px ${fontMono}`;
   renderCtx.textAlign = "left";
   renderCtx.fillText(hasDiscount ? "BILL TOTAL:" : "Subtotal:", leftX, curY);
   renderCtx.textAlign = "right";
   renderCtx.fillText(`₹${((hasDiscount ? subtotalBeforeDiscountPaise : subtotalPaise) / 100).toFixed(2)}`, rightX, curY);
 
   if (taxPaise > 0 && biz.gst_status === "registered") {
-    curY += 22;
+    curY += 24;
     renderCtx.textAlign = "left";
     const taxLabel = bill.tax_rate
       ? biz.tax_treatment === "inclusive"
@@ -680,7 +685,7 @@ export function renderReceiptToCanvas(
   }
 
   if (hasDiscount) {
-    curY += 22;
+    curY += 24;
     let discountLabel = "Discount:";
     if (bill.discount_type === "percentage" && bill.discount_value != null) {
       discountLabel = `Discount (${bill.discount_value}%):`;
@@ -700,14 +705,50 @@ export function renderReceiptToCanvas(
 
   curY += 10;
   drawDashedLine(curY);
-  curY += 28;
+  curY += 32;
 
-  // 12. Final Total Amount (22px bold mono — high visual prominence)
-  renderCtx.font = `bold 22px ${fontMono}`;
+  // 12. Final Total Amount (28px bold mono — high visual prominence with width collision guard)
+  const totalLabel = hasDiscount ? "AMOUNT TO PAY:" : "TOTAL AMOUNT:";
+  const totalValue = `₹${(totalPaise / 100).toFixed(2)}`;
+
+  renderCtx.font = `bold 28px ${fontMono}`;
+  const totalLabelWidth = renderCtx.measureText(totalLabel).width;
+  const totalValueWidth = renderCtx.measureText(totalValue).width;
+  if (totalLabelWidth + totalValueWidth > maxContentWidth - 8) {
+    renderCtx.font = `bold 24px ${fontMono}`;
+  }
+
   renderCtx.textAlign = "left";
-  renderCtx.fillText(hasDiscount ? "AMOUNT TO PAY:" : "TOTAL AMOUNT:", leftX, curY);
+  renderCtx.fillText(totalLabel, leftX, curY);
   renderCtx.textAlign = "right";
-  renderCtx.fillText(`₹${(totalPaise / 100).toFixed(2)}`, rightX, curY);
+  renderCtx.fillText(totalValue, rightX, curY);
+
+  if (bill.payment_method) {
+    curY += 24;
+    renderCtx.font = `bold 16px ${fontMono}`;
+    renderCtx.textAlign = "left";
+    renderCtx.fillText("PAYMENT:", leftX, curY);
+
+    const normMethod = bill.payment_method.toLowerCase();
+    const methodStr =
+      normMethod === "cash"
+        ? "CASH"
+        : normMethod === "upi" || normMethod === "online"
+        ? "ONLINE / UPI"
+        : normMethod.toUpperCase();
+
+    const statusSuffix =
+      bill.payment_status === "paid"
+        ? " [PAID]"
+        : bill.payment_status === "partially_paid"
+        ? ` [PARTIAL ₹${(((bill.paid_paise || 0) / 100)).toFixed(2)}]`
+        : bill.payment_status === "unpaid"
+        ? " [PENDING]"
+        : "";
+
+    renderCtx.textAlign = "right";
+    renderCtx.fillText(`${methodStr}${statusSuffix}`, rightX, curY);
+  }
 
   curY += 12;
   drawDashedLine(curY);
@@ -758,10 +799,13 @@ export function layoutKitchenItem(
   fontMono: string,
 ): PreparedKitchenItem {
   const rawName = item.item_name_snapshot || item.name || "Dish";
-  const qtyPrefix = item.quantity_display || `${item.quantity}×`;
+  let qtyPrefix = item.quantity_display || `${item.quantity}×`;
+  if (!qtyPrefix.endsWith("×") && !qtyPrefix.endsWith("x")) {
+    qtyPrefix = `${qtyPrefix}×`;
+  }
   const displayName = `${qtyPrefix} ${item.is_custom ? `[CUSTOM] ${rawName}` : rawName}`;
 
-  ctx.font = `bold 21px ${fontSans}`;
+  ctx.font = `bold 22px ${fontSans}`;
   const nameLines = wrapText(ctx, displayName, maxContentWidth);
 
   const optionsList = Array.isArray(item.selected_options)
@@ -772,16 +816,16 @@ export function layoutKitchenItem(
 
   let optionLines: string[] = [];
   if (optionsList.length > 0) {
-    ctx.font = `italic 15px ${fontMono}`;
+    ctx.font = `italic 16px ${fontMono}`;
     const optText = `+ ${optionsList.map((m) => m.name).join(", ")}`;
-    optionLines = wrapText(ctx, optText, maxContentWidth - 16);
+    optionLines = wrapText(ctx, optText, maxContentWidth - 20);
   }
 
   let noteLines: string[] = [];
   const noteText = item.note || item.item_note;
   if (noteText) {
-    ctx.font = `italic 15px ${fontSans}`;
-    noteLines = wrapText(ctx, `Note: ${noteText}`, maxContentWidth - 16);
+    ctx.font = `italic 16px ${fontSans}`;
+    noteLines = wrapText(ctx, `Note: ${noteText}`, maxContentWidth - 20);
   }
 
   return { nameLines, optionLines, noteLines };
@@ -825,15 +869,30 @@ export function renderKitchenTicketToCanvas(
   const maxContentWidth = rightX - leftX; // 356px
 
   const rawTable = order.table_label || order.cafe_tables?.label;
-  const tableDisplay = rawTable
-    ? rawTable.toUpperCase()
-    : (order.service_mode ? order.service_mode.toUpperCase().replace("_", " ") : "COUNTER / TAKEAWAY");
+  const isDeliveryPlatform =
+    Boolean(order.external_platform_name) ||
+    ["swiggy", "zomato", "delivery_platform"].includes(order.order_source || "");
+  const platformName = (order.external_platform_name || order.order_source || "DELIVERY").toUpperCase();
+  const platformRef = order.external_platform_ref ? `#${order.external_platform_ref.replace(/^#/, "")}` : "";
+
+  let tableDisplay: string;
+  if (isDeliveryPlatform) {
+    tableDisplay = platformRef ? `${platformName} · ${platformRef}` : platformName;
+  } else if (rawTable) {
+    tableDisplay = rawTable.toUpperCase();
+  } else {
+    tableDisplay = order.service_mode ? order.service_mode.toUpperCase().replace("_", " ") : "COUNTER / TAKEAWAY";
+  }
 
   const dateObj = order.created_at ? new Date(order.created_at) : new Date();
   const dateStr = dateObj.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
   const timeStr = dateObj.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
 
-  const guestCountStr = order.guest_count ? ` (${order.guest_count} guests)` : "";
+  const guestCountStr = isDeliveryPlatform
+    ? " (Delivery)"
+    : order.guest_count
+    ? ` (${order.guest_count} guests)`
+    : "";
 
   const explicitType = options.ticketType || order.ticket_type;
   const isAddon = explicitType === "addon";
@@ -849,7 +908,7 @@ export function renderKitchenTicketToCanvas(
   } else if (isNewExplicit) {
     orderTitle = `NEW ORDER — ORDER #${order.order_number}`;
   } else if (isFullReprint) {
-    bannerText = "*** DUPLICATE KITCHEN TICKET — FULL ORDER ***";
+    bannerText = "*** DUPLICATE KITCHEN TICKET — REPRINT ***";
   }
 
   // Pre-calculate item layouts using ctx so that Pass 1 and Pass 2 share identical line measurements
@@ -908,19 +967,19 @@ export function renderKitchenTicketToCanvas(
   ctx.font = `bold 16px ${fontMono}`;
   y += 10 + 28; // divider clearance (10) + first item 21px ascender & breathing room (28)
 
-  // Items List (21px bold sans for far-view kitchen visibility)
+  // Items List (22px bold sans for far-view kitchen visibility)
   for (let i = 0; i < preparedItems.length; i++) {
     const itemLayout = preparedItems[i];
     if (itemLayout.nameLines.length > 1) {
-      y += (itemLayout.nameLines.length - 1) * 26;
+      y += (itemLayout.nameLines.length - 1) * 28;
     }
     if (itemLayout.optionLines.length > 0) {
-      y += 22 + (itemLayout.optionLines.length - 1) * 20;
+      y += 24 + (itemLayout.optionLines.length - 1) * 22;
     }
     if (itemLayout.noteLines.length > 0) {
-      y += 22 + (itemLayout.noteLines.length - 1) * 20;
+      y += 24 + (itemLayout.noteLines.length - 1) * 22;
     }
-    // Deliberate 34px spacing between items (13px clear vertical whitespace between item boundaries)
+    // Deliberate 34px spacing between items (clear vertical whitespace between item boundaries)
     if (i < preparedItems.length - 1) {
       y += 34;
     }
@@ -1036,38 +1095,38 @@ export function renderKitchenTicketToCanvas(
   drawDashedLine(curY);
   curY += 28;
 
-  // Items List (21px bold sans for far-view readability)
+  // Items List (22px bold sans for far-view readability)
   for (let i = 0; i < preparedItems.length; i++) {
     const itemLayout = preparedItems[i];
 
-    renderCtx.font = `bold 21px ${fontSans}`;
+    renderCtx.font = `bold 22px ${fontSans}`;
     renderCtx.textAlign = "left";
     renderCtx.fillText(itemLayout.nameLines[0] || "", leftX, curY);
 
     for (let k = 1; k < itemLayout.nameLines.length; k++) {
-      curY += 26;
-      renderCtx.fillText(itemLayout.nameLines[k] || "", leftX + 16, curY);
+      curY += 28;
+      renderCtx.fillText(itemLayout.nameLines[k] || "", leftX + 20, curY);
     }
 
     if (itemLayout.optionLines.length > 0) {
-      curY += 22;
-      renderCtx.font = `italic 15px ${fontMono}`;
+      curY += 24;
+      renderCtx.font = `italic 16px ${fontMono}`;
       renderCtx.textAlign = "left";
-      renderCtx.fillText(itemLayout.optionLines[0] || "", leftX + 16, curY);
+      renderCtx.fillText(itemLayout.optionLines[0] || "", leftX + 20, curY);
       for (let k = 1; k < itemLayout.optionLines.length; k++) {
-        curY += 20;
-        renderCtx.fillText(itemLayout.optionLines[k] || "", leftX + 16, curY);
+        curY += 22;
+        renderCtx.fillText(itemLayout.optionLines[k] || "", leftX + 20, curY);
       }
     }
 
     if (itemLayout.noteLines.length > 0) {
-      curY += 22;
-      renderCtx.font = `italic 15px ${fontSans}`;
+      curY += 24;
+      renderCtx.font = `italic 16px ${fontSans}`;
       renderCtx.textAlign = "left";
-      renderCtx.fillText(itemLayout.noteLines[0] || "", leftX + 16, curY);
+      renderCtx.fillText(itemLayout.noteLines[0] || "", leftX + 20, curY);
       for (let k = 1; k < itemLayout.noteLines.length; k++) {
-        curY += 20;
-        renderCtx.fillText(itemLayout.noteLines[k] || "", leftX + 16, curY);
+        curY += 22;
+        renderCtx.fillText(itemLayout.noteLines[k] || "", leftX + 20, curY);
       }
     }
 

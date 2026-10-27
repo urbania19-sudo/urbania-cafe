@@ -53,7 +53,7 @@ export default async function KitchenTokenPrintPage({
   const { data: order, error } = await db
     .from('orders')
     .select(
-      'id,order_number,status,customer_name,customer_note,guest_count,total_paise,created_at,billed_at,service_mode,order_source,cafe_tables(label),order_items(id,menu_item_id,item_name_snapshot,quantity,unit_price_paise,item_note,is_custom,selected_options_snapshot)'
+      'id,order_number,status,customer_name,customer_note,guest_count,total_paise,created_at,billed_at,service_mode,order_source,payment_status,external_platform_name,external_platform_ref,cafe_tables(label),order_items(id,menu_item_id,item_name_snapshot,quantity,unit_price_paise,item_note,is_custom,selected_options_snapshot)'
     )
     .eq('id', orderId)
     .maybeSingle();

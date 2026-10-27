@@ -3,6 +3,13 @@
 import { useState, useMemo } from 'react';
 import { calculateBillDiscount, type DiscountType } from '@/lib/billing';
 
+export interface BillConfirmPayload {
+  discount?: { type: DiscountType; value: number };
+  paymentMethod: 'cash' | 'upi';
+  confirmPayment: boolean;
+  paidAmountRupees?: number;
+}
+
 export default function BillDiscountModal({
   orderNumber,
   subtotalPaise,
@@ -12,11 +19,14 @@ export default function BillDiscountModal({
   orderNumber: number;
   subtotalPaise: number;
   onClose: () => void;
-  onConfirm: (discount?: { type: DiscountType; value: number }) => Promise<void>;
+  onConfirm: (payload: BillConfirmPayload) => Promise<void>;
 }) {
   const [discountEnabled, setDiscountEnabled] = useState(false);
   const [discountType, setDiscountType] = useState<DiscountType>('fixed');
   const [discountValue, setDiscountValue] = useState<string>('');
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'upi'>('cash');
+  const [confirmPayment, setConfirmPayment] = useState(true);
+  const [customPaidAmount, setCustomPaidAmount] = useState<string>('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -35,6 +45,9 @@ export default function BillDiscountModal({
       return null;
     }
   }, [discountEnabled, discountType, discountValue, subtotalPaise]);
+
+  const finalPayablePaise = discountCalculation?.totalPaise ?? subtotalPaise;
+  const finalPayableRupees = finalPayablePaise / 100;
 
   async function handleGenerate() {
     setError(null);
@@ -57,9 +70,32 @@ export default function BillDiscountModal({
       discountPayload = { type: discountType, value: num };
     }
 
+    let paidRupees = finalPayableRupees;
+    if (confirmPayment) {
+      if (customPaidAmount.trim()) {
+        const parsedPaid = parseFloat(customPaidAmount);
+        if (isNaN(parsedPaid) || parsedPaid <= 0) {
+          setError('Please enter a valid received payment amount greater than zero.');
+          return;
+        }
+        if (parsedPaid > finalPayableRupees) {
+          setError(`Received amount cannot exceed the payable total (₹${finalPayableRupees.toFixed(2)}).`);
+          return;
+        }
+        paidRupees = parsedPaid;
+      }
+    } else {
+      paidRupees = 0;
+    }
+
     setSubmitting(true);
     try {
-      await onConfirm(discountPayload);
+      await onConfirm({
+        discount: discountPayload,
+        paymentMethod,
+        confirmPayment,
+        paidAmountRupees: confirmPayment ? paidRupees : 0,
+      });
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to generate bill.');
@@ -88,7 +124,9 @@ export default function BillDiscountModal({
       <div
         className="card"
         style={{
-          width: 'min(100%, 440px)',
+          width: 'min(100%, 460px)',
+          maxHeight: '90vh',
+          overflowY: 'auto',
           padding: 24,
           background: 'var(--card, #37241d)',
           display: 'grid',
@@ -194,6 +232,108 @@ export default function BillDiscountModal({
           )}
         </div>
 
+        {/* Payment Method Selection */}
+        <div style={{ background: '#ffffff08', padding: 14, borderRadius: 8, border: '1px solid var(--line, #ffffff24)', display: 'grid', gap: 12 }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--accent)', letterSpacing: '.04em' }}>
+            PAYMENT METHOD
+          </span>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <button
+              type="button"
+              onClick={() => setPaymentMethod('cash')}
+              style={{
+                padding: '10px 14px',
+                borderRadius: 8,
+                border: paymentMethod === 'cash' ? '2px solid #10b981' : '1px solid var(--line, #ffffff24)',
+                background: paymentMethod === 'cash' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(255,255,255,0.03)',
+                color: paymentMethod === 'cash' ? '#34d399' : 'var(--ink)',
+                fontWeight: 700,
+                fontSize: 14,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
+              }}
+            >
+              💵 Cash
+            </button>
+            <button
+              type="button"
+              onClick={() => setPaymentMethod('upi')}
+              style={{
+                padding: '10px 14px',
+                borderRadius: 8,
+                border: paymentMethod === 'upi' ? '2px solid #3b82f6' : '1px solid var(--line, #ffffff24)',
+                background: paymentMethod === 'upi' ? 'rgba(59, 130, 246, 0.15)' : 'rgba(255,255,255,0.03)',
+                color: paymentMethod === 'upi' ? '#60a5fa' : 'var(--ink)',
+                fontWeight: 700,
+                fontSize: 14,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
+              }}
+            >
+              📱 Online / UPI
+            </button>
+          </div>
+
+          {/* Payment Confirmation Toggle */}
+          <div style={{ borderTop: '1px dashed var(--line, #ffffff24)', paddingTop: 10, display: 'grid', gap: 8 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>
+              <input
+                type="checkbox"
+                checked={confirmPayment}
+                onChange={(e) => {
+                  setConfirmPayment(e.target.checked);
+                  if (!e.target.checked) setCustomPaidAmount('');
+                }}
+              />
+              Confirm payment received now ({paymentMethod === 'cash' ? 'Cash' : 'Online / UPI'})
+            </label>
+
+            {confirmPayment ? (
+              <div style={{ display: 'grid', gap: 6, marginTop: 4 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span className="muted" style={{ fontSize: 12 }}>Amount received:</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--accent)' }}>
+                    ₹{(parseFloat(customPaidAmount) || finalPayableRupees).toFixed(2)}
+                  </span>
+                </div>
+                <input
+                  type="number"
+                  min="0"
+                  max={finalPayableRupees}
+                  step="any"
+                  placeholder={`Full amount: ₹${finalPayableRupees.toFixed(2)}`}
+                  value={customPaidAmount}
+                  onChange={(e) => setCustomPaidAmount(e.target.value)}
+                  style={{
+                    padding: '8px 10px',
+                    borderRadius: 6,
+                    border: '1px solid var(--line, #ffffff24)',
+                    background: '#ffffff10',
+                    color: 'var(--ink, #f5ead9)',
+                    fontSize: 13,
+                  }}
+                />
+                {customPaidAmount && parseFloat(customPaidAmount) < finalPayableRupees && (
+                  <span style={{ fontSize: 11, color: '#f59e0b' }}>
+                    ⚠️ Partial payment: ₹{(finalPayableRupees - parseFloat(customPaidAmount)).toFixed(2)} will remain outstanding.
+                  </span>
+                )}
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: '#f59e0b', background: 'rgba(245, 158, 11, 0.1)', padding: '6px 10px', borderRadius: 4 }}>
+                ℹ️ Bill will be issued as <b>UNPAID</b>. Zero collections will be recorded until staff confirms payment.
+              </div>
+            )}
+          </div>
+        </div>
+
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
           <button
             type="button"
@@ -210,7 +350,11 @@ export default function BillDiscountModal({
             onClick={handleGenerate}
             style={{ fontWeight: 700 }}
           >
-            {submitting ? 'Generating…' : 'Generate Bill & Receipt'}
+            {submitting
+              ? 'Processing…'
+              : confirmPayment
+              ? `Collect ₹${(parseFloat(customPaidAmount) || finalPayableRupees).toFixed(2)} & Issue Bill`
+              : 'Issue Bill (Unpaid)'}
           </button>
         </div>
       </div>

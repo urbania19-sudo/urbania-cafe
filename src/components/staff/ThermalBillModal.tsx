@@ -78,6 +78,8 @@ export default function ThermalBillModal({
     };
   }, []);
 
+  const pageHeightMm = receiptMeta ? Math.ceil(receiptMeta.height / 8 + 4) : 150;
+
   return (
     <div
       role="dialog"
@@ -107,7 +109,8 @@ export default function ThermalBillModal({
         dangerouslySetInnerHTML={{
           __html: `
             @page {
-              size: 58mm auto;
+              /* 58mm auto */
+              size: 48mm ${pageHeightMm}mm;
               margin: 0mm;
             }
             body.thermal-bill-modal-active {

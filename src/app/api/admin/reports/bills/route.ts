@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { owner } from "@/lib/owner";
 import type { Bill } from "@/lib/billing";
+import { getDailyServiceMetrics } from "@/lib/reports";
 
 export async function GET(req: NextRequest) {
   const db = await owner();
@@ -164,20 +165,8 @@ export async function GET(req: NextRequest) {
     const totalSalesPaise = issuedBills.reduce((acc, r) => acc + (r.total_paise || 0), 0);
     const totalTaxPaise = issuedBills.reduce((acc, r) => acc + (r.tax_paise || 0), 0);
 
-    // Today's metrics (Asia/Kolkata date boundary)
-    const now = new Date();
-    const istOffset = 5.5 * 60 * 60 * 1000;
-    const istNow = new Date(now.getTime() + istOffset);
-    const todayIstStr = istNow.toISOString().slice(0, 10);
-
-    const todayIssued = allMatching.filter((r) => {
-      if (r.status !== "issued") return false;
-      const bDate = new Date(new Date(r.issued_at).getTime() + istOffset);
-      return bDate.toISOString().slice(0, 10) === todayIstStr;
-    });
-
-    const todaySalesPaise = todayIssued.reduce((acc, r) => acc + (r.total_paise || 0), 0);
-    const todayBillCount = todayIssued.length;
+    // Unified today's metrics using shared reporting layer
+    const dailyMetrics = await getDailyServiceMetrics(db);
 
     return NextResponse.json({
       ok: true,
@@ -192,8 +181,23 @@ export async function GET(req: NextRequest) {
         cancelledCount: cancelledBills.length,
         totalSalesPaise,
         totalTaxPaise,
-        todaySalesPaise,
-        todayBillCount,
+        todaySalesPaise: dailyMetrics.netSalesPaise,
+        todayBillCount: dailyMetrics.completedOrderCount,
+        todayGrossSalesPaise: dailyMetrics.grossSalesPaise,
+        todayDiscountsPaise: dailyMetrics.discountsPaise,
+        todayNetSalesPaise: dailyMetrics.netSalesPaise,
+        todayCollectedPaise: dailyMetrics.collectedPaise,
+        todayCashCollectedPaise: dailyMetrics.cashCollectedPaise,
+        todayOnlineCollectedPaise: dailyMetrics.onlineCollectedPaise,
+        todayCustomerCollectedPaise: dailyMetrics.customerCollectedPaise,
+        todayCustomerOutstandingPaise: dailyMetrics.customerOutstandingPaise,
+        todayRefundsPaise: dailyMetrics.customerRefundsPaise,
+        todayAdminCreditSettledTodayPaise: dailyMetrics.adminCreditSettledTodayPaise,
+        todayExternalDeliveryCount: dailyMetrics.externalPlatformCount,
+        todayExternalDeliveryPaise: dailyMetrics.externalPlatformValuePaise,
+        todayAdminCreditCount: dailyMetrics.adminCreditCount,
+        todayAdminCreditTotalPaise: dailyMetrics.adminCreditTotalPaise,
+        todayAdminCreditOutstandingPaise: dailyMetrics.adminCreditOutstandingPaise,
       },
     });
   } catch (err) {

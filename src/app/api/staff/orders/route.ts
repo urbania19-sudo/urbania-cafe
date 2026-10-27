@@ -5,11 +5,14 @@ import { friendlyBillingError } from "@/lib/billing";
 import { enforcePreviewWriteGuard } from "@/lib/preview-guard";
 
 const manualOrderSchema = z.object({
+  orderSource: z.enum(["manual", "swiggy", "zomato", "delivery_platform"]).default("manual"),
   serviceMode: z.enum(["dine_in", "takeaway", "counter", "delivery"]).default("dine_in"),
   tableId: z.string().uuid().optional().nullable(),
   customerName: z.string().max(60).optional().nullable(),
   customerNote: z.string().max(300).optional().nullable(),
   guestCount: z.number().int().min(1).max(20).default(1),
+  externalPlatformName: z.string().max(50).optional().nullable(),
+  externalPlatformRef: z.string().max(50).optional().nullable(),
   idempotencyKey: z.string().uuid().optional(),
   items: z
     .array(
@@ -45,25 +48,46 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { serviceMode, tableId, customerName, customerNote, guestCount, items } = parsed.data;
+  const {
+    orderSource,
+    serviceMode,
+    tableId,
+    customerName,
+    customerNote,
+    guestCount,
+    externalPlatformName,
+    externalPlatformRef,
+    items,
+  } = parsed.data;
   const idempotencyKey = parsed.data.idempotencyKey || crypto.randomUUID();
 
-  try {
-    // 1. Try atomic database RPC
-    const { data: rpcData, error: rpcError } = await db.rpc("create_manual_order", {
-      p_payload: {
-        serviceMode,
-        tableId: tableId ?? null,
-        customerName: customerName ?? null,
-        customerNote: customerNote ?? null,
-        guestCount,
-        idempotencyKey,
-        items,
-      },
-    });
+  const isPlatformOrder =
+    orderSource === 'swiggy' || orderSource === 'zomato' || orderSource === 'delivery_platform';
 
-    if (!rpcError && rpcData?.ok) {
-      return NextResponse.json(rpcData, { status: 201 });
+  const finalPlatformName = isPlatformOrder
+    ? externalPlatformName?.trim() || (orderSource === 'swiggy' ? 'Swiggy' : 'Zomato')
+    : null;
+  const finalPlatformRef = isPlatformOrder ? externalPlatformRef?.trim() || null : null;
+  const finalServiceMode = isPlatformOrder ? 'delivery' : serviceMode;
+
+  try {
+    // 1. Try atomic database RPC (only for standard manual orders without platform params)
+    if (!isPlatformOrder) {
+      const { data: rpcData, error: rpcError } = await db.rpc("create_manual_order", {
+        p_payload: {
+          serviceMode: finalServiceMode,
+          tableId: tableId ?? null,
+          customerName: customerName ?? null,
+          customerNote: customerNote ?? null,
+          guestCount,
+          idempotencyKey,
+          items,
+        },
+      });
+
+      if (!rpcError && rpcData?.ok) {
+        return NextResponse.json(rpcData, { status: 201 });
+      }
     }
 
     // 2. Fallback logic if RPC is not yet compiled in the database
@@ -194,10 +218,11 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const defaultCustomerName =
-      serviceMode === "takeaway"
+    const defaultCustomerName = isPlatformOrder
+      ? `${finalPlatformName} ${finalPlatformRef || ''}`.trim()
+      : finalServiceMode === "takeaway"
         ? "Takeaway Guest"
-        : serviceMode === "delivery"
+        : finalServiceMode === "delivery"
           ? "Delivery Guest"
           : "Walk-in Guest";
 
@@ -205,17 +230,20 @@ export async function POST(req: NextRequest) {
     const { data: newOrder, error: orderErr } = await db
       .from("orders")
       .insert({
-        table_id: finalTableId,
-        order_source: "manual",
-        service_mode: serviceMode,
+        table_id: isPlatformOrder ? null : finalTableId,
+        order_source: orderSource,
+        service_mode: finalServiceMode,
         status: "ACCEPTED",
         customer_name: customerName?.trim() || defaultCustomerName,
         guest_count: guestCount,
-        customer_note: customerNote?.trim() || null,
+        customer_note: customerNote?.trim() || (isPlatformOrder ? `[${finalPlatformName}] External Delivery` : null),
         subtotal_paise: totalPaise,
         total_paise: totalPaise,
         idempotency_key: idempotencyKey,
         accepted_at: new Date().toISOString(),
+        payment_status: isPlatformOrder ? "external" : "paid",
+        external_platform_name: finalPlatformName,
+        external_platform_ref: finalPlatformRef,
       })
       .select()
       .single();

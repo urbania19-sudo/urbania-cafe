@@ -56,6 +56,9 @@ export interface Bill {
   order_source?: "qr" | "manual";
   service_mode?: "dine_in" | "takeaway" | "counter" | "delivery";
   customer_name?: string | null;
+  payment_method?: "cash" | "upi" | "online" | "card" | "other" | null;
+  payment_status?: "unpaid" | "partially_paid" | "paid" | "external" | null;
+  paid_paise?: number;
   status: "issued" | "cancelled";
   document_type: "bill" | "tax_invoice";
   business_snapshot: BillBusinessSnapshot;

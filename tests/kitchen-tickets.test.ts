@@ -237,6 +237,6 @@ describe('Kitchen Ticket Delta Calculation & Signatures', () => {
       order_items: [{ name: 'Paneer Sandwich', quantity: 1 }, { name: 'French Fries', quantity: 1 }],
     });
     expect(filledTexts).toContain('ORDER #101');
-    expect(filledTexts).toContain('*** DUPLICATE KITCHEN TICKET — FULL ORDER ***');
+    expect(filledTexts).toContain('*** DUPLICATE KITCHEN TICKET — REPRINT ***');
   });
 });

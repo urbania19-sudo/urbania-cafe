@@ -14,6 +14,11 @@ interface ReportsSummary {
   totalTaxPaise: number;
   todaySalesPaise: number;
   todayBillCount: number;
+  todayCashCollectedPaise?: number;
+  todayOnlineCollectedPaise?: number;
+  todayCustomerCollectedPaise?: number;
+  todayCustomerOutstandingPaise?: number;
+  todayCollectedPaise?: number;
 }
 
 interface TableOption {
@@ -261,11 +266,18 @@ export default function ReportsManager({
           </div>
 
           <div className="card" style={{ padding: 16, borderTop: '3px solid #10b981' }}>
-            <span className="muted" style={{ fontSize: 12 }}>Today’s Live Revenue</span>
+            <span className="muted" style={{ fontSize: 12 }}>Today’s Collections</span>
             <div style={{ fontFamily: 'Georgia,serif', fontSize: '1.9rem', margin: '4px 0 2px' }}>
-              ₹{(summary.todaySalesPaise / 100).toFixed(2)}
+              ₹{(((summary.todayCollectedPaise ?? summary.todaySalesPaise) / 100)).toFixed(2)}
             </div>
-            <small className="muted">{summary.todayBillCount} orders billed today</small>
+            <small className="muted" style={{ display: 'block', marginTop: 2 }}>
+              Cash: ₹{(((summary.todayCashCollectedPaise ?? summary.todaySalesPaise) / 100)).toFixed(2)} · Online: ₹{(((summary.todayOnlineCollectedPaise ?? 0) / 100)).toFixed(2)}
+            </small>
+            {(summary.todayCustomerOutstandingPaise ?? 0) > 0 && (
+              <small style={{ color: '#f59e0b', display: 'block', marginTop: 2 }}>
+                ⚠️ Due: ₹{((summary.todayCustomerOutstandingPaise! / 100)).toFixed(2)}
+              </small>
+            )}
           </div>
 
           <div className="card" style={{ padding: 16 }}>
@@ -512,6 +524,21 @@ export default function ReportsManager({
                         <span className="chip" style={{ fontSize: 10, padding: '2px 8px' }}>
                           {bill.service_mode || 'dine_in'}
                         </span>
+                        {bill.payment_method && (
+                          <span
+                            className="chip"
+                            style={{
+                              fontSize: 10,
+                              padding: '2px 8px',
+                              background: bill.payment_method === 'cash' ? '#10b98122' : '#8b5cf622',
+                              color: bill.payment_method === 'cash' ? '#10b981' : '#a78bfa',
+                              fontWeight: 600,
+                            }}
+                          >
+                            {bill.payment_method === 'cash' ? '💵 Cash' : '📱 UPI'}
+                            {bill.payment_status === 'paid' ? ' (Paid)' : bill.payment_status === 'partially_paid' ? ' (Partial)' : ''}
+                          </span>
+                        )}
                         {isCancelled && (
                           <span className="chip" style={{ fontSize: 10, padding: '2px 8px', background: '#ef444422', color: '#ef4444' }}>
                             Cancelled

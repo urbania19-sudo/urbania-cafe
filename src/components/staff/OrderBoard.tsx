@@ -5,7 +5,9 @@ import { useRouter } from 'next/navigation';
 import { type Bill, type DiscountType } from '@/lib/billing';
 import ThermalBillModal from '@/components/staff/ThermalBillModal';
 import ManualOrderModal from '@/components/staff/ManualOrderModal';
-import BillDiscountModal from '@/components/staff/BillDiscountModal';
+import DeliveryPlatformOrderModal from '@/components/staff/DeliveryPlatformOrderModal';
+import BillDiscountModal, { type BillConfirmPayload } from '@/components/staff/BillDiscountModal';
+import CollectPaymentModal from '@/components/staff/CollectPaymentModal';
 import { computeKitchenTicketDelta } from '@/lib/kitchen-tickets';
 import type { KitchenTicketOrderItem } from '@/lib/thermal-canvas';
 
@@ -21,6 +23,11 @@ type Order = {
   billed_at?: string | null;
   service_mode?: string | null;
   order_source?: string | null;
+  payment_status?: string | null;
+  payment_method?: string | null;
+  paid_paise?: number;
+  external_platform_name?: string | null;
+  external_platform_ref?: string | null;
   cafe_tables: { label: string } | null;
   order_items: {
     id?: string;
@@ -107,7 +114,9 @@ export default function OrderBoard({
   const [adding, setAdding] = useState('');
   const [activeBill, setActiveBill] = useState<{ bill: Bill; isReprint: boolean } | null>(null);
   const [billingOrder, setBillingOrder] = useState<Order | null>(null);
+  const [collectingPayment, setCollectingPayment] = useState<{ order: Order; bill: Bill } | null>(null);
   const [showManualModal, setShowManualModal] = useState(false);
+  const [showDeliveryModal, setShowDeliveryModal] = useState(false);
   const [filterTab, setFilterTab] = useState<'all' | 'active' | 'completed'>('all');
   const [kotsByOrderId, setKotsByOrderId] = useState<Record<string, any>>(initialKots);
   const [searchCatalogueQuery, setSearchCatalogueQuery] = useState('');
@@ -462,7 +471,7 @@ export default function OrderBoard({
 
   async function billOrderDirectly(
     orderId: string,
-    discount?: { type: DiscountType; value: number }
+    payload?: BillConfirmPayload
   ) {
     setBusy(orderId);
     setError('');
@@ -471,10 +480,14 @@ export default function OrderBoard({
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(
-          discount
+          payload
             ? {
-                discount_type: discount.type,
-                discount_value: discount.value,
+                discount_type: payload.discount?.type,
+                discount_value: payload.discount?.value,
+                payment_method: payload.paymentMethod,
+                confirm_payment: payload.confirmPayment,
+                paid_amount_rupees: payload.paidAmountRupees,
+                idempotency_key: `bill-${orderId}-${Date.now()}`,
               }
             : {}
         ),
@@ -499,6 +512,24 @@ export default function OrderBoard({
     }
   }
 
+  async function handleOpenCollectPayment(o: Order) {
+    setBusy(o.id);
+    setError('');
+    try {
+      const res = await fetch(`/api/staff/orders/${o.id}/bill`);
+      const data = await res.json();
+      if (!res.ok || !data.bill) {
+        throw new Error(data.error || 'Could not load bill details for payment.');
+      }
+      setCollectingPayment({ order: o, bill: data.bill });
+    } catch (err) {
+      console.error('Error opening payment collection:', err);
+      setError(err instanceof Error ? err.message : 'Could not open payment collection.');
+    } finally {
+      setBusy(undefined);
+    }
+  }
+
   if (!orders.length) {
     return (
       <>
@@ -518,6 +549,19 @@ export default function OrderBoard({
             >
               + Create Counter / Takeaway Order
             </button>
+            <button
+              className="btn"
+              onClick={() => setShowDeliveryModal(true)}
+              style={{
+                padding: '10px 20px',
+                fontSize: 14,
+                background: 'transparent',
+                border: '1px solid var(--accent)',
+                color: 'var(--accent)',
+              }}
+            >
+              🛵 + Delivery Platform Order
+            </button>
           </div>
         </section>
 
@@ -528,6 +572,18 @@ export default function OrderBoard({
             onClose={() => setShowManualModal(false)}
             onSuccess={(newOrder) => {
               setShowManualModal(false);
+              setBillingOrder(null);
+              router.refresh();
+            }}
+          />
+        )}
+
+        {showDeliveryModal && (
+          <DeliveryPlatformOrderModal
+            menuItems={menu}
+            onClose={() => setShowDeliveryModal(false)}
+            onSuccess={(newOrder) => {
+              setShowDeliveryModal(false);
               setBillingOrder(null);
               router.refresh();
             }}
@@ -612,13 +668,28 @@ export default function OrderBoard({
           </button>
         </div>
 
-        <button
-          className="btn"
-          onClick={() => setShowManualModal(true)}
-          style={{ fontSize: 13, padding: '8px 16px' }}
-        >
-          + Counter / Takeaway Order
-        </button>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button
+            className="btn"
+            onClick={() => setShowManualModal(true)}
+            style={{ fontSize: 13, padding: '8px 16px' }}
+          >
+            + Counter / Takeaway Order
+          </button>
+          <button
+            className="btn"
+            onClick={() => setShowDeliveryModal(true)}
+            style={{
+              fontSize: 13,
+              padding: '8px 16px',
+              background: 'transparent',
+              border: '1px solid var(--accent)',
+              color: 'var(--accent)',
+            }}
+          >
+            🛵 + Delivery Platform Order
+          </button>
+        </div>
       </div>
 
       <section style={{ display: 'grid', gap: 12 }}>
@@ -670,7 +741,11 @@ export default function OrderBoard({
                       wordBreak: 'normal',
                     }}
                   >
-                    {o.cafe_tables?.label
+                    {o.external_platform_name || ['swiggy', 'zomato', 'delivery_platform'].includes(o.order_source || '')
+                      ? `${(o.external_platform_name || o.order_source || 'DELIVERY').toUpperCase()} · #${(o.external_platform_ref || '').replace(/^#/, '')}`
+                      : o.order_source === 'admin_credit'
+                      ? 'ADMIN CREDIT'
+                      : o.cafe_tables?.label
                       ? `TABLE · ${o.cafe_tables.label}`
                       : o.service_mode
                       ? o.service_mode.toUpperCase().replace('_', ' ')
@@ -711,7 +786,36 @@ export default function OrderBoard({
                       ✓ KOT Sent
                     </span>
                   )}
-                  {o.billed_at && (
+                  {(o.external_platform_name || ['swiggy', 'zomato', 'delivery_platform'].includes(o.order_source || '')) && (
+                    <span className="chip" style={{ fontSize: 11, borderColor: '#3b82f688', color: '#60a5fa', fontWeight: 600 }}>
+                      🛵 {o.external_platform_name || (o.order_source === 'swiggy' ? 'Swiggy' : 'Zomato')} · Paid Externally
+                    </span>
+                  )}
+                  {o.order_source === 'admin_credit' && (
+                    <span className="chip" style={{ fontSize: 11, borderColor: '#f59e0b88', color: '#f59e0b', fontWeight: 600 }}>
+                      💳 Admin Credit ({o.payment_status?.toUpperCase() || 'UNPAID'})
+                    </span>
+                  )}
+                  {o.billed_at && !['admin_credit', 'swiggy', 'zomato', 'delivery_platform'].includes(o.order_source || '') && !o.external_platform_name && (
+                    <span
+                      className="chip"
+                      style={{
+                        fontSize: 11,
+                        borderColor: o.payment_status === 'paid' ? '#10b98188' : o.payment_status === 'partial' ? '#f59e0b88' : '#d5a84b66',
+                        color: o.payment_status === 'paid' ? '#10b981' : o.payment_status === 'partial' ? '#f59e0b' : 'var(--accent)',
+                        fontWeight: 600,
+                      }}
+                    >
+                      {o.payment_status === 'paid'
+                        ? `✓ Paid (${o.payment_method === 'cash' ? '💵 Cash' : '📱 Online/UPI'})`
+                        : o.payment_status === 'partial'
+                        ? `● Partial (₹${((o.paid_paise || 0) / 100).toFixed(2)} / ₹${(o.total_paise / 100).toFixed(2)})`
+                        : o.payment_status === 'unpaid'
+                        ? '⏳ Billed (Unpaid)'
+                        : '✓ Billed'}
+                    </span>
+                  )}
+                  {o.billed_at && (['admin_credit', 'swiggy', 'zomato', 'delivery_platform'].includes(o.order_source || '') || Boolean(o.external_platform_name)) && (
                     <span className="chip" style={{ fontSize: 11, borderColor: '#d5a84b66', color: 'var(--accent)' }}>
                       ✓ Billed
                     </span>
@@ -1233,7 +1337,10 @@ export default function OrderBoard({
                       {busy === o.id ? 'Updating…' : action[o.status]}
                     </button>
                   )}
-                  {!isBilled && !isCancelled && ['ACCEPTED', 'PREPARING', 'READY'].includes(o.status) && (
+                  {!isBilled &&
+                    !isCancelled &&
+                    !['swiggy', 'zomato', 'delivery_platform', 'admin_credit'].includes(o.order_source || '') &&
+                    ['ACCEPTED', 'PREPARING', 'READY'].includes(o.status) && (
                     <button
                       className="chip"
                       disabled={busy === o.id}
@@ -1242,6 +1349,26 @@ export default function OrderBoard({
                       title="Issue bill for this accepted order"
                     >
                       Generate Bill
+                    </button>
+                  )}
+                  {isBilled &&
+                    !isCancelled &&
+                    o.payment_status !== 'paid' &&
+                    !['swiggy', 'zomato', 'delivery_platform', 'admin_credit'].includes(o.order_source || '') &&
+                    !o.external_platform_name && (
+                    <button
+                      className="chip"
+                      disabled={busy === o.id}
+                      onClick={() => handleOpenCollectPayment(o)}
+                      style={{
+                        fontWeight: 700,
+                        borderColor: 'var(--accent)',
+                        color: 'var(--accent)',
+                        background: 'rgba(200, 159, 101, 0.1)',
+                      }}
+                      title="Collect customer payment"
+                    >
+                      {busy === o.id ? 'Loading…' : 'Collect Payment'}
                     </button>
                   )}
                   {canViewReceipt && (
@@ -1275,15 +1402,41 @@ export default function OrderBoard({
         />
       )}
 
+      {showDeliveryModal && (
+        <DeliveryPlatformOrderModal
+          menuItems={menu}
+          onClose={() => setShowDeliveryModal(false)}
+          onSuccess={(newOrder) => {
+            setShowDeliveryModal(false);
+            setBillingOrder(null);
+            router.refresh();
+          }}
+        />
+      )}
+
       {billingOrder && (
         <BillDiscountModal
           orderNumber={billingOrder.order_number}
           subtotalPaise={billingOrder.total_paise}
           onClose={() => setBillingOrder(null)}
-          onConfirm={async (discount) => {
+          onConfirm={async (payload) => {
             const targetOrderId = billingOrder.id;
             setBillingOrder(null);
-            await billOrderDirectly(targetOrderId, discount);
+            await billOrderDirectly(targetOrderId, payload);
+          }}
+        />
+      )}
+
+      {collectingPayment && (
+        <CollectPaymentModal
+          orderNumber={collectingPayment.order.order_number}
+          billId={collectingPayment.bill.id}
+          totalPaise={collectingPayment.bill.total_paise}
+          paidPaise={collectingPayment.bill.paid_paise || 0}
+          onClose={() => setCollectingPayment(null)}
+          onSuccess={() => {
+            setCollectingPayment(null);
+            router.refresh();
           }}
         />
       )}
