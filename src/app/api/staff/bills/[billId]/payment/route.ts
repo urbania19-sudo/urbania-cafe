@@ -52,7 +52,8 @@ export async function POST(
   } = await db.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  // 1. Attempt database RPC: record_customer_payment
+  // Payment recording must remain atomic in PostgreSQL. Never fall back to separate
+  // INSERT/UPDATE requests: concurrent payments or partial failures can corrupt balances.
   const { data: rpcData, error: rpcError } = await db.rpc("record_customer_payment", {
     p_bill_id: billId,
     p_amount_paise: targetAmountPaise,
@@ -61,128 +62,45 @@ export async function POST(
     p_idempotency_key: idempotency_key || null,
   });
 
-  if (!rpcError && rpcData?.ok) {
-    return NextResponse.json(rpcData);
-  }
-
-  // Handle specific RPC error messages
   if (rpcError) {
     const msg = rpcError.message || "";
     if (msg.includes("URB:amount_exceeds_remaining_balance")) {
-      return NextResponse.json(
-        { error: "Payment amount exceeds remaining balance on this bill." },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Payment amount exceeds remaining balance on this bill." }, { status: 400 });
     }
     if (msg.includes("URB:cannot_pay_cancelled_bill")) {
-      return NextResponse.json(
-        { error: "Cannot record payment on a cancelled bill." },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Cannot record payment on a cancelled bill." }, { status: 400 });
     }
     if (msg.includes("URB:forbidden")) {
       return NextResponse.json({ error: "Forbidden: Staff or Admin role required." }, { status: 403 });
     }
-  }
-
-  // 2. Backward-compatible fallback for environments where RPC is not yet registered
-  try {
-    const { data: bill, error: billErr } = await db
-      .from("bills")
-      .select("*")
-      .eq("id", billId)
-      .maybeSingle();
-
-    if (billErr || !bill) {
+    if (msg.includes("URB:invalid_amount") || msg.includes("URB:invalid_payment_method")) {
+      return NextResponse.json({ error: "Invalid payment amount or method." }, { status: 400 });
+    }
+    if (msg.includes("URB:not_found")) {
       return NextResponse.json({ error: "Bill not found." }, { status: 404 });
     }
-
-    if (bill.status === "cancelled") {
-      return NextResponse.json({ error: "Cannot record payment on a cancelled bill." }, { status: 400 });
-    }
-
-    const currentPaid = bill.paid_paise || 0;
-    const remainingBalance = Math.max(0, bill.total_paise - currentPaid);
-
-    if (targetAmountPaise > remainingBalance) {
+    if ((rpcError as { code?: string }).code === "PGRST202" ||
+        (rpcError as { code?: string }).code === "42883" ||
+        msg.toLowerCase().includes("function public.record_customer_payment")) {
       return NextResponse.json(
-        { error: `Payment amount (₹${(targetAmountPaise / 100).toFixed(2)}) exceeds remaining balance (₹${(remainingBalance / 100).toFixed(2)}).` },
-        { status: 400 }
+        { error: "Payment recording is not configured. Apply database migration 0017 before collecting payments." },
+        { status: 503 }
       );
     }
-
-    // Check idempotency in customer_payments if table exists
-    if (idempotency_key) {
-      const { data: existingPayment } = await db
-        .from("customer_payments")
-        .select("*")
-        .eq("idempotency_key", idempotency_key)
-        .maybeSingle();
-
-      if (existingPayment) {
-        return NextResponse.json({
-          ok: true,
-          already_recorded: true,
-          payment: existingPayment,
-          bill,
-        });
-      }
-    }
-
-    // Insert payment record
-    const { data: paymentRecord, error: payErr } = await db
-      .from("customer_payments")
-      .insert({
-        bill_id: bill.id,
-        order_id: bill.order_id,
-        payment_method: normalizedMethod,
-        amount_paise: targetAmountPaise,
-        status: "completed",
-        notes: notes || null,
-        received_by: user.id,
-        idempotency_key: idempotency_key || null,
-      })
-      .select("*")
-      .maybeSingle();
-
-    const newPaidPaise = currentPaid + targetAmountPaise;
-    const newStatus = newPaidPaise >= bill.total_paise ? "paid" : "partially_paid";
-
-    const { data: updatedBill } = await db
-      .from("bills")
-      .update({
-        paid_paise: newPaidPaise,
-        payment_status: newStatus,
-        payment_method: normalizedMethod,
-      })
-      .eq("id", bill.id)
-      .select("*")
-      .maybeSingle();
-
-    await db
-      .from("orders")
-      .update({
-        paid_paise: newPaidPaise,
-        payment_status: newStatus,
-        payment_method: normalizedMethod,
-      })
-      .eq("id", bill.order_id);
-
-    return NextResponse.json({
-      ok: true,
-      already_recorded: false,
-      payment: paymentRecord || {
-        bill_id: bill.id,
-        amount_paise: targetAmountPaise,
-        payment_method: normalizedMethod,
-      },
-      bill: updatedBill || bill,
-    });
-  } catch (fallbackErr) {
-    console.error("Fallback payment recording failed:", fallbackErr);
+    console.error("Atomic customer payment RPC failed:", rpcError);
     return NextResponse.json(
-      { error: "Failed to record customer payment." },
+      { error: "Payment was not recorded. Please retry after checking the bill balance." },
       { status: 500 }
     );
   }
+
+  if (!rpcData?.ok) {
+    console.error("Atomic customer payment RPC returned an unexpected response.");
+    return NextResponse.json(
+      { error: "Payment recording could not be confirmed. Please check the bill before retrying." },
+      { status: 500 }
+    );
+  }
+
+  return NextResponse.json(rpcData);
 }
