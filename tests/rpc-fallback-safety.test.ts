@@ -38,6 +38,7 @@ describe('RPC Fallback Safety & Fail-Closed Regression Suite', () => {
   const validAdminCreditPayload = {
     adminUserId: '00000000-0000-4000-8000-000000000003',
     customerNote: 'Executive Meeting',
+    idempotencyKey: '00000000-0000-4000-8000-000000000004',
     items: [
       {
         menuItemId: '00000000-0000-4000-8000-000000000002',

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 
 interface AdminUser {
@@ -97,6 +97,10 @@ export default function AdminCreditLedger({
     isCustom?: boolean;
   }[]>([]);
   const [submittingOrder, setSubmittingOrder] = useState(false);
+  const pendingOrderRef = useRef<{
+    payloadSnapshot: string;
+    idempotencyKey: string;
+  } | null>(null);
 
   // Custom Item Form in Order Modal
   const [showCustomItem, setShowCustomItem] = useState(false);
@@ -230,27 +234,50 @@ export default function AdminCreditLedger({
   const handleCreateOrder = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newOrderAdminId || selectedCartItems.length === 0) return;
+
+    const payloadData = {
+      adminUserId: newOrderAdminId,
+      customerNote: newOrderNote.trim() || null,
+      items: selectedCartItems.map((i) => ({
+        menuItemId: i.isCustom ? null : i.menuItemId,
+        name: i.name,
+        quantity: i.quantity,
+        unitPricePaise: i.unitPricePaise,
+        note: i.note.trim() || null,
+        isCustom: i.isCustom,
+      })),
+    };
+    const serializedPayload = JSON.stringify(payloadData);
+
+    let idempotencyKey: string;
+    if (
+      pendingOrderRef.current &&
+      pendingOrderRef.current.payloadSnapshot === serializedPayload
+    ) {
+      idempotencyKey = pendingOrderRef.current.idempotencyKey;
+    } else {
+      idempotencyKey = crypto.randomUUID();
+      pendingOrderRef.current = {
+        payloadSnapshot: serializedPayload,
+        idempotencyKey,
+      };
+    }
+
     setSubmittingOrder(true);
     try {
       const res = await fetch('/api/admin/credit-orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          adminUserId: newOrderAdminId,
-          customerNote: newOrderNote.trim() || null,
-          items: selectedCartItems.map((i) => ({
-            menuItemId: i.isCustom ? null : i.menuItemId,
-            name: i.name,
-            quantity: i.quantity,
-            unitPricePaise: i.unitPricePaise,
-            note: i.note.trim() || null,
-            isCustom: i.isCustom,
-          })),
+          ...payloadData,
+          idempotencyKey,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to create admin credit order');
 
+      // Clear pending key on confirmed success so subsequent orders receive a fresh key
+      pendingOrderRef.current = null;
       setShowCreateModal(false);
       setSelectedCartItems([]);
       setNewOrderNote('');

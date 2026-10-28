@@ -70,7 +70,17 @@ In the Supabase SQL Editor for the **staging project only**, execute the migrati
 17. `supabase/migrations/202610280017_offline_customer_payment_methods.sql` — Customer payment ledger and atomic payment RPC.
 18. `supabase/migrations/202610280018_payment_reconciliation_hardening.sql` — Legacy payment reconciliation, append-only payment ledger, and unpaid defaults for new bills/orders.
 
-**Important:** apply migrations 0012–0018 only after their preceding schema migrations, and verify the staging schema before testing. Do not run rollback scripts as part of deployment.
+19. `supabase/migrations/202610280019_orders_insert_rls_policy.sql` — Least-privilege RLS INSERT policies for orders and order items; restricts direct insertion to authorized delivery platforms and admin credit channels.
+20. `supabase/migrations/202610280020_transactional_orders_and_order_items_rls.sql` — Atomic transactional order creation RPCs (`create_external_platform_order` and `create_admin_credit_order`) and prevention of duplicate line-item appends.
+21. `supabase/migrations/202610280021_rls_append_protection_and_status_hardening.sql` — Security definer helper `order_has_items` for robust append-protection immune to caller SELECT visibility, plus payment-status constraint hardening.
+22. `supabase/migrations/202610280022_revoke_public_order_has_items.sql` — Revokes EXECUTE on `order_has_items` from `PUBLIC` and `anon`; explicitly grants EXECUTE to `authenticated` and `service_role`.
+23. `supabase/migrations/202610280023_restrict_order_creation_rpc_execution.sql` — Revokes EXECUTE on order creation RPCs from `PUBLIC` and `anon`; explicitly grants EXECUTE to `authenticated` and `service_role`.
+24. `supabase/migrations/202610290024_option_snapshot_price_consistency.sql` — Option validation against target menu item and availability, pre-computing validated snapshots and totals to guarantee parity between `selected_options_snapshot`, `line_total_paise`, and `orders.total_paise`.
+
+25. `supabase/migrations/202610290025_admin_credit_order_idempotency.sql` — Enforces mandatory UUID idempotency keys on admin-credit order creation; serializes concurrent requests safely via advisory locking; rejects mismatched replays with conflict semantics; returns existing records without duplicate insertions.
+26. `supabase/migrations/202610290026_admin_credit_payload_hash.sql` — Canonical SHA-256 payload hashing and fingerprint storage in `orders.idempotency_hash`; detects payload tampering (dish, quantity, custom items/price, note, target admin) on idempotency key reuse, returning HTTP 409 conflict, and fails closed safely on legacy unhashed rows.
+
+**Important:** Migrations must be applied strictly in numerical/chronological order (0001 through 0026). In particular, migrations 0019–0026 build incrementally on baseline schema migrations 0001–0018 and must never be applied out of order. Verify the database schema and migration list before testing. Do not run rollback scripts as part of deployment.
 
 ### Step 4: Seed Staging Data
 Run `supabase/seed.sql` in the staging SQL editor:

@@ -7,8 +7,9 @@ import { friendlyBillingError } from '@/lib/billing';
 export const dynamic = 'force-dynamic';
 
 const creditOrderCreateSchema = z.object({
-  adminUserId: z.string().uuid('Valid admin user ID required'),
+  adminUserId: z.string('Valid admin user ID required').uuid('Valid admin user ID required'),
   customerNote: z.string().max(300).optional().nullable(),
+  idempotencyKey: z.string('Valid idempotency key required').uuid('Valid idempotency key required'),
   items: z
     .array(
       z.object({
@@ -147,7 +148,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { adminUserId, customerNote, items } = parsed.data;
+  const { adminUserId, customerNote, idempotencyKey, items } = parsed.data;
 
   try {
     // 1. Execute atomic transactional RPC
@@ -155,6 +156,7 @@ export async function POST(req: NextRequest) {
       p_payload: {
         adminUserId,
         customerNote: customerNote?.trim() || null,
+        idempotencyKey,
         items,
       },
     });
@@ -177,6 +179,13 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(
           { error: "Admin credit order service is temporarily unavailable (database function pending migration)." },
           { status: 503 }
+        );
+      }
+
+      if (errMsg.includes("URB:idempotency_conflict")) {
+        return NextResponse.json(
+          { error: "This order retry key was already used for different order details." },
+          { status: 409 }
         );
       }
 

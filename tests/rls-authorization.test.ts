@@ -38,7 +38,13 @@ describe('Migrations 0019 & 0020: PostgreSQL RLS Authorization & Order Integrity
   let tableId: string | null = null;
   let qrToken: string | null = null;
   let menuItemId: string | null = null;
+  let secondMenuItemId: string | null = null;
+  let menuItemPricePaise: number = 0;
+  let validOptionId: string | null = null;
+  let unavailableOptionId: string | null = null;
+  let crossMenuOptionId: string | null = null;
   const createdOrderIds: string[] = [];
+  const createdOptionIds: string[] = [];
 
   beforeAll(async () => {
     // -------------------------------------------------------------------------
@@ -157,13 +163,69 @@ describe('Migrations 0019 & 0020: PostgreSQL RLS Authorization & Order Integrity
     tableId = tables?.[0]?.id || null;
     qrToken = tables?.[0]?.qr_token || null;
 
-    const { data: items } = await adminClient.from('menu_items').select('id').limit(1);
+    const { data: items } = await adminClient
+      .from('menu_items')
+      .select('id, name, price_paise')
+      .eq('is_available', true)
+      .limit(2);
     menuItemId = items?.[0]?.id || null;
+    menuItemPricePaise = items?.[0]?.price_paise || 18000;
+    secondMenuItemId = items?.[1]?.id || null;
+
+    if (menuItemId && secondMenuItemId) {
+      const { data: opt1, error: opt1Err } = await adminClient
+        .from('menu_item_options')
+        .insert({
+          menu_item_id: menuItemId,
+          name: 'Extra Test Shot',
+          option_type: 'addon',
+          price_delta_paise: 4000,
+          is_available: true,
+        })
+        .select('id')
+        .single();
+      if (opt1Err) throw new Error(`Failed to create opt1: ${opt1Err.message}`);
+      validOptionId = opt1?.id || null;
+      if (opt1?.id) createdOptionIds.push(opt1.id);
+
+      const { data: opt2, error: opt2Err } = await adminClient
+        .from('menu_item_options')
+        .insert({
+          menu_item_id: menuItemId,
+          name: 'Unavailable Oat Milk',
+          option_type: 'addon',
+          price_delta_paise: 5000,
+          is_available: false,
+        })
+        .select('id')
+        .single();
+      if (opt2Err) throw new Error(`Failed to create opt2: ${opt2Err.message}`);
+      unavailableOptionId = opt2?.id || null;
+      if (opt2?.id) createdOptionIds.push(opt2.id);
+
+      const { data: opt3, error: opt3Err } = await adminClient
+        .from('menu_item_options')
+        .insert({
+          menu_item_id: secondMenuItemId,
+          name: 'Cross Menu Extra Cheese',
+          option_type: 'addon',
+          price_delta_paise: 3000,
+          is_available: true,
+        })
+        .select('id')
+        .single();
+      if (opt3Err) throw new Error(`Failed to create opt3: ${opt3Err.message}`);
+      crossMenuOptionId = opt3?.id || null;
+      if (opt3?.id) createdOptionIds.push(opt3.id);
+    }
   });
 
   afterAll(async () => {
     if (createdOrderIds.length > 0) {
       await adminClient.from('orders').delete().in('id', createdOrderIds);
+    }
+    if (createdOptionIds.length > 0) {
+      await adminClient.from('menu_item_options').delete().in('id', createdOptionIds);
     }
   });
 
@@ -970,5 +1032,730 @@ describe('Migrations 0019 & 0020: PostgreSQL RLS Authorization & Order Integrity
     );
     expect(staffAdminErr).not.toBeNull();
     expect(staffAdminErr?.message).toMatch(/Admin access required/i);
+  });
+
+  // ---------------------------------------------------------------------------
+  // 16. Migration 0024: Option snapshot and price consistency hardening
+  // ---------------------------------------------------------------------------
+  it('16. Option snapshot & price consistency: cross-menu and unavailable options fail closed, valid options guarantee mathematical parity', async () => {
+    expect(menuItemId).toBeDefined();
+    expect(secondMenuItemId).toBeDefined();
+    expect(validOptionId).toBeDefined();
+    expect(unavailableOptionId).toBeDefined();
+    expect(crossMenuOptionId).toBeDefined();
+
+    // 16.1 External Platform Order: Cross-menu option is rejected and creates no order or items
+    const crossMenuKeyPlatform = crypto.randomUUID();
+    const { data: crossPlatData, error: crossPlatErr } = await staffClient.rpc(
+      'create_external_platform_order',
+      {
+        p_payload: {
+          orderSource: 'zomato',
+          idempotencyKey: crossMenuKeyPlatform,
+          items: [
+            {
+              menuItemId,
+              quantity: 2,
+              optionIds: [crossMenuOptionId],
+            },
+          ],
+        },
+      }
+    );
+    expect(crossPlatData).toBeNull();
+    expect(crossPlatErr).not.toBeNull();
+    expect(crossPlatErr?.message).toMatch(/invalid option|does not belong/i);
+
+    const { data: orphanCrossPlatOrder } = await adminClient
+      .from('orders')
+      .select('id')
+      .eq('idempotency_key', crossMenuKeyPlatform)
+      .maybeSingle();
+    expect(orphanCrossPlatOrder).toBeNull();
+
+    // 16.2 External Platform Order: Unavailable option is rejected and creates no order or items
+    const unavailKeyPlatform = crypto.randomUUID();
+    const { data: unavailPlatData, error: unavailPlatErr } = await staffClient.rpc(
+      'create_external_platform_order',
+      {
+        p_payload: {
+          orderSource: 'swiggy',
+          idempotencyKey: unavailKeyPlatform,
+          items: [
+            {
+              menuItemId,
+              quantity: 1,
+              optionIds: [unavailableOptionId],
+            },
+          ],
+        },
+      }
+    );
+    expect(unavailPlatData).toBeNull();
+    expect(unavailPlatErr).not.toBeNull();
+    expect(unavailPlatErr?.message).toMatch(/unavailable option|not available/i);
+
+    const { data: orphanUnavailPlatOrder } = await adminClient
+      .from('orders')
+      .select('id')
+      .eq('idempotency_key', unavailKeyPlatform)
+      .maybeSingle();
+    expect(orphanUnavailPlatOrder).toBeNull();
+
+    // 16.3 External Platform Order: Valid option produces exact order & line item total parity
+    const validKeyPlatform = crypto.randomUUID();
+    const platQty = 2;
+    const expectedPlatLineTotal = (menuItemPricePaise + 4000) * platQty;
+
+    const { data: validPlatData, error: validPlatErr } = await staffClient.rpc(
+      'create_external_platform_order',
+      {
+        p_payload: {
+          orderSource: 'swiggy',
+          idempotencyKey: validKeyPlatform,
+          items: [
+            {
+              menuItemId,
+              quantity: platQty,
+              optionIds: [validOptionId],
+              note: 'Extra Hot',
+            },
+          ],
+        },
+      }
+    );
+    expect(validPlatErr).toBeNull();
+    expect(validPlatData?.ok).toBe(true);
+    expect(validPlatData?.order_id).toBeDefined();
+    expect(validPlatData?.total_paise).toBe(expectedPlatLineTotal);
+    if (validPlatData?.order_id) createdOrderIds.push(validPlatData.order_id);
+
+    const { data: platItemsInDb } = await adminClient
+      .from('order_items')
+      .select('*')
+      .eq('order_id', validPlatData.order_id);
+    expect(platItemsInDb).toHaveLength(1);
+    expect(platItemsInDb![0].line_total_paise).toBe(expectedPlatLineTotal);
+    expect(platItemsInDb![0].unit_price_paise).toBe(menuItemPricePaise);
+    expect(platItemsInDb![0].quantity).toBe(platQty);
+    expect(platItemsInDb![0].selected_options_snapshot).toHaveLength(1);
+    expect(platItemsInDb![0].selected_options_snapshot[0].name).toBe('Extra Test Shot');
+    expect(platItemsInDb![0].selected_options_snapshot[0].price_delta_paise).toBe(4000);
+
+    // Verify mathematical parity: order.total_paise === order_items.line_total_paise
+    const { data: platOrderInDb } = await adminClient
+      .from('orders')
+      .select('total_paise, subtotal_paise')
+      .eq('id', validPlatData.order_id)
+      .single();
+    expect(platOrderInDb?.total_paise).toBe(platItemsInDb![0].line_total_paise);
+    expect(platOrderInDb?.subtotal_paise).toBe(platItemsInDb![0].line_total_paise);
+
+    // 16.4 Admin Credit Order: Cross-menu option is rejected and creates no order or items
+    const crossMenuKeyAdmin = crypto.randomUUID();
+    const { data: crossAdminData, error: crossAdminErr } = await ownerClient.rpc(
+      'create_admin_credit_order',
+      {
+        p_payload: {
+          adminUserId: ownerUserId,
+          idempotencyKey: crossMenuKeyAdmin,
+          items: [
+            {
+              menuItemId,
+              quantity: 1,
+              optionIds: [crossMenuOptionId],
+            },
+          ],
+        },
+      }
+    );
+    expect(crossAdminData).toBeNull();
+    expect(crossAdminErr).not.toBeNull();
+    expect(crossAdminErr?.message).toMatch(/invalid option|does not belong/i);
+
+    const { data: orphanCrossAdminOrder } = await adminClient
+      .from('orders')
+      .select('id')
+      .eq('idempotency_key', crossMenuKeyAdmin)
+      .maybeSingle();
+    expect(orphanCrossAdminOrder).toBeNull();
+
+    // 16.5 Admin Credit Order: Unavailable option is rejected and creates no order or items
+    const unavailKeyAdmin = crypto.randomUUID();
+    const { data: unavailAdminData, error: unavailAdminErr } = await ownerClient.rpc(
+      'create_admin_credit_order',
+      {
+        p_payload: {
+          adminUserId: ownerUserId,
+          idempotencyKey: unavailKeyAdmin,
+          items: [
+            {
+              menuItemId,
+              quantity: 1,
+              optionIds: [unavailableOptionId],
+            },
+          ],
+        },
+      }
+    );
+    expect(unavailAdminData).toBeNull();
+    expect(unavailAdminErr).not.toBeNull();
+    expect(unavailAdminErr?.message).toMatch(/unavailable option|not available/i);
+
+    const { data: orphanUnavailAdminOrder } = await adminClient
+      .from('orders')
+      .select('id')
+      .eq('idempotency_key', unavailKeyAdmin)
+      .maybeSingle();
+    expect(orphanUnavailAdminOrder).toBeNull();
+
+    // 16.6 Admin Credit Order: Valid option produces exact order & line item total parity
+    const validKeyAdmin = crypto.randomUUID();
+    const adminQty = 3;
+    const expectedAdminLineTotal = (menuItemPricePaise + 4000) * adminQty;
+
+    const { data: validAdminData, error: validAdminErr } = await ownerClient.rpc(
+      'create_admin_credit_order',
+      {
+        p_payload: {
+          adminUserId: ownerUserId,
+          customerNote: 'VIP Executive Meeting',
+          idempotencyKey: validKeyAdmin,
+          items: [
+            {
+              menuItemId,
+              quantity: adminQty,
+              optionIds: [validOptionId],
+              note: 'High priority',
+            },
+          ],
+        },
+      }
+    );
+    expect(validAdminErr).toBeNull();
+    expect(validAdminData?.ok).toBe(true);
+    expect(validAdminData?.order_id).toBeDefined();
+    expect(validAdminData?.total_paise).toBe(expectedAdminLineTotal);
+    if (validAdminData?.order_id) createdOrderIds.push(validAdminData.order_id);
+
+    const { data: adminItemsInDb } = await adminClient
+      .from('order_items')
+      .select('*')
+      .eq('order_id', validAdminData.order_id);
+    expect(adminItemsInDb).toHaveLength(1);
+    expect(adminItemsInDb![0].line_total_paise).toBe(expectedAdminLineTotal);
+    expect(adminItemsInDb![0].unit_price_paise).toBe(menuItemPricePaise);
+    expect(adminItemsInDb![0].quantity).toBe(adminQty);
+    expect(adminItemsInDb![0].selected_options_snapshot).toHaveLength(1);
+    expect(adminItemsInDb![0].selected_options_snapshot[0].name).toBe('Extra Test Shot');
+    expect(adminItemsInDb![0].selected_options_snapshot[0].price_delta_paise).toBe(4000);
+
+    // Verify mathematical parity: order.total_paise === order_items.line_total_paise
+    const { data: adminOrderInDb } = await adminClient
+      .from('orders')
+      .select('total_paise, subtotal_paise, payment_status')
+      .eq('id', validAdminData.order_id)
+      .single();
+    expect(adminOrderInDb?.total_paise).toBe(adminItemsInDb![0].line_total_paise);
+    expect(adminOrderInDb?.subtotal_paise).toBe(adminItemsInDb![0].line_total_paise);
+    expect(adminOrderInDb?.payment_status).toBe('unpaid');
+  });
+
+  // ---------------------------------------------------------------------------
+  // 17. Migration 0025: Admin credit order idempotency enforcement & concurrency
+  // ---------------------------------------------------------------------------
+  it('17. Admin credit order idempotency: rejects missing/malformed keys, safely reuses existing orders on retry, handles concurrency without duplicate orders', async () => {
+    // 17.1 Missing idempotency key is rejected
+    const { data: missingRpcData, error: missingRpcErr } = await ownerClient.rpc(
+      'create_admin_credit_order',
+      {
+        p_payload: {
+          adminUserId: ownerUserId,
+          items: [{ menuItemId, quantity: 1 }],
+        },
+      }
+    );
+    expect(missingRpcData).toBeNull();
+    expect(missingRpcErr).not.toBeNull();
+    expect(missingRpcErr?.message).toMatch(/valid idempotency key required/i);
+
+    const missingApiRes = await fetch(`${APP_URL}/api/admin/credit-orders`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: ownerCookieHeader,
+      },
+      body: JSON.stringify({
+        adminUserId: ownerUserId,
+        items: [{ menuItemId, quantity: 1 }],
+      }),
+    });
+    expect(missingApiRes.status).toBe(400);
+    const missingApiBody = await missingApiRes.json();
+    expect(missingApiBody.error).toMatch(/valid idempotency key required/i);
+
+    // 17.2 Malformed idempotency key is rejected
+    const { data: malformedRpcData, error: malformedRpcErr } = await ownerClient.rpc(
+      'create_admin_credit_order',
+      {
+        p_payload: {
+          adminUserId: ownerUserId,
+          idempotencyKey: 'not-a-valid-uuid',
+          items: [{ menuItemId, quantity: 1 }],
+        },
+      }
+    );
+    expect(malformedRpcData).toBeNull();
+    expect(malformedRpcErr).not.toBeNull();
+    expect(malformedRpcErr?.message).toMatch(/valid idempotency key required/i);
+
+    const malformedApiRes = await fetch(`${APP_URL}/api/admin/credit-orders`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: ownerCookieHeader,
+      },
+      body: JSON.stringify({
+        adminUserId: ownerUserId,
+        idempotencyKey: 'invalid-uuid-format',
+        items: [{ menuItemId, quantity: 1 }],
+      }),
+    });
+    expect(malformedApiRes.status).toBe(400);
+    const malformedApiBody = await malformedApiRes.json();
+    expect(malformedApiBody.error).toMatch(/valid idempotency key required/i);
+
+    // 17.3 Successful admin-credit request followed by retry with same key returns same order
+    const retryKey = crypto.randomUUID();
+    const orderPayload = {
+      adminUserId: ownerUserId,
+      customerNote: 'Board Meeting Snacks',
+      idempotencyKey: retryKey,
+      items: [{ menuItemId, quantity: 2 }],
+    };
+
+    // First call: creates order
+    const { data: firstOrderData, error: firstOrderErr } = await ownerClient.rpc(
+      'create_admin_credit_order',
+      { p_payload: orderPayload }
+    );
+    expect(firstOrderErr).toBeNull();
+    expect(firstOrderData?.ok).toBe(true);
+    expect(firstOrderData?.order_id).toBeDefined();
+    if (firstOrderData?.order_id) createdOrderIds.push(firstOrderData.order_id);
+
+    // Second call with same key: returns identical order
+    const { data: retryOrderData, error: retryOrderErr } = await ownerClient.rpc(
+      'create_admin_credit_order',
+      { p_payload: orderPayload }
+    );
+    expect(retryOrderErr).toBeNull();
+    expect(retryOrderData?.ok).toBe(true);
+    expect(retryOrderData?.order_id).toBe(firstOrderData.order_id);
+    expect(retryOrderData?.order_number).toBe(firstOrderData.order_number);
+    expect(retryOrderData?.total_paise).toBe(firstOrderData.total_paise);
+
+    // Verify DB count: strictly 1 order exists for retryKey
+    const { data: ordersWithKey } = await adminClient
+      .from('orders')
+      .select('id')
+      .eq('idempotency_key', retryKey);
+    expect(ordersWithKey).toHaveLength(1);
+
+    // Verify DB items count: items were not duplicated
+    const { data: orderItemsInDb } = await adminClient
+      .from('order_items')
+      .select('id')
+      .eq('order_id', firstOrderData.order_id);
+    expect(orderItemsInDb).toHaveLength(1);
+
+    // 17.4 Concurrent calls with the same key do not create duplicate orders
+    const concurrentKey = crypto.randomUUID();
+    const concurrentPayload = {
+      adminUserId: ownerUserId,
+      customerNote: 'Concurrent Test Order',
+      idempotencyKey: concurrentKey,
+      items: [{ menuItemId, quantity: 1 }],
+    };
+
+    const [call1, call2] = await Promise.all([
+      ownerClient.rpc('create_admin_credit_order', { p_payload: concurrentPayload }),
+      ownerClient.rpc('create_admin_credit_order', { p_payload: concurrentPayload }),
+    ]);
+
+    expect(call1.error).toBeNull();
+    expect(call2.error).toBeNull();
+    expect(call1.data?.ok).toBe(true);
+    expect(call2.data?.ok).toBe(true);
+    expect(call1.data?.order_id).toBe(call2.data?.order_id);
+    expect(call1.data?.order_number).toBe(call2.data?.order_number);
+    if (call1.data?.order_id) createdOrderIds.push(call1.data.order_id);
+
+    // Verify exactly 1 order exists in database for concurrentKey
+    const { data: concurrentOrdersInDb } = await adminClient
+      .from('orders')
+      .select('id')
+      .eq('idempotency_key', concurrentKey);
+    expect(concurrentOrdersInDb).toHaveLength(1);
+
+    const { data: concurrentItemsInDb } = await adminClient
+      .from('order_items')
+      .select('id')
+      .eq('order_id', call1.data.order_id);
+    expect(concurrentItemsInDb).toHaveLength(1);
+  });
+
+  // ---------------------------------------------------------------------------
+  // 18. Migration 0026: Admin credit order payload fingerprinting, conflict detection & fail-closed behavior
+  // ---------------------------------------------------------------------------
+  it('18. Admin credit order payload fingerprinting: rejects payload tampering with HTTP 409/conflict, returns original on identical replay, and fails closed on unhashed legacy rows', async () => {
+    // Obtain second admin/owner for target admin mismatch testing
+    const { data: secondAdminProfile } = await adminClient
+      .from('admin_profiles')
+      .select('user_id')
+      .in('role', ['owner', 'admin'])
+      .neq('user_id', ownerUserId)
+      .limit(1)
+      .single();
+    const secondAdminUserId = secondAdminProfile?.user_id;
+    expect(secondAdminUserId).toBeDefined();
+
+    // 18.1 Identical payload with same key returns original order (including whitespace normalization and option ordering)
+    const baseKey = crypto.randomUUID();
+    const basePayload = {
+      adminUserId: ownerUserId,
+      customerNote: 'Tasting Note Alpha',
+      idempotencyKey: baseKey,
+      items: [
+        {
+          menuItemId,
+          quantity: 2,
+          optionIds: [validOptionId],
+        },
+      ],
+    };
+
+    const { data: baseOrder, error: baseErr } = await ownerClient.rpc(
+      'create_admin_credit_order',
+      { p_payload: basePayload }
+    );
+    expect(baseErr).toBeNull();
+    expect(baseOrder?.ok).toBe(true);
+    if (baseOrder?.order_id) createdOrderIds.push(baseOrder.order_id);
+
+    // Verify idempotency_hash was populated in database
+    const { data: storedBaseOrder } = await adminClient
+      .from('orders')
+      .select('id, idempotency_key, idempotency_hash')
+      .eq('id', baseOrder.order_id)
+      .single();
+    expect(storedBaseOrder?.idempotency_hash).toBeDefined();
+    expect(storedBaseOrder?.idempotency_hash?.length).toBe(64); // SHA-256 hex string
+
+    // Replay with identical payload: returns original order
+    const { data: replayOrder, error: replayErr } = await ownerClient.rpc(
+      'create_admin_credit_order',
+      { p_payload: basePayload }
+    );
+    expect(replayErr).toBeNull();
+    expect(replayOrder?.order_id).toBe(baseOrder.order_id);
+
+    // Replay with normalized whitespace note: returns original order
+    const { data: whitespaceReplayOrder, error: whitespaceReplayErr } = await ownerClient.rpc(
+      'create_admin_credit_order',
+      { p_payload: { ...basePayload, customerNote: '  Tasting Note Alpha  ' } }
+    );
+    expect(whitespaceReplayErr).toBeNull();
+    expect(whitespaceReplayOrder?.order_id).toBe(baseOrder.order_id);
+
+    // 18.2 Different dish or quantity with same key -> conflict (RPC and HTTP 409 API)
+    // Modified quantity:
+    const { data: diffQtyData, error: diffQtyErr } = await ownerClient.rpc(
+      'create_admin_credit_order',
+      {
+        p_payload: {
+          ...basePayload,
+          items: [{ menuItemId, quantity: 3, optionIds: [validOptionId] }],
+        },
+      }
+    );
+    expect(diffQtyData).toBeNull();
+    expect(diffQtyErr?.message).toMatch(/URB:idempotency_conflict/);
+
+    const diffQtyApiRes = await fetch(`${APP_URL}/api/admin/credit-orders`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: ownerCookieHeader,
+      },
+      body: JSON.stringify({
+        ...basePayload,
+        items: [{ menuItemId, quantity: 3, optionIds: [validOptionId] }],
+      }),
+    });
+    expect(diffQtyApiRes.status).toBe(409);
+    const diffQtyApiBody = await diffQtyApiRes.json();
+    expect(diffQtyApiBody.error).toMatch(/already used for different order details/i);
+
+    // Modified dish (secondMenuItemId instead of menuItemId):
+    const { data: diffDishData, error: diffDishErr } = await ownerClient.rpc(
+      'create_admin_credit_order',
+      {
+        p_payload: {
+          ...basePayload,
+          items: [{ menuItemId: secondMenuItemId, quantity: 2 }],
+        },
+      }
+    );
+    expect(diffDishData).toBeNull();
+    expect(diffDishErr?.message).toMatch(/URB:idempotency_conflict/);
+
+    const diffDishApiRes = await fetch(`${APP_URL}/api/admin/credit-orders`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: ownerCookieHeader,
+      },
+      body: JSON.stringify({
+        ...basePayload,
+        items: [{ menuItemId: secondMenuItemId, quantity: 2 }],
+      }),
+    });
+    expect(diffDishApiRes.status).toBe(409);
+
+    // 18.3 Different custom-item name or price with same key -> conflict
+    const customKey = crypto.randomUUID();
+    const customPayload = {
+      adminUserId: ownerUserId,
+      customerNote: 'Custom Blend Order',
+      idempotencyKey: customKey,
+      items: [
+        {
+          name: 'Special Pour Over',
+          quantity: 1,
+          unitPricePaise: 25000,
+          isCustom: true,
+        },
+      ],
+    };
+
+    const { data: customOrder, error: customErr } = await ownerClient.rpc(
+      'create_admin_credit_order',
+      { p_payload: customPayload }
+    );
+    expect(customErr).toBeNull();
+    expect(customOrder?.ok).toBe(true);
+    if (customOrder?.order_id) createdOrderIds.push(customOrder.order_id);
+
+    // Replay customKey with different name
+    const { data: diffCustomNameData, error: diffCustomNameErr } = await ownerClient.rpc(
+      'create_admin_credit_order',
+      {
+        p_payload: {
+          ...customPayload,
+          items: [
+            {
+              name: 'Different Custom Name',
+              quantity: 1,
+              unitPricePaise: 25000,
+              isCustom: true,
+            },
+          ],
+        },
+      }
+    );
+    expect(diffCustomNameData).toBeNull();
+    expect(diffCustomNameErr?.message).toMatch(/URB:idempotency_conflict/);
+
+    // Replay customKey with different price
+    const { data: diffCustomPriceData, error: diffCustomPriceErr } = await ownerClient.rpc(
+      'create_admin_credit_order',
+      {
+        p_payload: {
+          ...customPayload,
+          items: [
+            {
+              name: 'Special Pour Over',
+              quantity: 1,
+              unitPricePaise: 30000,
+              isCustom: true,
+            },
+          ],
+        },
+      }
+    );
+    expect(diffCustomPriceData).toBeNull();
+    expect(diffCustomPriceErr?.message).toMatch(/URB:idempotency_conflict/);
+
+    const diffCustomPriceApiRes = await fetch(`${APP_URL}/api/admin/credit-orders`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: ownerCookieHeader,
+      },
+      body: JSON.stringify({
+        ...customPayload,
+        items: [
+          {
+            name: 'Special Pour Over',
+            quantity: 1,
+            unitPricePaise: 30000,
+            isCustom: true,
+          },
+        ],
+      }),
+    });
+    expect(diffCustomPriceApiRes.status).toBe(409);
+
+    // 18.4 Different customer note with same key -> conflict
+    const { data: diffNoteData, error: diffNoteErr } = await ownerClient.rpc(
+      'create_admin_credit_order',
+      {
+        p_payload: {
+          ...basePayload,
+          customerNote: 'Tampered Note Beta',
+        },
+      }
+    );
+    expect(diffNoteData).toBeNull();
+    expect(diffNoteErr?.message).toMatch(/URB:idempotency_conflict/);
+
+    const diffNoteApiRes = await fetch(`${APP_URL}/api/admin/credit-orders`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: ownerCookieHeader,
+      },
+      body: JSON.stringify({
+        ...basePayload,
+        customerNote: 'Tampered Note Beta',
+      }),
+    });
+    expect(diffNoteApiRes.status).toBe(409);
+
+    // 18.5 Different target administrator with same key -> conflict
+    const { data: diffAdminData, error: diffAdminErr } = await ownerClient.rpc(
+      'create_admin_credit_order',
+      {
+        p_payload: {
+          ...basePayload,
+          adminUserId: secondAdminUserId,
+        },
+      }
+    );
+    expect(diffAdminData).toBeNull();
+    expect(diffAdminErr?.message).toMatch(/URB:idempotency_conflict/);
+
+    const diffAdminApiRes = await fetch(`${APP_URL}/api/admin/credit-orders`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: ownerCookieHeader,
+      },
+      body: JSON.stringify({
+        ...basePayload,
+        adminUserId: secondAdminUserId,
+      }),
+    });
+    expect(diffAdminApiRes.status).toBe(409);
+
+    // 18.6 Same key reused across different order sources -> conflict
+    const swiggyKey = crypto.randomUUID();
+    const { data: swiggyOrder, error: swiggyErr } = await staffClient
+      .from('orders')
+      .insert({
+        order_source: 'swiggy',
+        service_mode: 'delivery',
+        status: 'ACCEPTED',
+        customer_name: 'Swiggy Idempotency Test',
+        guest_count: 1,
+        subtotal_paise: 20000,
+        total_paise: 20000,
+        payment_status: 'external',
+        paid_paise: 0,
+        idempotency_key: swiggyKey,
+        external_platform_name: 'Swiggy',
+      })
+      .select('id')
+      .single();
+    expect(swiggyErr).toBeNull();
+    if (swiggyOrder?.id) createdOrderIds.push(swiggyOrder.id);
+
+    const { data: crossSourceData, error: crossSourceErr } = await ownerClient.rpc(
+      'create_admin_credit_order',
+      {
+        p_payload: {
+          adminUserId: ownerUserId,
+          idempotencyKey: swiggyKey,
+          items: [{ menuItemId, quantity: 1 }],
+        },
+      }
+    );
+    expect(crossSourceData).toBeNull();
+    expect(crossSourceErr?.message).toMatch(/URB:idempotency_conflict/);
+
+    const crossSourceApiRes = await fetch(`${APP_URL}/api/admin/credit-orders`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: ownerCookieHeader,
+      },
+      body: JSON.stringify({
+        adminUserId: ownerUserId,
+        idempotencyKey: swiggyKey,
+        items: [{ menuItemId, quantity: 1 }],
+      }),
+    });
+    expect(crossSourceApiRes.status).toBe(409);
+
+    // 18.7 Legacy row with no fingerprint: safe, documented fail-closed behavior
+    const legacyKey = crypto.randomUUID();
+    const { data: legacyOrder, error: legacyErr } = await adminClient
+      .from('orders')
+      .insert({
+        order_source: 'admin_credit',
+        service_mode: 'dine_in',
+        status: 'ACCEPTED',
+        customer_name: 'Admin: Legacy User',
+        admin_user_id: ownerUserId,
+        guest_count: 1,
+        subtotal_paise: 15000,
+        total_paise: 15000,
+        payment_status: 'unpaid',
+        paid_paise: 0,
+        idempotency_key: legacyKey,
+        idempotency_hash: null, // Legacy unhashed order
+      })
+      .select('id')
+      .single();
+    expect(legacyErr).toBeNull();
+    if (legacyOrder?.id) createdOrderIds.push(legacyOrder.id);
+
+    const { data: legacyReplayData, error: legacyReplayErr } = await ownerClient.rpc(
+      'create_admin_credit_order',
+      {
+        p_payload: {
+          adminUserId: ownerUserId,
+          idempotencyKey: legacyKey,
+          items: [{ menuItemId, quantity: 1 }],
+        },
+      }
+    );
+    expect(legacyReplayData).toBeNull();
+    expect(legacyReplayErr?.message).toMatch(/URB:idempotency_conflict/);
+
+    const legacyReplayApiRes = await fetch(`${APP_URL}/api/admin/credit-orders`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: ownerCookieHeader,
+      },
+      body: JSON.stringify({
+        adminUserId: ownerUserId,
+        idempotencyKey: legacyKey,
+        items: [{ menuItemId, quantity: 1 }],
+      }),
+    });
+    expect(legacyReplayApiRes.status).toBe(409);
   });
 });
