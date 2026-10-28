@@ -150,185 +150,51 @@ export async function POST(req: NextRequest) {
   const { adminUserId, customerNote, items } = parsed.data;
 
   try {
-    // 1. Verify that target adminUserId is an authorized admin/owner
-    const { data: targetProfile, error: profErr } = await db
-      .from('admin_profiles')
-      .select('user_id, role')
-      .eq('user_id', adminUserId)
-      .in('role', ['owner', 'admin'])
-      .maybeSingle();
+    // 1. Execute atomic transactional RPC
+    const { data: rpcData, error: rpcError } = await db.rpc('create_admin_credit_order', {
+      p_payload: {
+        adminUserId,
+        customerNote: customerNote?.trim() || null,
+        items,
+      },
+    });
 
-    if (profErr || !targetProfile) {
+    if (rpcError) {
+      console.error("Error in create_admin_credit_order RPC:", rpcError);
+      const errCode = (rpcError as { code?: string }).code;
+      const errMsg = rpcError.message || "";
+      const isExactRpc = errMsg.includes("create_admin_credit_order");
+      const isPermissionDenied = errMsg.toLowerCase().includes("permission denied");
+
+      const isMissingFunction =
+        !isPermissionDenied &&
+        (errCode === "PGRST202" ||
+          (errCode === "42883" && isExactRpc) ||
+          (isExactRpc &&
+            (errMsg.includes("does not exist") || errMsg.includes("Could not find the function"))));
+
+      if (isMissingFunction) {
+        return NextResponse.json(
+          { error: "Admin credit order service is temporarily unavailable (database function pending migration)." },
+          { status: 503 }
+        );
+      }
+
+      const status = errMsg.includes("Admin access required") ? 403 : 400;
       return NextResponse.json(
-        { error: 'Selected user is not an authorized administrator or owner.' },
+        { error: friendlyBillingError(rpcError) },
+        { status }
+      );
+    }
+
+    if (!rpcData?.ok) {
+      return NextResponse.json(
+        { error: rpcData?.error || "Failed to create admin credit order." },
         { status: 400 }
       );
     }
 
-    // Attempt to load display name or email from get_authorized_admins
-    let adminDisplayName = `Admin (${adminUserId.slice(0, 8)})`;
-    try {
-      const { data: admins } = await db.rpc('get_authorized_admins');
-      const found = (admins || []).find((a: { user_id: string }) => a.user_id === adminUserId);
-      if (found?.display_name) {
-        adminDisplayName = found.display_name;
-      }
-    } catch {
-      // Fallback display name
-    }
-
-    // 2. Validate dishes and calculate item totals
-    let totalPaise = 0;
-    const processedItems: {
-      menuItemId: string | null;
-      name: string;
-      unitPricePaise: number;
-      quantity: number;
-      lineTotalPaise: number;
-      note: string | null;
-      options: { name: string; price_delta_paise: number }[];
-      isCustom: boolean;
-    }[] = [];
-
-    for (const item of items) {
-      if (item.isCustom) {
-        const customName = item.name?.trim();
-        if (!customName) {
-          return NextResponse.json(
-            { error: 'Custom item name cannot be empty.' },
-            { status: 400 }
-          );
-        }
-        const unitPrice = item.unitPricePaise ?? 0;
-        const lineTotal = unitPrice * item.quantity;
-        totalPaise += lineTotal;
-        processedItems.push({
-          menuItemId: null,
-          name: customName,
-          unitPricePaise: unitPrice,
-          quantity: item.quantity,
-          lineTotalPaise: lineTotal,
-          note: item.note?.trim() || null,
-          options: [],
-          isCustom: true,
-        });
-      } else {
-        if (!item.menuItemId) {
-          return NextResponse.json(
-            { error: 'Catalogue dish must provide a valid menuItemId.' },
-            { status: 400 }
-          );
-        }
-        const { data: menuItem } = await db
-          .from('menu_items')
-          .select('id, name, price_paise, is_available')
-          .eq('id', item.menuItemId)
-          .maybeSingle();
-
-        if (!menuItem) {
-          return NextResponse.json(
-            { error: 'Selected menu item does not exist.' },
-            { status: 400 }
-          );
-        }
-
-        let optionsDelta = 0;
-        const selectedOptions: { name: string; price_delta_paise: number }[] = [];
-
-        if (item.optionIds && item.optionIds.length > 0) {
-          const { data: optionsData } = await db
-            .from('menu_item_options')
-            .select('id, name, price_delta_paise, is_available')
-            .in('id', item.optionIds)
-            .eq('menu_item_id', menuItem.id);
-
-          for (const opt of optionsData || []) {
-            selectedOptions.push({
-              name: opt.name,
-              price_delta_paise: opt.price_delta_paise,
-            });
-            optionsDelta += opt.price_delta_paise;
-          }
-        }
-
-        const unitPrice = menuItem.price_paise + optionsDelta;
-        const lineTotal = unitPrice * item.quantity;
-        totalPaise += lineTotal;
-
-        processedItems.push({
-          menuItemId: menuItem.id,
-          name: menuItem.name,
-          unitPricePaise: unitPrice,
-          quantity: item.quantity,
-          lineTotalPaise: lineTotal,
-          note: item.note?.trim() || null,
-          options: selectedOptions,
-          isCustom: false,
-        });
-      }
-    }
-
-    const idempotencyKey = crypto.randomUUID();
-
-    // 3. Insert order
-    const { data: newOrder, error: orderErr } = await db
-      .from('orders')
-      .insert({
-        order_source: 'admin_credit',
-        service_mode: 'dine_in',
-        status: 'ACCEPTED',
-        customer_name: `Admin: ${adminDisplayName}`,
-        admin_user_id: adminUserId,
-        payment_status: 'unpaid',
-        paid_paise: 0,
-        guest_count: 1,
-        customer_note: customerNote?.trim() ? `[Admin Credit] ${customerNote.trim()}` : '[Admin Credit Consumption]',
-        subtotal_paise: totalPaise,
-        total_paise: totalPaise,
-        idempotency_key: idempotencyKey,
-        accepted_at: new Date().toISOString(),
-      })
-      .select()
-      .single();
-
-    if (orderErr || !newOrder) {
-      console.error('Admin credit order insert failed:', orderErr);
-      return NextResponse.json(
-        { error: friendlyBillingError(orderErr) },
-        { status: 500 }
-      );
-    }
-
-    // 4. Insert items
-    const itemInserts = processedItems.map((pi) => ({
-      order_id: newOrder.id,
-      menu_item_id: pi.menuItemId,
-      item_name_snapshot: pi.name,
-      unit_price_paise: pi.unitPricePaise,
-      quantity: pi.quantity,
-      selected_options_snapshot: pi.options,
-      line_total_paise: pi.lineTotalPaise,
-      item_note: pi.note,
-      is_custom: pi.isCustom,
-    }));
-
-    const { error: itemsErr } = await db.from('order_items').insert(itemInserts);
-    if (itemsErr) {
-      console.error('Order items insert failed:', itemsErr);
-    }
-
-    return NextResponse.json(
-      {
-        ok: true,
-        order_id: newOrder.id,
-        order_number: newOrder.order_number,
-        admin_user_id: newOrder.admin_user_id,
-        payment_status: newOrder.payment_status,
-        total_paise: newOrder.total_paise,
-        paid_paise: newOrder.paid_paise,
-      },
-      { status: 201 }
-    );
+    return NextResponse.json(rpcData, { status: 201 });
   } catch (err) {
     console.error('API Error in POST /api/admin/credit-orders:', err);
     return NextResponse.json(
