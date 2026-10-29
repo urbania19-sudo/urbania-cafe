@@ -99,6 +99,9 @@ describe('AdminCreditLedger Frontend Idempotency Suite', () => {
     await waitFor(() => {
       expect(capturedKeys).toHaveLength(1);
     });
+    await waitFor(() => {
+      expect(submitBtn).not.toBeDisabled();
+    });
 
     const firstKey = capturedKeys[0];
     expect(firstKey).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
@@ -119,6 +122,9 @@ describe('AdminCreditLedger Frontend Idempotency Suite', () => {
 
     await waitFor(() => {
       expect(capturedKeys).toHaveLength(2);
+    });
+    await waitFor(() => {
+      expect(submitBtn).not.toBeDisabled();
     });
 
     expect(capturedKeys[1]).toBe(firstKey);

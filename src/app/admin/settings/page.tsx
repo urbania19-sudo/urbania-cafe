@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation';
+import AdminNav from '@/components/admin/AdminNav';
 import Link from 'next/link';
 import { authDb } from '@/lib/supabase/auth-server';
 import LogoutButton from '@/components/auth/LogoutButton';
@@ -81,23 +82,7 @@ export default async function AdminSettingsPage() {
         </div>
       </header>
 
-      <nav className="admin-nav" aria-label="Owner navigation">
-        <Link className="chip" href="/admin">
-          Today’s service
-        </Link>
-        <Link className="chip" href="/admin/menu">
-          Menu & prices
-        </Link>
-        <Link className="chip" href="/admin/tables">
-          Table QR codes
-        </Link>
-        <Link className="chip" href="/admin/settings" style={{ background: 'var(--accent)', color: '#2b1b16', fontWeight: 700 }}>
-          Settings & FSSAI
-        </Link>
-        <Link className="chip" href="/admin/reports">
-          Audit & reports
-        </Link>
-      </nav>
+      <AdminNav activeTab="settings" />
 
       <SettingsForm initial={settings || null} />
     </main>

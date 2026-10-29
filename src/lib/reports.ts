@@ -40,6 +40,44 @@ export interface CafeReportMetrics {
   adminCreditSettledTodayPaise: number; // admin credit payments received today
 }
 
+export interface ParsedReportSearch {
+  raw: string;
+  trimmed: string;
+  orderNumber: number | null;
+  searchTerm: string;
+}
+
+/**
+ * Parses user search input for Audit & Reports:
+ * - Trims whitespace
+ * - Identifies human-facing order numbers from inputs like "123", "#123", "Order #123", "order 123", "ORDER # 123"
+ * - Returns the exact integer order number if matched, or null
+ * - Preserves the search term for secondary bill number and customer name matching
+ */
+export function parseReportSearch(raw: string): ParsedReportSearch {
+  const trimmed = (raw || '').trim();
+  if (!trimmed) {
+    return { raw, trimmed: '', orderNumber: null, searchTerm: '' };
+  }
+
+  // Matches "123", "#123", "# 123", "order 123", "Order #123", "order#123", "Order # 123"
+  const orderMatch = /^(?:order\s*#?\s*|#\s*)?(\d+)$/i.exec(trimmed);
+  let orderNumber: number | null = null;
+  if (orderMatch && orderMatch[1]) {
+    const parsed = parseInt(orderMatch[1], 10);
+    if (!Number.isNaN(parsed) && parsed > 0) {
+      orderNumber = parsed;
+    }
+  }
+
+  return {
+    raw,
+    trimmed,
+    orderNumber,
+    searchTerm: trimmed,
+  };
+}
+
 export interface DateBounds {
   startUtcIso: string;
   endUtcIso: string;

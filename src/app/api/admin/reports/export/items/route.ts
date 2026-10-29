@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { owner } from "@/lib/owner";
+import { parseReportSearch } from "@/lib/reports";
 import { exportBillItemsCsv } from "@/lib/csv";
 import type { Bill } from "@/lib/billing";
 
@@ -30,14 +31,16 @@ export async function GET(req: NextRequest) {
     if (orderSource !== "all") primaryQuery = primaryQuery.eq("order_source", orderSource);
     if (startDate) primaryQuery = primaryQuery.gte("issued_at", `${startDate}T00:00:00.000Z`);
     if (endDate) primaryQuery = primaryQuery.lte("issued_at", `${endDate}T23:59:59.999Z`);
-    if (search) {
-      const isNum = /^[0-9]+$/.test(search);
-      if (isNum) {
+    const parsedSearch = parseReportSearch(search);
+    if (parsedSearch.trimmed) {
+      if (parsedSearch.orderNumber !== null) {
         primaryQuery = primaryQuery.or(
-          `bill_number.ilike.%${search}%,order_number.eq.${search},customer_name.ilike.%${search}%`
+          `order_number.eq.${parsedSearch.orderNumber},bill_number.ilike.%${parsedSearch.trimmed}%,customer_name.ilike.%${parsedSearch.trimmed}%`
         );
       } else {
-        primaryQuery = primaryQuery.or(`bill_number.ilike.%${search}%,customer_name.ilike.%${search}%`);
+        primaryQuery = primaryQuery.or(
+          `bill_number.ilike.%${parsedSearch.trimmed}%,customer_name.ilike.%${parsedSearch.trimmed}%`
+        );
       }
     }
 
@@ -61,12 +64,11 @@ export async function GET(req: NextRequest) {
         if (status !== "all") fallback1 = fallback1.eq("status", status);
         if (startDate) fallback1 = fallback1.gte("issued_at", `${startDate}T00:00:00.000Z`);
         if (endDate) fallback1 = fallback1.lte("issued_at", `${endDate}T23:59:59.999Z`);
-        if (search) {
-          const isNum = /^[0-9]+$/.test(search);
-          if (isNum) {
-            fallback1 = fallback1.or(`bill_number.ilike.%${search}%,order_number.eq.${search}`);
+        if (parsedSearch.trimmed) {
+          if (parsedSearch.orderNumber !== null) {
+            fallback1 = fallback1.or(`order_number.eq.${parsedSearch.orderNumber},bill_number.ilike.%${parsedSearch.trimmed}%`);
           } else {
-            fallback1 = fallback1.ilike("bill_number", `%${search}%`);
+            fallback1 = fallback1.ilike("bill_number", `%${parsedSearch.trimmed}%`);
           }
         }
 

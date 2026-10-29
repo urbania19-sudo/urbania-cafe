@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { owner } from "@/lib/owner";
 import type { Bill } from "@/lib/billing";
-import { getDailyServiceMetrics } from "@/lib/reports";
+import { getDailyServiceMetrics, parseReportSearch } from "@/lib/reports";
 
 export async function GET(req: NextRequest) {
   const db = await owner();
@@ -35,14 +35,16 @@ export async function GET(req: NextRequest) {
     if (orderSource !== "all") primaryQuery = primaryQuery.eq("order_source", orderSource);
     if (startDate) primaryQuery = primaryQuery.gte("issued_at", `${startDate}T00:00:00.000Z`);
     if (endDate) primaryQuery = primaryQuery.lte("issued_at", `${endDate}T23:59:59.999Z`);
-    if (search) {
-      const isNum = /^[0-9]+$/.test(search);
-      if (isNum) {
+    const parsedSearch = parseReportSearch(search);
+    if (parsedSearch.trimmed) {
+      if (parsedSearch.orderNumber !== null) {
         primaryQuery = primaryQuery.or(
-          `bill_number.ilike.%${search}%,order_number.eq.${search},customer_name.ilike.%${search}%`
+          `order_number.eq.${parsedSearch.orderNumber},bill_number.ilike.%${parsedSearch.trimmed}%,customer_name.ilike.%${parsedSearch.trimmed}%`
         );
       } else {
-        primaryQuery = primaryQuery.or(`bill_number.ilike.%${search}%,customer_name.ilike.%${search}%`);
+        primaryQuery = primaryQuery.or(
+          `bill_number.ilike.%${parsedSearch.trimmed}%,customer_name.ilike.%${parsedSearch.trimmed}%`
+        );
       }
     }
 
@@ -74,12 +76,11 @@ export async function GET(req: NextRequest) {
         if (status !== "all") fallback1 = fallback1.eq("status", status);
         if (startDate) fallback1 = fallback1.gte("issued_at", `${startDate}T00:00:00.000Z`);
         if (endDate) fallback1 = fallback1.lte("issued_at", `${endDate}T23:59:59.999Z`);
-        if (search) {
-          const isNum = /^[0-9]+$/.test(search);
-          if (isNum) {
-            fallback1 = fallback1.or(`bill_number.ilike.%${search}%,order_number.eq.${search}`);
+        if (parsedSearch.trimmed) {
+          if (parsedSearch.orderNumber !== null) {
+            fallback1 = fallback1.or(`order_number.eq.${parsedSearch.orderNumber},bill_number.ilike.%${parsedSearch.trimmed}%`);
           } else {
-            fallback1 = fallback1.ilike("bill_number", `%${search}%`);
+            fallback1 = fallback1.ilike("bill_number", `%${parsedSearch.trimmed}%`);
           }
         }
 
@@ -100,12 +101,11 @@ export async function GET(req: NextRequest) {
           if (status !== "all") fallback2 = fallback2.eq("status", status);
           if (startDate) fallback2 = fallback2.gte("issued_at", `${startDate}T00:00:00.000Z`);
           if (endDate) fallback2 = fallback2.lte("issued_at", `${endDate}T23:59:59.999Z`);
-          if (search) {
-            const isNum = /^[0-9]+$/.test(search);
-            if (isNum) {
-              fallback2 = fallback2.or(`bill_number.ilike.%${search}%,order_number.eq.${search}`);
+          if (parsedSearch.trimmed) {
+            if (parsedSearch.orderNumber !== null) {
+              fallback2 = fallback2.or(`order_number.eq.${parsedSearch.orderNumber},bill_number.ilike.%${parsedSearch.trimmed}%`);
             } else {
-              fallback2 = fallback2.ilike("bill_number", `%${search}%`);
+              fallback2 = fallback2.ilike("bill_number", `%${parsedSearch.trimmed}%`);
             }
           }
 
@@ -124,6 +124,33 @@ export async function GET(req: NextRequest) {
           rawBills = (res2.data || []) as unknown as Record<string, unknown>[];
           totalCount = res2.count ?? rawBills.length;
         }
+      }
+    }
+
+    // Check if an order exists in orders table when searching by order number but 0 bills were found
+    let unbilledOrder: {
+      id: string;
+      orderNumber: number;
+      status: string;
+      customerName?: string | null;
+      createdAt?: string;
+    } | null = null;
+
+    if (parsedSearch.orderNumber !== null && rawBills.length === 0) {
+      const { data: matchedOrder } = await db
+        .from("orders")
+        .select("id, order_number, status, customer_name, created_at")
+        .eq("order_number", parsedSearch.orderNumber)
+        .maybeSingle();
+
+      if (matchedOrder) {
+        unbilledOrder = {
+          id: matchedOrder.id,
+          orderNumber: matchedOrder.order_number,
+          status: matchedOrder.status,
+          customerName: matchedOrder.customer_name,
+          createdAt: matchedOrder.created_at,
+        };
       }
     }
 
@@ -175,6 +202,8 @@ export async function GET(req: NextRequest) {
       page,
       limit,
       isLegacySchema,
+      unbilledOrder,
+      searchedOrderNumber: parsedSearch.orderNumber,
       summary: {
         totalCount,
         issuedCount: issuedBills.length,

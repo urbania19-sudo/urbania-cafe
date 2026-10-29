@@ -547,7 +547,7 @@ export default function OrderBoard({
               onClick={() => setShowManualModal(true)}
               style={{ padding: '10px 20px', fontSize: 14 }}
             >
-              + Create Counter / Takeaway Order
+              + New Order
             </button>
             <button
               className="btn"
@@ -674,7 +674,7 @@ export default function OrderBoard({
             onClick={() => setShowManualModal(true)}
             style={{ fontSize: 13, padding: '8px 16px' }}
           >
-            + Counter / Takeaway Order
+            + New Order
           </button>
           <button
             className="btn"

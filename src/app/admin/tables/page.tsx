@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation';
+import AdminNav from '@/components/admin/AdminNav';
 import Link from 'next/link';
 import { authDb } from '@/lib/supabase/auth-server';
 import { tableUrl } from '@/lib/qr';
@@ -74,23 +75,7 @@ export default async function Tables() {
         </div>
       </header>
 
-      <nav className="admin-nav" aria-label="Owner navigation">
-        <Link className="chip" href="/admin">
-          Today’s service
-        </Link>
-        <Link className="chip" href="/admin/menu">
-          Menu & prices
-        </Link>
-        <Link className="chip" href="/admin/tables" style={{ background: 'var(--accent)', color: '#2b1b16', fontWeight: 700 }}>
-          Table QR codes
-        </Link>
-        <Link className="chip" href="/admin/settings">
-          Settings & FSSAI
-        </Link>
-        <Link className="chip" href="/admin/reports">
-          Audit & reports
-        </Link>
-      </nav>
+      <AdminNav activeTab="tables" />
 
       <section style={{ display: 'grid', gap: 12, marginTop: 12 }}>
         {(tables ?? []).map((t) => (

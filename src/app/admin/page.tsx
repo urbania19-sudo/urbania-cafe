@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { authDb } from '@/lib/supabase/auth-server';
 import LogoutButton from '@/components/auth/LogoutButton';
+import AdminNav from '@/components/admin/AdminNav';
 import { getDailyServiceMetrics, getTimezoneDateBounds } from '@/lib/reports';
 
 export const dynamic = 'force-dynamic';
@@ -121,29 +122,7 @@ export default async function Admin() {
           <LogoutButton />
         </div>
       </header>
-      <nav
-        className="admin-nav"
-        aria-label="Owner tools"
-      >
-        <Link className="chip" href="/admin/menu">
-          Menu &amp; prices
-        </Link>
-        <Link className="chip" href="/admin/tables">
-          Table QR codes
-        </Link>
-        <Link className="chip" href="/admin/settings">
-          Settings &amp; FSSAI
-        </Link>
-        <Link className="chip" href="/admin/reports">
-          Audit &amp; Reports
-        </Link>
-        <Link className="chip" href="/admin/credit-orders">
-          Admin Credit
-        </Link>
-        <Link className="chip" href="/staff">
-          Open staff queue
-        </Link>
-      </nav>
+      <AdminNav activeTab="today" />
       <section
         style={{
           display: 'grid',

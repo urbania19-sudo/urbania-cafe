@@ -28,6 +28,16 @@ const manualOrderSchema = z.object({
     )
     .min(1)
     .max(25),
+}).superRefine((data, ctx) => {
+  const isPlatform =
+    data.orderSource === 'swiggy' || data.orderSource === 'zomato' || data.orderSource === 'delivery_platform';
+  if (!isPlatform && data.serviceMode !== 'dine_in' && data.serviceMode !== 'takeaway') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Manual orders only support Dine-in and Takeaway service modes",
+      path: ["serviceMode"],
+    });
+  }
 });
 
 export async function POST(req: NextRequest) {

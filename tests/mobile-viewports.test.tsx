@@ -133,28 +133,21 @@ describe('Mobile Viewports (320px, 360px, 375px, 390px, 414px) Responsiveness', 
         expect(dialog.style.alignItems).toBe('flex-start');
         expect(dialog.style.overflowY).toBe('auto');
 
-        expect(screen.getByText('New Counter / Custom Order')).toBeInTheDocument();
+        expect(screen.getByText('New Order')).toBeInTheDocument();
 
-        // All 4 service mode buttons must be present and fully visible
+        // Only Dine-in and Takeaway service mode buttons must be present
         const dineInBtn = screen.getByRole('button', { name: /🪑 Dine-in/i });
         const takeawayBtn = screen.getByRole('button', { name: /🥡 Takeaway/i });
-        const counterBtn = screen.getByRole('button', { name: /🛎️ Counter/i });
-        const deliveryBtn = screen.getByRole('button', { name: /🛵 Delivery/i });
 
         expect(dineInBtn).toBeInTheDocument();
         expect(takeawayBtn).toBeInTheDocument();
-        expect(counterBtn).toBeInTheDocument();
-        expect(deliveryBtn).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /🛎️ Counter/i })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /🛵 Delivery/i })).not.toBeInTheDocument();
 
         // In Dine-in mode, Table selection is visible
         expect(screen.getByText('Select Table')).toBeInTheDocument();
 
-        // Switch to Counter mode
-        fireEvent.click(counterBtn);
-        // Table selection is hidden in Counter mode
-        expect(screen.queryByText('Select Table')).not.toBeInTheDocument();
-
-        // Switch to Takeaway mode
+        // Switch to Takeaway mode: table selection is omitted
         fireEvent.click(takeawayBtn);
         expect(screen.queryByText('Select Table')).not.toBeInTheDocument();
 
@@ -163,7 +156,7 @@ describe('Mobile Viewports (320px, 360px, 375px, 390px, 414px) Responsiveness', 
         expect(screen.getByText('Select Table')).toBeInTheDocument();
 
         // Add an item from catalogue
-        const addBtn = screen.getByRole('button', { name: '+ Add Item' });
+        const addBtn = screen.getByRole('button', { name: /Add Artisanal Wild Mushroom/i });
         fireEvent.click(addBtn);
 
         // Verify item is added to Selected Items
