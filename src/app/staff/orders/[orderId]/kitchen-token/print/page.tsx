@@ -7,6 +7,9 @@ import {
   type KitchenTicketOrderItem,
 } from '@/lib/thermal-canvas';
 import { computeKitchenTicketDelta, createFullReprintTicket } from '@/lib/kitchen-tickets';
+import { isPreviewDemoMode } from '@/lib/preview-demo';
+import PreviewDemoBanner from '@/components/demo/PreviewDemoBanner';
+import { findDemoKitchenTicketOrder } from '@/lib/demo-fixtures';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,6 +23,23 @@ export default async function KitchenTokenPrintPage({
   const { orderId } = await params;
   const { reprint, mode } = await searchParams;
   const isReprint = reprint === 'true' || mode === 'full';
+  const isDemo = isPreviewDemoMode();
+
+  // Preview Demo Mode
+  if (isDemo) {
+    const demoOrder = findDemoKitchenTicketOrder(orderId) || SAMPLE_KITCHEN_ORDER;
+    const orderToPrint = isReprint ? createFullReprintTicket(demoOrder) : demoOrder;
+    return (
+      <>
+        <PreviewDemoBanner />
+        <KitchenTokenPrintView
+          order={orderToPrint}
+          isReprint={isReprint}
+          ticketType={isReprint ? 'reprint' : orderToPrint.ticket_type || 'new'}
+        />
+      </>
+    );
+  }
 
   // Sample token for thermal printer testing (e.g. Fun Print MX11) without requiring auth or DB
   if (orderId === 'sample' || orderId === '00000000-0000-0000-0000-000000000000') {

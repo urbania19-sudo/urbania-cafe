@@ -1,9 +1,15 @@
 import { NextResponse } from 'next/server';
 import { owner } from '@/lib/owner';
+import { isPreviewDemoMode } from '@/lib/preview-demo';
+import { DEMO_ADMIN_USERS } from '@/lib/demo-fixtures';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
+  if (isPreviewDemoMode()) {
+    return NextResponse.json({ ok: true, admins: DEMO_ADMIN_USERS });
+  }
+
   const db = await owner();
   if (!db) {
     return NextResponse.json({ error: 'Unauthorized: Admin access required' }, { status: 401 });

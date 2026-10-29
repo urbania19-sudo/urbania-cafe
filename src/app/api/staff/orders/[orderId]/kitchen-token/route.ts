@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { authDb } from '@/lib/supabase/auth-server';
 import { computeKitchenTicketDelta } from '@/lib/kitchen-tickets';
 import type { KitchenTicketOrderItem } from '@/lib/thermal-canvas';
+import { isPreviewDemoMode } from '@/lib/preview-demo';
+import { DEMO_STAFF_ORDERS, DEMO_INITIAL_KOTS } from '@/lib/demo-fixtures';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,6 +15,43 @@ export async function GET(
   const { orderId } = await ctx.params;
   if (!z.string().uuid().safeParse(orderId).success) {
     return NextResponse.json({ error: 'Invalid order ID' }, { status: 400 });
+  }
+
+  if (isPreviewDemoMode()) {
+    const order = DEMO_STAFF_ORDERS.find((o) => o.id === orderId);
+    if (!order) {
+      return NextResponse.json({ error: 'Order not found' }, { status: 404 });
+    }
+    const currentItems = (order.order_items || []) as unknown as KitchenTicketOrderItem[];
+    const latestKot = DEMO_INITIAL_KOTS[orderId] || null;
+    const acknowledgedSnapshot = (latestKot?.full_order_snapshot || null) as unknown as KitchenTicketOrderItem[] | null;
+    const delta = computeKitchenTicketDelta(currentItems, acknowledgedSnapshot);
+    const rawTable = order.cafe_tables as { label: string } | null | undefined;
+    const tableLabel = rawTable?.label ?? null;
+
+    return NextResponse.json({
+      ok: true,
+      order: {
+        id: order.id,
+        order_number: order.order_number,
+        status: order.status,
+        customer_name: order.customer_name,
+        customer_note: order.customer_note,
+        guest_count: order.guest_count,
+        service_mode: order.service_mode,
+        table_label: tableLabel,
+        created_at: order.created_at,
+      },
+      latestAcknowledgedTicket: latestKot,
+      delta: {
+        ticketType: delta.ticketType,
+        hasAdditions: delta.hasAdditions,
+        deltaItems: delta.deltaItems,
+        totalCurrentItemsCount: delta.totalCurrentItemsCount,
+        addedItemsCount: delta.addedItemsCount,
+      },
+      currentItems,
+    });
   }
 
   const db = await authDb();

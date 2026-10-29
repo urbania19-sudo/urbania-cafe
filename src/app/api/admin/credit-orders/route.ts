@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { owner } from '@/lib/owner';
 import { enforcePreviewWriteGuard } from '@/lib/preview-guard';
 import { friendlyBillingError } from '@/lib/billing';
+import { isPreviewDemoMode } from '@/lib/preview-demo';
+import { DEMO_CREDIT_ORDERS } from '@/lib/demo-fixtures';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,6 +29,82 @@ const creditOrderCreateSchema = z.object({
 });
 
 export async function GET(req: NextRequest) {
+  if (isPreviewDemoMode()) {
+    const { searchParams } = new URL(req.url);
+    const adminUserId = searchParams.get('adminUserId')?.trim() || '';
+    const paymentStatus = searchParams.get('paymentStatus') || 'all';
+    const startDate = searchParams.get('startDate')?.trim() || '';
+    const endDate = searchParams.get('endDate')?.trim() || '';
+    const search = searchParams.get('search')?.trim() || '';
+
+    let orders = [...DEMO_CREDIT_ORDERS];
+    if (adminUserId && adminUserId !== 'all') {
+      orders = orders.filter((o) => o.admin_user_id === adminUserId);
+    }
+    if (paymentStatus && paymentStatus !== 'all') {
+      orders = orders.filter((o) => o.payment_status === paymentStatus);
+    }
+    if (startDate) {
+      orders = orders.filter((o) => o.created_at >= `${startDate}T00:00:00.000Z`);
+    }
+    if (endDate) {
+      orders = orders.filter((o) => o.created_at <= `${endDate}T23:59:59.999Z`);
+    }
+    if (search) {
+      const q = search.toLowerCase();
+      orders = orders.filter(
+        (o) =>
+          String(o.order_number).includes(q) ||
+          o.customer_name?.toLowerCase().includes(q) ||
+          o.customer_note?.toLowerCase().includes(q)
+      );
+    }
+
+    const summaryByAdmin: Record<string, { adminName: string; totalPaise: number; paidPaise: number; outstandingPaise: number; orderCount: number }> = {};
+    let overallTotal = 0;
+    let overallPaid = 0;
+    let overallOutstanding = 0;
+
+    for (const ord of orders) {
+      const aId = ord.admin_user_id || 'unknown';
+      const aName = ord.customer_name || 'Admin';
+      const total = ord.total_paise || 0;
+      const paid = ord.paid_paise || 0;
+      const outstanding = Math.max(0, total - paid);
+
+      if (!summaryByAdmin[aId]) {
+        summaryByAdmin[aId] = {
+          adminName: aName,
+          totalPaise: 0,
+          paidPaise: 0,
+          outstandingPaise: 0,
+          orderCount: 0,
+        };
+      }
+
+      summaryByAdmin[aId].totalPaise += total;
+      summaryByAdmin[aId].paidPaise += paid;
+      summaryByAdmin[aId].outstandingPaise += outstanding;
+      summaryByAdmin[aId].orderCount += 1;
+
+      overallTotal += total;
+      overallPaid += paid;
+      overallOutstanding += outstanding;
+    }
+
+    return NextResponse.json({
+      ok: true,
+      orders,
+      summary: {
+        totalOrders: orders.length,
+        overallTotalPaise: overallTotal,
+        overallPaidPaise: overallPaid,
+        overallOutstandingPaise: overallOutstanding,
+        byAdmin: summaryByAdmin,
+      },
+    });
+  }
+
   const db = await owner();
   if (!db) {
     return NextResponse.json({ error: 'Unauthorized: Admin access required' }, { status: 401 });
@@ -61,21 +139,24 @@ export async function GET(req: NextRequest) {
       query = query.lte('created_at', `${endDate}T23:59:59.999Z`);
     }
     if (search) {
-      const isNum = /^[0-9]+$/.test(search);
-      if (isNum) {
-        query = query.or(`order_number.eq.${search},customer_name.ilike.%${search}%`);
+      const orderNum = parseInt(search, 10);
+      if (!isNaN(orderNum)) {
+        query = query.or(`order_number.eq.${orderNum},customer_name.ilike.%${search}%,customer_note.ilike.%${search}%`);
       } else {
-        query = query.ilike('customer_name', `%${search}%`);
+        query = query.or(`customer_name.ilike.%${search}%,customer_note.ilike.%${search}%`);
       }
     }
 
     const { data: rawOrders, error } = await query;
     if (error) {
-      console.error('Error fetching admin credit orders:', error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      console.error('Failed to load admin credit orders:', error);
+      return NextResponse.json({ error: 'Failed to load admin credit orders' }, { status: 500 });
     }
 
-    const orders = rawOrders || [];
+    const orders = (rawOrders || []).map((o) => ({
+      ...o,
+      subtotal_paise: o.subtotal_paise ?? o.total_paise,
+    }));
 
     // Calculate aggregated balances per admin
     const summaryByAdmin: Record<string, { adminName: string; totalPaise: number; paidPaise: number; outstandingPaise: number; orderCount: number }> = {};

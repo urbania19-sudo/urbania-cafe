@@ -2,6 +2,8 @@ import MenuClient from '@/components/menu/MenuClient';
 import { demoCategories, demoItems, demoTable } from '@/lib/demo-menu';
 import { adminDb } from '@/lib/supabase/server';
 import { getMenuCatalog } from '@/lib/menu-catalog';
+import { isPreviewDemoMode } from '@/lib/preview-demo';
+import { DEMO_TABLES } from '@/lib/demo-fixtures';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,6 +30,22 @@ export default async function MenuPage({
         items={demoItems}
       />
     );
+  }
+
+  if (isPreviewDemoMode() || tableToken.startsWith('demo-')) {
+    const demoT = DEMO_TABLES.find(
+      (t) => t.qr_token === tableToken || (tableToken === 'demo-t1' && t.table_number === 1)
+    );
+    if (demoT) {
+      return (
+        <MenuClient
+          demo
+          table={{ label: demoT.label, qr_token: demoT.qr_token }}
+          categories={demoCategories}
+          items={demoItems}
+        />
+      );
+    }
   }
 
   if (

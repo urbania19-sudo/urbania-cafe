@@ -1,10 +1,15 @@
 import { redirect } from 'next/navigation';
 import { authDb } from '@/lib/supabase/auth-server';
 import LoginForm from '@/components/auth/LoginForm';
+import { isPreviewDemoMode } from '@/lib/preview-demo';
 
 export const dynamic = 'force-dynamic';
 
 export default async function AdminLogin() {
+  if (isPreviewDemoMode()) {
+    redirect('/admin');
+  }
+
   let shouldRedirect = false;
   try {
     const db = await authDb();

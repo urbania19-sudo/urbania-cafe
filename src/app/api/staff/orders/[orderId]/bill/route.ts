@@ -3,6 +3,8 @@ import { z } from "zod";
 import { authDb } from "@/lib/supabase/auth-server";
 import { friendlyBillingError } from "@/lib/billing";
 import { enforcePreviewWriteGuard } from "@/lib/preview-guard";
+import { isPreviewDemoMode } from "@/lib/preview-demo";
+import { DEMO_BILLS } from "@/lib/demo-fixtures";
 
 const billRequestSchema = z.object({
   discount_type: z.enum(["fixed", "percentage"]).optional().nullable(),
@@ -20,6 +22,14 @@ export async function GET(
   const { orderId } = await ctx.params;
   if (!z.string().uuid().safeParse(orderId).success) {
     return NextResponse.json({ error: "Invalid order ID" }, { status: 400 });
+  }
+
+  if (isPreviewDemoMode()) {
+    const bill = DEMO_BILLS.find((b) => b.order_id === orderId);
+    if (!bill) {
+      return NextResponse.json({ error: "Order bill not found" }, { status: 404 });
+    }
+    return NextResponse.json({ ok: true, bill });
   }
 
   const db = await authDb();
