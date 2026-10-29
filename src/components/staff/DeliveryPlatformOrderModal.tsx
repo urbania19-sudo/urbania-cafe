@@ -224,14 +224,23 @@ export default function DeliveryPlatformOrderModal({
     <div
       style={{
         position: 'fixed',
-        inset: 0,
-        backgroundColor: 'rgba(0,0,0,0.75)',
-        backdropFilter: 'blur(3px)',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        width: '100%',
+        height: '100%',
+        backgroundColor: 'rgba(0,0,0,0.85)',
+        backdropFilter: 'blur(4px)',
+        WebkitBackdropFilter: 'blur(4px)',
         display: 'flex',
-        alignItems: 'center',
+        alignItems: 'flex-start',
         justifyContent: 'center',
-        padding: 16,
-        zIndex: 100,
+        padding: 'calc(16px + env(safe-area-inset-top, 0px)) 12px calc(24px + env(safe-area-inset-bottom, 0px)) 12px',
+        zIndex: 1000,
+        boxSizing: 'border-box',
+        overflowY: 'auto',
+        WebkitOverflowScrolling: 'touch',
       }}
       onClick={(e) => {
         if (e.target === e.currentTarget && !submitting) onClose();
@@ -242,13 +251,13 @@ export default function DeliveryPlatformOrderModal({
         style={{
           width: '100%',
           maxWidth: 640,
-          maxHeight: '92vh',
           display: 'flex',
           flexDirection: 'column',
           padding: '24px 20px',
-          overflow: 'hidden',
-          boxShadow: '0 12px 36px rgba(0,0,0,0.5)',
+          boxShadow: '0 20px 40px rgba(0,0,0,0.6)',
           border: '1px solid var(--line)',
+          margin: 'auto 0',
+          boxSizing: 'border-box',
         }}
       >
         {/* Header */}
@@ -288,8 +297,8 @@ export default function DeliveryPlatformOrderModal({
           </div>
         )}
 
-        {/* Scrollable Content */}
-        <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16, paddingRight: 4 }}>
+        {/* Content Body */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {/* Platform Selector & Order Ref */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div>

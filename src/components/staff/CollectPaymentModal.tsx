@@ -75,13 +75,23 @@ export default function CollectPaymentModal({
       aria-modal="true"
       style={{
         position: 'fixed',
-        inset: 0,
-        backgroundColor: 'rgba(0,0,0,0.7)',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        width: '100%',
+        height: '100%',
+        backgroundColor: 'rgba(0,0,0,0.85)',
+        backdropFilter: 'blur(4px)',
+        WebkitBackdropFilter: 'blur(4px)',
         display: 'flex',
-        alignItems: 'center',
+        alignItems: 'flex-start',
         justifyContent: 'center',
-        padding: 16,
-        zIndex: 50,
+        padding: 'calc(16px + env(safe-area-inset-top, 0px)) 12px calc(24px + env(safe-area-inset-bottom, 0px)) 12px',
+        zIndex: 1000,
+        boxSizing: 'border-box',
+        overflowY: 'auto',
+        WebkitOverflowScrolling: 'touch',
       }}
     >
       <div
@@ -95,6 +105,8 @@ export default function CollectPaymentModal({
           border: '1px solid var(--line, #3a322c)',
           color: 'var(--ink, #f3eae1)',
           boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
+          margin: 'auto 0',
+          boxSizing: 'border-box',
         }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>

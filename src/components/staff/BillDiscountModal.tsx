@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { calculateBillDiscount, type DiscountType } from '@/lib/billing';
 
 export interface BillConfirmPayload {
@@ -103,6 +103,16 @@ export default function BillDiscountModal({
     }
   }
 
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape' && !submitting) {
+        onClose();
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose, submitting]);
+
   return (
     <div
       role="dialog"
@@ -113,29 +123,54 @@ export default function BillDiscountModal({
       }}
       style={{
         position: 'fixed',
-        inset: 0,
-        background: 'rgba(0,0,0,0.75)',
-        display: 'grid',
-        placeItems: 'center',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        width: '100%',
+        height: '100%',
+        background: 'rgba(0,0,0,0.85)',
+        backdropFilter: 'blur(4px)',
+        WebkitBackdropFilter: 'blur(4px)',
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'flex-start',
         zIndex: 9998,
-        padding: 16,
+        padding: 'calc(16px + env(safe-area-inset-top, 0px)) 12px calc(24px + env(safe-area-inset-bottom, 0px)) 12px',
+        boxSizing: 'border-box',
+        overflowY: 'auto',
+        WebkitOverflowScrolling: 'touch',
       }}
     >
       <div
         className="card"
         style={{
-          width: 'min(100%, 460px)',
-          maxHeight: '90vh',
-          overflowY: 'auto',
-          padding: 24,
+          width: '100%',
+          maxWidth: 480,
+          display: 'flex',
+          flexDirection: 'column',
           background: 'var(--card, #37241d)',
-          display: 'grid',
-          gap: 16,
-          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
+          border: '1px solid var(--line, #422a21)',
+          borderRadius: 12,
+          boxShadow: '0 20px 40px rgba(0, 0, 0, 0.6)',
+          boxSizing: 'border-box',
+          overflow: 'hidden',
+          margin: 'auto 0',
         }}
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h2 style={{ fontFamily: 'Georgia, serif', margin: 0, fontSize: '1.4rem' }}>
+        {/* Header */}
+        <div
+          style={{
+            flexShrink: 0,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            padding: '16px 20px',
+            borderBottom: '1px solid var(--line, #ffffff24)',
+            background: 'var(--card, #37241d)',
+          }}
+        >
+          <h2 style={{ fontFamily: 'Georgia, serif', margin: 0, fontSize: '1.25rem', lineHeight: 1.3, fontWeight: 700 }}>
             Issue Bill · Order #{orderNumber}
           </h2>
           <button
@@ -143,17 +178,27 @@ export default function BillDiscountModal({
             className="chip"
             onClick={onClose}
             disabled={submitting}
-            style={{ fontSize: 12, padding: '4px 8px' }}
+            style={{ minHeight: 34, minWidth: 34, padding: '4px 10px', fontSize: 13, cursor: 'pointer' }}
+            aria-label="Close dialog"
           >
             ✕
           </button>
         </div>
 
-        {error && (
-          <p role="alert" style={{ color: '#ef4444', fontSize: 13, margin: 0, borderLeft: '3px solid #ef4444', paddingLeft: 8 }}>
-            {error}
-          </p>
-        )}
+        {/* Form Body */}
+        <div
+          style={{
+            padding: '16px 20px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 16,
+          }}
+        >
+          {error && (
+            <p role="alert" style={{ color: '#ef4444', fontSize: 13, margin: 0, borderLeft: '3px solid #ef4444', paddingLeft: 8 }}>
+              {error}
+            </p>
+          )}
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', borderBottom: '1px solid var(--line, #ffffff24)', paddingBottom: 10 }}>
           <span className="muted">Order Amount:</span>
@@ -334,12 +379,27 @@ export default function BillDiscountModal({
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
+        </div>
+
+        {/* Footer - Fixed Action Buttons */}
+        <div
+          style={{
+            flexShrink: 0,
+            display: 'flex',
+            gap: 10,
+            justifyContent: 'flex-end',
+            alignItems: 'center',
+            padding: '14px 20px',
+            borderTop: '1px solid var(--line, #ffffff24)',
+            background: 'var(--card, #37241d)',
+          }}
+        >
           <button
             type="button"
             className="chip"
             disabled={submitting}
             onClick={onClose}
+            style={{ minHeight: 42, padding: '8px 16px', fontWeight: 600, cursor: 'pointer' }}
           >
             Cancel
           </button>
@@ -348,7 +408,7 @@ export default function BillDiscountModal({
             className="btn"
             disabled={submitting}
             onClick={handleGenerate}
-            style={{ fontWeight: 700 }}
+            style={{ minHeight: 42, padding: '8px 20px', fontWeight: 700, cursor: submitting ? 'not-allowed' : 'pointer' }}
           >
             {submitting
               ? 'Processing…'

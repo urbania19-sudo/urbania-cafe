@@ -128,6 +128,21 @@ export default function AdminCreditLedger({
       .catch((err) => console.error('Failed to load admins:', err));
   }, [newOrderAdminId]);
 
+  // Escape key handler for accessible modal dismissal
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        if (showCreateModal && !submittingOrder) {
+          setShowCreateModal(false);
+        } else if (settlingOrder && !submittingSettle) {
+          setSettlingOrder(null);
+        }
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showCreateModal, settlingOrder, submittingOrder, submittingSettle]);
+
   // Load orders & refresh state
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -627,117 +642,200 @@ export default function AdminCreditLedger({
         <div
           role="dialog"
           aria-modal="true"
+          aria-label="Record Payment Settlement"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !submittingSettle) setSettlingOrder(null);
+          }}
           style={{
             position: 'fixed',
-            inset: 0,
-            background: 'rgba(0,0,0,0.7)',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            width: '100%',
+            height: '100%',
+            background: 'rgba(0,0,0,0.85)',
+            backdropFilter: 'blur(4px)',
+            WebkitBackdropFilter: 'blur(4px)',
             display: 'flex',
-            alignItems: 'center',
+            alignItems: 'flex-start',
             justifyContent: 'center',
             zIndex: 9999,
-            padding: 16,
+            padding: 'calc(16px + env(safe-area-inset-top, 0px)) 12px calc(24px + env(safe-area-inset-bottom, 0px)) 12px',
+            boxSizing: 'border-box',
+            overflowY: 'auto',
+            WebkitOverflowScrolling: 'touch',
           }}
         >
-          <div className="card" style={{ maxWidth: 420, width: '100%', padding: 24 }}>
-            <h3 style={{ fontFamily: 'Georgia,serif', margin: '0 0 8px' }}>
-              Record Payment Settlement
-            </h3>
-            <p className="muted" style={{ fontSize: 13, margin: '0 0 16px' }}>
-              Order #{settlingOrder.order_number} · {settlingOrder.customer_name}
-            </p>
-
-            <div style={{ background: 'rgba(255,255,255,0.04)', padding: 12, borderRadius: 6, marginBottom: 16 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 4 }}>
-                <span className="muted">Order Total:</span>
-                <span>₹{(settlingOrder.total_paise / 100).toFixed(2)}</span>
+          <div
+            className="card"
+            style={{
+              maxWidth: 440,
+              width: '100%',
+              display: 'flex',
+              flexDirection: 'column',
+              background: 'var(--card, #37241d)',
+              border: '1px solid var(--line, #422a21)',
+              borderRadius: 12,
+              boxShadow: '0 20px 40px rgba(0, 0, 0, 0.6)',
+              boxSizing: 'border-box',
+              overflow: 'hidden',
+              margin: 'auto 0',
+            }}
+          >
+            {/* Header */}
+            <div
+              style={{
+                flexShrink: 0,
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '16px 20px',
+                borderBottom: '1px solid var(--line, #ffffff24)',
+                background: 'var(--card, #37241d)',
+              }}
+            >
+              <div>
+                <h3 style={{ fontFamily: 'Georgia,serif', margin: 0, fontSize: '1.25rem', lineHeight: 1.3, fontWeight: 700 }}>
+                  Record Payment Settlement
+                </h3>
+                <p className="muted" style={{ fontSize: 12, margin: '3px 0 0' }}>
+                  Order #{settlingOrder.order_number} · {settlingOrder.customer_name}
+                </p>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 4 }}>
-                <span className="muted">Already Settled:</span>
-                <span style={{ color: '#10b981' }}>₹{(settlingOrder.paid_paise / 100).toFixed(2)}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, fontWeight: 700 }}>
-                <span>Remaining Balance:</span>
-                <span style={{ color: '#f59e0b' }}>
-                  ₹{((settlingOrder.total_paise - settlingOrder.paid_paise) / 100).toFixed(2)}
-                </span>
-              </div>
+              <button
+                type="button"
+                className="chip"
+                onClick={() => setSettlingOrder(null)}
+                disabled={submittingSettle}
+                style={{ minHeight: 34, minWidth: 34, padding: '4px 10px', fontSize: 13, cursor: 'pointer' }}
+                aria-label="Close dialog"
+              >
+                ✕
+              </button>
             </div>
 
-            <form onSubmit={handleSettle} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div>
-                <label style={{ display: 'block', fontSize: 12, marginBottom: 4, fontWeight: 600 }}>
-                  Payment Amount (₹)
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  max={((settlingOrder.total_paise - settlingOrder.paid_paise) / 100).toFixed(2)}
-                  value={settleAmountRupees}
-                  onChange={(e) => setSettleAmountRupees(e.target.value)}
-                  required
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    borderRadius: 6,
-                    border: '1px solid var(--line)',
-                    background: 'transparent',
-                    color: 'inherit',
-                    fontSize: 16,
-                  }}
-                />
+            <form
+              onSubmit={handleSettle}
+              style={{ display: 'flex', flexDirection: 'column', margin: 0 }}
+            >
+              {/* Form Body */}
+              <div
+                style={{
+                  padding: '16px 20px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 14,
+                }}
+              >
+                <div style={{ background: 'rgba(255,255,255,0.04)', padding: 12, borderRadius: 6 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 4 }}>
+                    <span className="muted">Order Total:</span>
+                    <span>₹{(settlingOrder.total_paise / 100).toFixed(2)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 4 }}>
+                    <span className="muted">Already Settled:</span>
+                    <span style={{ color: '#10b981' }}>₹{(settlingOrder.paid_paise / 100).toFixed(2)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, fontWeight: 700 }}>
+                    <span>Remaining Balance:</span>
+                    <span style={{ color: '#f59e0b' }}>
+                      ₹{((settlingOrder.total_paise - settlingOrder.paid_paise) / 100).toFixed(2)}
+                    </span>
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, marginBottom: 4, fontWeight: 600 }}>
+                    Payment Amount (₹)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    max={((settlingOrder.total_paise - settlingOrder.paid_paise) / 100).toFixed(2)}
+                    value={settleAmountRupees}
+                    onChange={(e) => setSettleAmountRupees(e.target.value)}
+                    required
+                    style={{
+                      width: '100%',
+                      padding: '8px 12px',
+                      borderRadius: 6,
+                      border: '1px solid var(--line)',
+                      background: 'transparent',
+                      color: 'inherit',
+                      fontSize: 16,
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, marginBottom: 4, fontWeight: 600 }}>
+                    Payment Method
+                  </label>
+                  <select
+                    value={settleMethod}
+                    onChange={(e) => setSettleMethod(e.target.value as typeof settleMethod)}
+                    style={{
+                      width: '100%',
+                      padding: '8px 10px',
+                      borderRadius: 6,
+                      border: '1px solid var(--line)',
+                      background: '#1a1a1a',
+                      color: 'inherit',
+                      boxSizing: 'border-box',
+                    }}
+                  >
+                    <option value="upi">UPI (GPay, PhonePe, Paytm)</option>
+                    <option value="cash">Cash Received</option>
+                    <option value="card">Debit / Credit Card</option>
+                    <option value="bank_transfer">Bank Transfer (NEFT/IMPS)</option>
+                    <option value="other">Other / Reconciliation</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, marginBottom: 4, fontWeight: 600 }}>
+                    Notes / Reference (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. UTR / Transaction ID or cash note"
+                    value={settleNotes}
+                    onChange={(e) => setSettleNotes(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '8px 12px',
+                      borderRadius: 6,
+                      border: '1px solid var(--line)',
+                      background: 'transparent',
+                      color: 'inherit',
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                </div>
               </div>
 
-              <div>
-                <label style={{ display: 'block', fontSize: 12, marginBottom: 4, fontWeight: 600 }}>
-                  Payment Method
-                </label>
-                <select
-                  value={settleMethod}
-                  onChange={(e) => setSettleMethod(e.target.value as typeof settleMethod)}
-                  style={{
-                    width: '100%',
-                    padding: '8px 10px',
-                    borderRadius: 6,
-                    border: '1px solid var(--line)',
-                    background: '#1a1a1a',
-                    color: 'inherit',
-                  }}
-                >
-                  <option value="upi">UPI (GPay, PhonePe, Paytm)</option>
-                  <option value="cash">Cash Received</option>
-                  <option value="card">Debit / Credit Card</option>
-                  <option value="bank_transfer">Bank Transfer (NEFT/IMPS)</option>
-                  <option value="other">Other / Reconciliation</option>
-                </select>
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: 12, marginBottom: 4, fontWeight: 600 }}>
-                  Notes / Reference (Optional)
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. UTR / Transaction ID or cash note"
-                  value={settleNotes}
-                  onChange={(e) => setSettleNotes(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    borderRadius: 6,
-                    border: '1px solid var(--line)',
-                    background: 'transparent',
-                    color: 'inherit',
-                  }}
-                />
-              </div>
-
-              <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 10 }}>
+              {/* Fixed Footer */}
+              <div
+                style={{
+                  flexShrink: 0,
+                  display: 'flex',
+                  gap: 10,
+                  justifyContent: 'flex-end',
+                  alignItems: 'center',
+                  padding: '14px 20px',
+                  borderTop: '1px solid var(--line, #ffffff24)',
+                  background: 'var(--card, #37241d)',
+                }}
+              >
                 <button
                   type="button"
                   className="chip"
                   onClick={() => setSettlingOrder(null)}
                   disabled={submittingSettle}
+                  style={{ minHeight: 42, padding: '8px 16px', fontWeight: 600, cursor: 'pointer' }}
                 >
                   Cancel
                 </button>
@@ -745,6 +843,7 @@ export default function AdminCreditLedger({
                   type="submit"
                   className="btn"
                   disabled={submittingSettle}
+                  style={{ minHeight: 42, padding: '8px 20px', fontWeight: 700, cursor: submittingSettle ? 'not-allowed' : 'pointer' }}
                 >
                   {submittingSettle ? 'Recording…' : 'Record Settlement'}
                 </button>
@@ -759,15 +858,29 @@ export default function AdminCreditLedger({
         <div
           role="dialog"
           aria-modal="true"
+          aria-label="New Admin Credit Order"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !submittingOrder) setShowCreateModal(false);
+          }}
           style={{
             position: 'fixed',
-            inset: 0,
-            background: 'rgba(0,0,0,0.7)',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            width: '100%',
+            height: '100%',
+            background: 'rgba(0,0,0,0.85)',
+            backdropFilter: 'blur(4px)',
+            WebkitBackdropFilter: 'blur(4px)',
             display: 'flex',
-            alignItems: 'center',
+            alignItems: 'flex-start',
             justifyContent: 'center',
             zIndex: 9999,
-            padding: 16,
+            padding: 'calc(16px + env(safe-area-inset-top, 0px)) 12px calc(24px + env(safe-area-inset-bottom, 0px)) 12px',
+            boxSizing: 'border-box',
+            overflowY: 'auto',
+            WebkitOverflowScrolling: 'touch',
           }}
         >
           <div
@@ -775,221 +888,280 @@ export default function AdminCreditLedger({
             style={{
               maxWidth: 620,
               width: '100%',
-              maxHeight: '90vh',
-              overflowY: 'auto',
-              padding: 24,
+              display: 'flex',
+              flexDirection: 'column',
+              background: 'var(--card, #37241d)',
+              border: '1px solid var(--line, #422a21)',
+              borderRadius: 12,
+              boxShadow: '0 20px 40px rgba(0, 0, 0, 0.6)',
+              boxSizing: 'border-box',
+              overflow: 'hidden',
+              margin: 'auto 0',
             }}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <h3 style={{ fontFamily: 'Georgia,serif', margin: 0 }}>
+            {/* Header */}
+            <div
+              style={{
+                flexShrink: 0,
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '16px 20px',
+                borderBottom: '1px solid var(--line, #ffffff24)',
+                background: 'var(--card, #37241d)',
+              }}
+            >
+              <h3 style={{ fontFamily: 'Georgia,serif', margin: 0, fontSize: '1.25rem', lineHeight: 1.3, fontWeight: 700 }}>
                 New Admin Credit Order
               </h3>
-              <button className="chip" onClick={() => setShowCreateModal(false)}>✕</button>
+              <button
+                type="button"
+                className="chip"
+                onClick={() => setShowCreateModal(false)}
+                disabled={submittingOrder}
+                style={{ minHeight: 34, minWidth: 34, padding: '4px 10px', fontSize: 13, cursor: 'pointer' }}
+                aria-label="Close dialog"
+              >
+                ✕
+              </button>
             </div>
 
-            <form onSubmit={handleCreateOrder} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <div>
-                <label style={{ display: 'block', fontSize: 13, marginBottom: 4, fontWeight: 600 }}>
-                  Select Administrator
-                </label>
-                <select
-                  value={newOrderAdminId}
-                  onChange={(e) => setNewOrderAdminId(e.target.value)}
-                  required
-                  style={{
-                    width: '100%',
-                    padding: '9px 12px',
-                    borderRadius: 6,
-                    border: '1px solid var(--line)',
-                    background: '#1a1a1a',
-                    color: 'inherit',
-                    fontSize: 14,
-                  }}
-                >
-                  {admins.map((a) => (
-                    <option key={a.user_id} value={a.user_id}>
-                      {a.display_name} ({a.role} · {a.email})
-                    </option>
-                  ))}
-                </select>
-              </div>
+            <form
+              onSubmit={handleCreateOrder}
+              style={{ display: 'flex', flexDirection: 'column', margin: 0 }}
+            >
+              {/* Form Body */}
+              <div
+                style={{
+                  padding: '16px 20px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 16,
+                }}
+              >
+                <div>
+                  <label style={{ display: 'block', fontSize: 13, marginBottom: 4, fontWeight: 600 }}>
+                    Select Administrator
+                  </label>
+                  <select
+                    value={newOrderAdminId}
+                    onChange={(e) => setNewOrderAdminId(e.target.value)}
+                    required
+                    style={{
+                      width: '100%',
+                      padding: '9px 12px',
+                      borderRadius: 6,
+                      border: '1px solid var(--line)',
+                      background: '#1a1a1a',
+                      color: 'inherit',
+                      fontSize: 14,
+                      boxSizing: 'border-box',
+                    }}
+                  >
+                    {admins.map((a) => (
+                      <option key={a.user_id} value={a.user_id}>
+                        {a.display_name} ({a.role} · {a.email})
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
-              {/* Dish Selector */}
-              <div>
-                <label style={{ display: 'block', fontSize: 13, marginBottom: 6, fontWeight: 600 }}>
-                  Add Menu Dishes
-                </label>
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
-                    gap: 8,
-                    maxHeight: 180,
-                    overflowY: 'auto',
-                    border: '1px solid var(--line)',
-                    borderRadius: 6,
-                    padding: 8,
-                  }}
-                >
-                  {menuItems.map((item) => (
+                {/* Dish Selector */}
+                <div>
+                  <label style={{ display: 'block', fontSize: 13, marginBottom: 6, fontWeight: 600 }}>
+                    Add Menu Dishes
+                  </label>
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))',
+                      gap: 8,
+                      maxHeight: 180,
+                      overflowY: 'auto',
+                      overscrollBehavior: 'contain',
+                      WebkitOverflowScrolling: 'touch',
+                      border: '1px solid var(--line)',
+                      borderRadius: 6,
+                      padding: 8,
+                    }}
+                  >
+                    {menuItems.map((item) => (
+                      <button
+                        type="button"
+                        key={item.id}
+                        onClick={() => addItemToCart(item)}
+                        style={{
+                          padding: '6px 8px',
+                          borderRadius: 6,
+                          border: '1px solid var(--line)',
+                          background: 'rgba(255,255,255,0.02)',
+                          color: 'inherit',
+                          cursor: 'pointer',
+                          textAlign: 'left',
+                          fontSize: 12,
+                        }}
+                      >
+                        <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {item.name}
+                        </div>
+                        <span className="muted">₹{(item.price_paise / 100).toFixed(2)}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Custom Item Trigger */}
+                <div>
+                  {!showCustomItem ? (
                     <button
                       type="button"
-                      key={item.id}
-                      onClick={() => addItemToCart(item)}
-                      style={{
-                        padding: '6px 8px',
-                        borderRadius: 6,
-                        border: '1px solid var(--line)',
-                        background: 'rgba(255,255,255,0.02)',
-                        color: 'inherit',
-                        cursor: 'pointer',
-                        textAlign: 'left',
-                        fontSize: 12,
-                      }}
+                      className="chip"
+                      onClick={() => setShowCustomItem(true)}
+                      style={{ fontSize: 12, minHeight: 34 }}
                     >
-                      <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {item.name}
-                      </div>
-                      <span className="muted">₹{(item.price_paise / 100).toFixed(2)}</span>
+                      + Add Custom Dish / Item
                     </button>
-                  ))}
+                  ) : (
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <input
+                        type="text"
+                        placeholder="Item name"
+                        value={customName}
+                        onChange={(e) => setCustomName(e.target.value)}
+                        style={{ flex: '1 1 140px', minWidth: 120, padding: '8px 10px', borderRadius: 6, border: '1px solid var(--line)', background: 'transparent', color: 'inherit', boxSizing: 'border-box' }}
+                      />
+                      <input
+                        type="number"
+                        placeholder="Price (₹)"
+                        value={customPriceRupees}
+                        onChange={(e) => setCustomPriceRupees(e.target.value)}
+                        style={{ width: 90, padding: '8px 10px', borderRadius: 6, border: '1px solid var(--line)', background: 'transparent', color: 'inherit', boxSizing: 'border-box' }}
+                      />
+                      <button type="button" className="btn" onClick={addCustomItemToCart} style={{ fontSize: 12, padding: '8px 14px', minHeight: 34 }}>
+                        Add
+                      </button>
+                      <button type="button" className="chip" onClick={() => setShowCustomItem(false)} style={{ minHeight: 34 }}>Cancel</button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Selected Items Cart */}
+                <div>
+                  <label style={{ display: 'block', fontSize: 13, marginBottom: 4, fontWeight: 600 }}>
+                    Selected Items ({selectedCartItems.length})
+                  </label>
+                  {selectedCartItems.length === 0 ? (
+                    <div className="muted" style={{ fontSize: 13, padding: 12, border: '1px dashed var(--line)', borderRadius: 6, textAlign: 'center' }}>
+                      No items selected yet. Tap menu dishes above to add them.
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {selectedCartItems.map((cartItem, idx) => (
+                        <div
+                          key={idx}
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            padding: '6px 10px',
+                            border: '1px solid var(--line)',
+                            borderRadius: 6,
+                            fontSize: 13,
+                          }}
+                        >
+                          <div style={{ flex: 1, minWidth: 0, paddingRight: 8 }}>
+                            <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {cartItem.name} {cartItem.isCustom && <span className="chip" style={{ fontSize: 10, padding: '1px 4px' }}>CUSTOM</span>}
+                            </div>
+                            <div className="muted" style={{ fontSize: 11 }}>
+                              ₹{(cartItem.unitPricePaise / 100).toFixed(2)} each
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                            <button
+                              type="button"
+                              className="chip"
+                              onClick={() => updateCartQty(idx, -1)}
+                              style={{ padding: '2px 8px', minWidth: 28, minHeight: 28 }}
+                            >
+                              -
+                            </button>
+                            <span style={{ fontWeight: 700, minWidth: 20, textAlign: 'center' }}>
+                              {cartItem.quantity}
+                            </span>
+                            <button
+                              type="button"
+                              className="chip"
+                              onClick={() => updateCartQty(idx, 1)}
+                              style={{ padding: '2px 8px', minWidth: 28, minHeight: 28 }}
+                            >
+                              +
+                            </button>
+                            <span style={{ minWidth: 65, textAlign: 'right', fontWeight: 600 }}>
+                              ₹{((cartItem.unitPricePaise * cartItem.quantity) / 100).toFixed(2)}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => removeCartItem(idx)}
+                              style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', padding: 4 }}
+                              aria-label={`Remove ${cartItem.name}`}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 4px 0', fontWeight: 700, fontSize: 16 }}>
+                        <span>Order Total:</span>
+                        <span style={{ color: '#f59e0b' }}>₹{(cartTotalPaise / 100).toFixed(2)}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, marginBottom: 4, fontWeight: 600 }}>
+                    Order Notes (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Tasting note or internal memo"
+                    value={newOrderNote}
+                    onChange={(e) => setNewOrderNote(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '8px 12px',
+                      borderRadius: 6,
+                      border: '1px solid var(--line)',
+                      background: 'transparent',
+                      color: 'inherit',
+                      boxSizing: 'border-box',
+                    }}
+                  />
                 </div>
               </div>
 
-              {/* Custom Item Trigger */}
-              <div>
-                {!showCustomItem ? (
-                  <button
-                    type="button"
-                    className="chip"
-                    onClick={() => setShowCustomItem(true)}
-                    style={{ fontSize: 12 }}
-                  >
-                    + Add Custom Dish / Item
-                  </button>
-                ) : (
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    <input
-                      type="text"
-                      placeholder="Item name"
-                      value={customName}
-                      onChange={(e) => setCustomName(e.target.value)}
-                      style={{ flex: 2, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--line)', background: 'transparent', color: 'inherit' }}
-                    />
-                    <input
-                      type="number"
-                      placeholder="Price (₹)"
-                      value={customPriceRupees}
-                      onChange={(e) => setCustomPriceRupees(e.target.value)}
-                      style={{ width: 90, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--line)', background: 'transparent', color: 'inherit' }}
-                    />
-                    <button type="button" className="btn" onClick={addCustomItemToCart} style={{ fontSize: 12, padding: '6px 12px' }}>
-                      Add
-                    </button>
-                    <button type="button" className="chip" onClick={() => setShowCustomItem(false)}>Cancel</button>
-                  </div>
-                )}
-              </div>
-
-              {/* Selected Items Cart */}
-              <div>
-                <label style={{ display: 'block', fontSize: 13, marginBottom: 4, fontWeight: 600 }}>
-                  Selected Items ({selectedCartItems.length})
-                </label>
-                {selectedCartItems.length === 0 ? (
-                  <div className="muted" style={{ fontSize: 13, padding: 12, border: '1px dashed var(--line)', borderRadius: 6, textAlign: 'center' }}>
-                    No items selected yet. Tap menu dishes above to add them.
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    {selectedCartItems.map((cartItem, idx) => (
-                      <div
-                        key={idx}
-                        style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          padding: '6px 10px',
-                          border: '1px solid var(--line)',
-                          borderRadius: 6,
-                          fontSize: 13,
-                        }}
-                      >
-                        <div style={{ flex: 1 }}>
-                          <b>{cartItem.name}</b> {cartItem.isCustom && <span className="chip" style={{ fontSize: 10, padding: '1px 4px' }}>CUSTOM</span>}
-                          <div className="muted" style={{ fontSize: 11 }}>
-                            ₹{(cartItem.unitPricePaise / 100).toFixed(2)} each
-                          </div>
-                        </div>
-
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <button
-                            type="button"
-                            className="chip"
-                            onClick={() => updateCartQty(idx, -1)}
-                            style={{ padding: '2px 8px' }}
-                          >
-                            -
-                          </button>
-                          <span style={{ fontWeight: 700, minWidth: 20, textAlign: 'center' }}>
-                            {cartItem.quantity}
-                          </span>
-                          <button
-                            type="button"
-                            className="chip"
-                            onClick={() => updateCartQty(idx, 1)}
-                            style={{ padding: '2px 8px' }}
-                          >
-                            +
-                          </button>
-                          <span style={{ minWidth: 65, textAlign: 'right', fontWeight: 600 }}>
-                            ₹{((cartItem.unitPricePaise * cartItem.quantity) / 100).toFixed(2)}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => removeCartItem(idx)}
-                            style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', padding: 4 }}
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-
-                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 4px 0', fontWeight: 700, fontSize: 16 }}>
-                      <span>Order Total:</span>
-                      <span style={{ color: '#f59e0b' }}>₹{(cartTotalPaise / 100).toFixed(2)}</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: 12, marginBottom: 4, fontWeight: 600 }}>
-                  Order Notes (Optional)
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. Tasting note or internal memo"
-                  value={newOrderNote}
-                  onChange={(e) => setNewOrderNote(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    borderRadius: 6,
-                    border: '1px solid var(--line)',
-                    background: 'transparent',
-                    color: 'inherit',
-                  }}
-                />
-              </div>
-
-              <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 10 }}>
+              {/* Fixed Footer */}
+              <div
+                style={{
+                  flexShrink: 0,
+                  display: 'flex',
+                  gap: 10,
+                  justifyContent: 'flex-end',
+                  alignItems: 'center',
+                  padding: '14px 20px',
+                  borderTop: '1px solid var(--line, #ffffff24)',
+                  background: 'var(--card, #37241d)',
+                }}
+              >
                 <button
                   type="button"
                   className="chip"
                   onClick={() => setShowCreateModal(false)}
                   disabled={submittingOrder}
+                  style={{ minHeight: 42, padding: '8px 16px', fontWeight: 600, cursor: 'pointer' }}
                 >
                   Cancel
                 </button>
@@ -997,6 +1169,12 @@ export default function AdminCreditLedger({
                   type="submit"
                   className="btn"
                   disabled={submittingOrder || selectedCartItems.length === 0}
+                  style={{
+                    minHeight: 42,
+                    padding: '8px 20px',
+                    fontWeight: 700,
+                    cursor: submittingOrder || selectedCartItems.length === 0 ? 'not-allowed' : 'pointer',
+                  }}
                 >
                   {submittingOrder ? 'Placing Order…' : `Place Credit Order (₹${(cartTotalPaise / 100).toFixed(2)})`}
                 </button>
