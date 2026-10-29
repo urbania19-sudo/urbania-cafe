@@ -13,8 +13,8 @@ alter table public.orders
 
 alter table public.orders
   add column if not exists admin_user_id uuid references auth.users(id) on delete set null,
-  add column if not exists payment_status text not null default 'paid'
-    check (payment_status in ('unpaid', 'partially_paid', 'paid', 'external')),
+  add column if not exists payment_status text default 'unpaid'
+    check (payment_status is null or payment_status in ('unpaid', 'partially_paid', 'paid', 'external')),
   add column if not exists paid_paise int not null default 0 check (paid_paise >= 0),
   add column if not exists external_platform_name text,
   add column if not exists external_platform_ref text;
@@ -34,8 +34,8 @@ alter table public.bills
 
 alter table public.bills
   add column if not exists admin_user_id uuid references auth.users(id) on delete set null,
-  add column if not exists payment_status text not null default 'paid'
-    check (payment_status in ('unpaid', 'partially_paid', 'paid', 'external')),
+  add column if not exists payment_status text default 'unpaid'
+    check (payment_status is null or payment_status in ('unpaid', 'partially_paid', 'paid', 'external')),
   add column if not exists paid_paise int not null default 0 check (paid_paise >= 0),
   add column if not exists external_platform_name text,
   add column if not exists external_platform_ref text;

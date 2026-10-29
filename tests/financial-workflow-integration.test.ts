@@ -616,4 +616,90 @@ describe('Urbania Café — Financial Workflow Integration & Database Release Ga
       expect(data.error).toContain('Refunds and settlement reversals are not supported');
     });
   });
+
+  describe('8. Migration 0018 Schema & Reconciled Historical State Verification', () => {
+    it('8.1 Schema check constraints allow payment_status = null for cancelled bills', async () => {
+      // Create a test order and cancelled bill with payment_status = null
+      const testOrderId = crypto.randomUUID();
+      const testBillId = crypto.randomUUID();
+      const testOrderNum = Math.floor(Math.random() * 900000) + 100000;
+
+      const { error: orderErr } = await adminClient.from('orders').insert({
+        id: testOrderId,
+        order_number: testOrderNum,
+        idempotency_key: crypto.randomUUID(),
+        order_source: 'qr',
+        service_mode: 'dine_in',
+        status: 'CANCELLED',
+        subtotal_paise: 25000,
+        total_paise: 25000,
+        payment_status: null,
+        paid_paise: 0,
+      });
+      expect(orderErr).toBeNull();
+
+      const { error: billErr } = await adminClient.from('bills').insert({
+        id: testBillId,
+        order_id: testOrderId,
+        order_number: testOrderNum,
+        bill_number: `UB-TEST-${testOrderNum}`,
+        bill_seq: testOrderNum,
+        status: 'cancelled',
+        order_source: 'qr',
+        document_type: 'bill',
+        business_snapshot: {},
+        items_snapshot: [],
+        subtotal_paise: 25000,
+        total_paise: 25000,
+        payment_status: null,
+        paid_paise: 0,
+      });
+      expect(billErr).toBeNull();
+
+      // Verify row exists with payment_status IS NULL
+      const { data: billData } = await adminClient
+        .from('bills')
+        .select('id, status, payment_status, paid_paise')
+        .eq('id', testBillId)
+        .single();
+      expect(billData).toBeDefined();
+      expect(billData!.status).toBe('cancelled');
+      expect(billData!.payment_status).toBeNull();
+      expect(billData!.paid_paise).toBe(0);
+
+      // Verify that invalid payment_status strings are rejected by CHECK constraint
+      const { error: invalidErr } = await adminClient
+        .from('bills')
+        .update({ payment_status: 'invalid_status' })
+        .eq('id', testBillId);
+      expect(invalidErr).not.toBeNull();
+      expect(invalidErr?.message).toContain('check constraint');
+    });
+
+    it('8.2 Unbilled orders default to unpaid with paid_paise = 0', async () => {
+      const testOrderId = crypto.randomUUID();
+      const testOrderNum = Math.floor(Math.random() * 900000) + 100000;
+
+      const { error: orderErr } = await adminClient.from('orders').insert({
+        id: testOrderId,
+        order_number: testOrderNum,
+        idempotency_key: crypto.randomUUID(),
+        order_source: 'qr',
+        service_mode: 'takeaway',
+        status: 'NEW',
+        subtotal_paise: 15000,
+        total_paise: 15000,
+      });
+      expect(orderErr).toBeNull();
+
+      const { data: orderData } = await adminClient
+        .from('orders')
+        .select('id, payment_status, paid_paise')
+        .eq('id', testOrderId)
+        .single();
+      expect(orderData).toBeDefined();
+      expect(orderData!.payment_status).toBe('unpaid');
+      expect(orderData!.paid_paise).toBe(0);
+    });
+  });
 });

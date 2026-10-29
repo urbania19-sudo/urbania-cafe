@@ -1,57 +1,104 @@
 -- Migration 0018: payment reconciliation hardening
--- Safe to run after migrations 0016 and 0017. Does not write invented payment methods.
+-- Safe to run after migrations 0016 and 0017. Does not write invented payment methods or statuses.
 
--- 1. Preserve legacy bill/order paid state while backfilling the new paid balance.
--- Before migration 0016, an issued bill had no payment-status field; the old workflow
--- treated issued bills as settled. Keep that historical convention, but leave method NULL
--- so reports classify the collection as unclassified rather than guessing Cash or UPI.
+-- 1. Ensure constraints and nullability allow accurate representation of historical uncertainty.
+-- Cancelled historical bills have unverified payment status and must be allowed to be NULL.
+alter table public.bills alter column payment_status drop not null;
+alter table public.orders alter column payment_status drop not null;
+
+alter table public.bills drop constraint if exists bills_payment_status_check;
+alter table public.bills add constraint bills_payment_status_check
+  check (payment_status is null or payment_status in ('unpaid', 'partially_paid', 'paid', 'external'));
+
+alter table public.orders drop constraint if exists orders_payment_status_check;
+alter table public.orders add constraint orders_payment_status_check
+  check (payment_status is null or payment_status in ('unpaid', 'partially_paid', 'paid', 'external'));
+
+-- 2. Authoritative Backfill of Historical Issued Bills & Linked Orders
+-- Under the pre-0016 operational convention, an issued bill represents a settled order.
+-- Method is left NULL so reports classify the collection as unclassified rather than guessing Cash or UPI.
 update public.bills
 set paid_paise = total_paise,
     payment_status = 'paid',
     payment_method = null
 where status = 'issued'
   and order_source in ('qr', 'manual')
-  and payment_status = 'paid'
-  and coalesce(paid_paise, 0) = 0;
+  and (payment_status is null or payment_status <> 'paid' or coalesce(paid_paise, 0) <> total_paise);
 
+-- Order paid balance must match the authoritative issued bill total (accounting for bill discounts).
+-- This ensures that if a discount was applied at bill issuance (bills.total_paise < orders.total_paise),
+-- the order does not falsely record the pre-discount value as collected money.
+-- Orders without an issued bill or with a cancelled bill are strictly excluded.
 update public.orders o
-set paid_paise = o.total_paise,
+set paid_paise = b.total_paise,
     payment_status = 'paid',
     payment_method = null
+from public.bills b
+where b.order_id = o.id
+  and b.status = 'issued'
+  and o.order_source in ('qr', 'manual')
+  and (o.payment_status is null or o.payment_status <> 'paid' or coalesce(o.paid_paise, 0) <> b.total_paise);
+
+-- 3. Historical Cancelled Bills & Orders with Cancelled Bills
+-- Historical cancellation does not prove whether money was collected or refunded.
+-- To avoid falsely asserting that money was collected ('paid') or never collected ('unpaid'),
+-- their payment_status is set to NULL (unknown/unreconciled) with paid_paise = 0.
+update public.bills
+set payment_status = null,
+    paid_paise = 0,
+    payment_method = null
+where status = 'cancelled'
+  and order_source in ('qr', 'manual')
+  and (payment_status is not null or coalesce(paid_paise, 0) <> 0);
+
+update public.orders o
+set payment_status = null,
+    paid_paise = 0,
+    payment_method = null
+from public.bills b
+where b.order_id = o.id
+  and b.status = 'cancelled'
+  and o.order_source in ('qr', 'manual')
+  and (o.payment_status is not null or coalesce(o.paid_paise, 0) <> 0);
+
+-- 4. Historical Orders Without Any Bill (Cancelled or Unbilled Completed/Active)
+-- Orders that never had a bill issued were never billed or settled through POS.
+-- They must strictly remain unpaid with paid_paise = 0.
+update public.orders o
+set payment_status = 'unpaid',
+    paid_paise = 0,
+    payment_method = null
 where o.order_source in ('qr', 'manual')
-  and o.payment_status = 'paid'
-  and coalesce(o.paid_paise, 0) = 0
   and not exists (
-    select 1 from public.bills b
-    where b.order_id = o.id and b.status = 'cancelled'
-  );
+    select 1 from public.bills b where b.order_id = o.id
+  )
+  and (o.payment_status is null or o.payment_status <> 'unpaid' or coalesce(o.paid_paise, 0) <> 0);
 
--- 2. Ensure external-platform orders are never treated as customer collections.
+-- 5. Ensure external-platform orders are never treated as in-store customer collections.
 update public.orders
 set payment_status = 'external', paid_paise = 0, payment_method = null
 where order_source in ('swiggy', 'zomato', 'delivery_platform')
-  and payment_status <> 'external';
+  and (payment_status <> 'external' or coalesce(paid_paise, 0) <> 0 or payment_method is not null);
 
 update public.bills
 set payment_status = 'external', paid_paise = 0, payment_method = null
 where order_source in ('swiggy', 'zomato', 'delivery_platform')
-  and status = 'issued'
-  and payment_status <> 'external';
+  and (payment_status <> 'external' or coalesce(paid_paise, 0) <> 0 or payment_method is not null);
 
--- Admin credit is a receivable until settlement, not a customer cash collection.
+-- 6. Admin credit is a receivable until settlement, not a customer cash collection.
 update public.orders
 set payment_status = 'unpaid', paid_paise = 0, payment_method = null
 where order_source = 'admin_credit'
   and coalesce(paid_paise, 0) = 0
-  and payment_status = 'paid';
+  and (payment_status is null or payment_status <> 'unpaid' or payment_method is not null);
 
 update public.bills
 set payment_status = 'unpaid', paid_paise = 0, payment_method = null
 where order_source = 'admin_credit'
   and coalesce(paid_paise, 0) = 0
-  and payment_status = 'paid';
+  and (payment_status is null or payment_status <> 'unpaid' or payment_method is not null);
 
--- 3. Make the customer payment ledger append-only for application roles.
+-- 7. Make the customer payment ledger append-only for application roles.
 -- Payments are recorded through the SECURITY DEFINER RPC. Refunds must be represented
 -- by a separate append-only refund transaction in a future migration, not by rewriting
 -- an existing payment row.
@@ -80,8 +127,6 @@ revoke insert, update, delete on public.customer_payments from authenticated;
 grant select on public.customer_payments to authenticated;
 grant all on public.customer_payments to service_role;
 
-
--- New customer bills/orders begin unpaid until record_customer_payment succeeds.
--- Historical records were reconciled above before changing these defaults.
+-- 8. Set column defaults for new rows going forward.
 alter table public.bills alter column payment_status set default 'unpaid';
 alter table public.orders alter column payment_status set default 'unpaid';
