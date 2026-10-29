@@ -15,18 +15,39 @@ export async function POST(
   const previewGuard = enforcePreviewWriteGuard();
   if (previewGuard) return previewGuard;
 
-  const db = await owner();
-  if (!db) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   const { billId } = await ctx.params;
   if (!z.string().uuid().safeParse(billId).success) {
     return NextResponse.json({ error: "Invalid bill ID" }, { status: 400 });
   }
 
   const body = await req.json().catch(() => ({}));
+
+  // Explicitly reject refund flags on cancellation. Voiding/cancelling a bill marks the
+  // bill and order cancelled for audit; it does not issue a financial refund.
+  const rawBody = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
+  if (
+    rawBody.refund === true ||
+    rawBody.issue_refund === true ||
+    rawBody.action === "refund" ||
+    "refund_amount_paise" in rawBody ||
+    "refund_paise" in rawBody ||
+    "refund_amount_rupees" in rawBody
+  ) {
+    return NextResponse.json(
+      { error: "Direct financial refunds are not supported during bill cancellation. Voiding a bill only cancels the bill and order for audit purposes without issuing a financial refund." },
+      { status: 400 }
+    );
+  }
+
   const parsed = cancelSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: "Invalid cancellation reason" }, { status: 400 });
+  }
+
+  const db = await owner();
+  if (!db) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid cancellation reason" }, { status: 400 });
   }

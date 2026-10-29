@@ -17,18 +17,34 @@ export async function POST(req: NextRequest) {
   const previewGuard = enforcePreviewWriteGuard();
   if (previewGuard) return previewGuard;
 
-  const db = await owner();
-  if (!db) {
-    return NextResponse.json({ error: 'Unauthorized: Admin access required' }, { status: 401 });
+  const body = await req.json().catch(() => null);
+
+  // Explicitly reject refund / reversal operations on admin credit settlements
+  const rawBody = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
+  if (
+    rawBody.action === "refund" ||
+    rawBody.refund === true ||
+    rawBody.is_refund === true ||
+    "refund_amount_paise" in rawBody ||
+    "refund_paise" in rawBody
+  ) {
+    return NextResponse.json(
+      { error: "Refunds and settlement reversals are not supported. Ledger corrections must be recorded through authorized workflows." },
+      { status: 400 }
+    );
   }
 
-  const body = await req.json().catch(() => null);
   const parsed = settlementSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: parsed.error.issues[0]?.message || 'Invalid settlement payload' },
       { status: 400 }
     );
+  }
+
+  const db = await owner();
+  if (!db) {
+    return NextResponse.json({ error: 'Unauthorized: Admin access required' }, { status: 401 });
   }
 
   const { orderId, amountPaise, paymentMethod, notes } = parsed.data;

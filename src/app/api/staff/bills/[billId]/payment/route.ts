@@ -30,10 +30,28 @@ export async function POST(
     body = {};
   }
 
+  // Explicitly reject refund and partial-refund operations. Reversals and partial
+  // refunds require a dedicated append-only refund ledger and must not be treated as payments.
+  const rawObj = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
+  if (
+    rawObj.action === "refund" ||
+    rawObj.type === "refund" ||
+    rawObj.refund === true ||
+    rawObj.is_refund === true ||
+    "refund_amount_paise" in rawObj ||
+    "refund_paise" in rawObj ||
+    "refund_amount_rupees" in rawObj
+  ) {
+    return NextResponse.json(
+      { error: "Refunds and partial refunds are not supported. Reversals must be recorded through an authorized ledger workflow." },
+      { status: 400 }
+    );
+  }
+
   const parseResult = paymentSchema.safeParse(body);
   if (!parseResult.success) {
     return NextResponse.json(
-      { error: "Invalid payment details. Please specify a valid payment method (Cash or Online/UPI) and amount." },
+      { error: "Invalid payment details. Please specify a valid payment method (Cash or Online/UPI) and a positive amount. Negative amounts and refunds are not supported." },
       { status: 400 }
     );
   }
@@ -43,7 +61,7 @@ export async function POST(
   const targetAmountPaise = amount_paise ?? (amount_rupees != null ? Math.round(amount_rupees * 100) : 0);
 
   if (targetAmountPaise <= 0) {
-    return NextResponse.json({ error: "Payment amount must be greater than zero." }, { status: 400 });
+    return NextResponse.json({ error: "Payment amount must be greater than zero. Negative amounts and refunds are not supported." }, { status: 400 });
   }
 
   const db = await authDb();
