@@ -18,7 +18,7 @@
 -- =============================================================================
 select
   version,
-  inserted_at,
+  name,
   case
     when version <= '202610260015' then 'APPLIED_BASELINE'
     when version between '202610280016' and '202610290026' then 'RELEASE_CANDIDATE_MIGRATION'
@@ -51,7 +51,7 @@ with expected_tables as (
     'admin_profiles',
     'menu_items',
     'menu_item_options',
-    'billing_audit_events',
+    'bill_audit_events',
     'customer_payments',         -- introduced in 0017
     'admin_credit_settlements'   -- introduced in 0016
   ]) as table_name
@@ -381,7 +381,94 @@ select
   'Post-migration target: 0 rows (No cancelled bill should have payment_status = paid)' as expectation
 from public.bills b
 where b.status = 'cancelled'
-  and coalesce((to_jsonb(b)->>'payment_status'), '') = 'paid';
+  and coalesce((to_jsonb(b)->>'payment_status'), '') = 'paid'
+
+union all
+
+select
+  'Multiple-Bill Preflight Gate: Orders with > 1 Associated Bill' as diagnostic_case,
+  count(*) as affected_row_count,
+  coalesce(sum(order_bill_count), 0) as total_amount_paise,
+  'Pre-migration gate: 0 rows (Fail closed if > 0)' as expectation
+from (
+  select order_id, count(*) as order_bill_count
+  from public.bills
+  group by order_id
+  having count(*) > 1
+) mb
+
+union all
+
+select
+  'Multiple-Bill Preflight Gate: Orders with Both Issued & Cancelled Bills' as diagnostic_case,
+  count(*) as affected_row_count,
+  0 as total_amount_paise,
+  'Pre-migration gate: 0 rows (Fail closed if > 0)' as expectation
+from (
+  select order_id
+  from public.bills
+  group by order_id
+  having count(*) filter (where status = 'issued') > 0
+     and count(*) filter (where status = 'cancelled') > 0
+) mixed
+
+union all
+
+select
+  'Multiple-Bill Preflight Gate: Orders with Multiple Issued Bills' as diagnostic_case,
+  count(*) as affected_row_count,
+  0 as total_amount_paise,
+  'Pre-migration gate: 0 rows (Fail closed if > 0)' as expectation
+from (
+  select order_id
+  from public.bills
+  where status = 'issued'
+  group by order_id
+  having count(*) > 1
+) multi_issued;
+
+
+-- =============================================================================
+-- 9D. Detailed Diagnostics: Ambiguous Multiple-Bill Detection
+-- Invariant: Every order must have at most 1 bill to avoid non-deterministic
+-- updates during migration 0018. If any rows are returned below, migration 0018
+-- will fail closed with URB:ambiguous_multiple_bills_detected.
+-- =============================================================================
+
+-- 9D-1. List of all orders with > 1 bill
+select
+  b.order_id,
+  count(*) as total_bills,
+  count(*) filter (where b.status = 'issued') as issued_count,
+  count(*) filter (where b.status = 'cancelled') as cancelled_count,
+  array_agg(b.bill_number order by b.created_at) as bill_numbers,
+  array_agg(b.status order by b.created_at) as bill_statuses,
+  array_agg(b.total_paise order by b.created_at) as bill_totals_paise
+from public.bills b
+group by b.order_id
+having count(*) > 1;
+
+-- 9D-2. Orders with both issued and cancelled bills
+select
+  b.order_id,
+  count(*) filter (where b.status = 'issued') as issued_count,
+  count(*) filter (where b.status = 'cancelled') as cancelled_count,
+  array_agg(b.bill_number order by b.created_at) as bill_numbers
+from public.bills b
+group by b.order_id
+having count(*) filter (where b.status = 'issued') > 0
+   and count(*) filter (where b.status = 'cancelled') > 0;
+
+-- 9D-3. Orders with multiple issued bills
+select
+  b.order_id,
+  count(*) as issued_count,
+  array_agg(b.bill_number order by b.created_at) as bill_numbers,
+  array_agg(b.total_paise order by b.created_at) as bill_totals_paise
+from public.bills b
+where b.status = 'issued'
+group by b.order_id
+having count(*) > 1;
 
 
 -- =============================================================================
@@ -393,5 +480,5 @@ select
   (select count(*) from public.orders) as total_order_count,
   (select count(*) from public.order_items) as total_order_item_count,
   (select count(*) from public.bills) as total_bill_count,
-  (select count(*) from public.billing_audit_events) as total_audit_event_count,
+  (select count(*) from public.bill_audit_events) as total_audit_event_count,
   (select count(*) from public.menu_items) as total_menu_item_count;

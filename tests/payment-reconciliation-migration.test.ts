@@ -46,6 +46,12 @@ describe('Payment Reconciliation Migration & Backfill Regression Suite', () => {
       expect(mig0018Sql).toMatch(/not exists \(\s*select 1 from public\.bills b where b\.order_id = o\.id\s*\)/i);
     });
 
+    it('migration 0018 enforces multiple-bill safety gate that fails closed on ambiguous duplicate bills', () => {
+      expect(mig0018Sql).toMatch(/URB:ambiguous_multiple_bills_detected/i);
+      expect(mig0018Sql).toMatch(/group by order_id\s+having count\(\*\)\s*>\s*1/i);
+      expect(mig0018Sql).toMatch(/not exists \(\s*select 1 from public\.bills b_issued\s+where b_issued\.order_id = o\.id\s+and b_issued\.status = 'issued'\s*\)/i);
+    });
+
     it('migration 0018 sets append-only immutable trigger on customer_payments', () => {
       expect(mig0018Sql).toMatch(/customer_payments_immutable/i);
       expect(mig0018Sql).toMatch(/before update or delete on public\.customer_payments/i);
@@ -90,6 +96,17 @@ describe('Payment Reconciliation Migration & Backfill Regression Suite', () => {
     function simulateMigration0018(orders: RawOrder[], bills: RawBill[]) {
       const ordersMap = new Map(orders.map((o) => [o.id, { ...o }]));
       const billsMap = new Map(bills.map((b) => [b.id, { ...b }]));
+
+      // Rule 1b: Safety Gate: Detect ambiguous multiple bills per order
+      const orderBillCounts = new Map<string, number>();
+      for (const bill of bills) {
+        orderBillCounts.set(bill.order_id, (orderBillCounts.get(bill.order_id) || 0) + 1);
+      }
+      for (const [orderId, count] of orderBillCounts) {
+        if (count > 1) {
+          throw new Error(`URB:ambiguous_multiple_bills_detected: Order ${orderId} has ${count} associated bills.`);
+        }
+      }
 
       // Rule 2: Historical Issued Bills & Linked Orders
       for (const bill of billsMap.values()) {
@@ -389,6 +406,49 @@ describe('Payment Reconciliation Migration & Backfill Regression Suite', () => {
 
       expect(ac.payment_status).toBe('unpaid');
       expect(ac.paid_paise).toBe(0);
+    });
+
+    // -------------------------------------------------------------------------
+    // Multiple-Bill Safety Gate Tests
+    // -------------------------------------------------------------------------
+    it('Multiple-Bill Gate: Fails closed with exception if an order has multiple associated bills', () => {
+      const order: RawOrder = {
+        id: 'o-dup-1',
+        order_number: 999,
+        status: 'COMPLETED',
+        order_source: 'manual',
+        subtotal_paise: 25000,
+        total_paise: 25000,
+        created_at: '2026-10-27T10:00:00Z',
+      };
+      const billA: RawBill = {
+        id: 'b-dup-1a',
+        order_id: 'o-dup-1',
+        order_number: 999,
+        status: 'cancelled',
+        order_source: 'manual',
+        subtotal_paise: 25000,
+        discount_paise: 0,
+        tax_paise: 0,
+        total_paise: 25000,
+        issued_at: '2026-10-27T10:05:00Z',
+      };
+      const billB: RawBill = {
+        id: 'b-dup-1b',
+        order_id: 'o-dup-1',
+        order_number: 999,
+        status: 'issued',
+        order_source: 'manual',
+        subtotal_paise: 25000,
+        discount_paise: 0,
+        tax_paise: 0,
+        total_paise: 25000,
+        issued_at: '2026-10-27T10:10:00Z',
+      };
+
+      expect(() => simulateMigration0018([order], [billA, billB])).toThrowError(
+        /URB:ambiguous_multiple_bills_detected/
+      );
     });
   });
 

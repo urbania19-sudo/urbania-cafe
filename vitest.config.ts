@@ -11,7 +11,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['tests/**/*.test.{ts,tsx}'],
-    exclude: ['**/node_modules/**', 'tests/financial-workflow-integration.test.ts'],
+    exclude: ['**/node_modules/**', 'tests/financial-workflow-integration.test.ts', 'tests/two-phase-migration-replay.test.ts'],
     setupFiles: ['./tests/setup.ts'],
   },
 });

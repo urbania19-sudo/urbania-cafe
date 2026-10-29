@@ -14,6 +14,47 @@ alter table public.orders drop constraint if exists orders_payment_status_check;
 alter table public.orders add constraint orders_payment_status_check
   check (payment_status is null or payment_status in ('unpaid', 'partially_paid', 'paid', 'external'));
 
+-- 1b. Safety Gate: Abort if any order has multiple associated bills (ambiguous history).
+-- Joining orders to bills requires a deterministic 1:1 relationship to prevent non-deterministic updates
+-- or conflicting settlement balances. If duplicate bills exist, fail closed immediately.
+do $$
+declare
+  v_dup_orders int;
+  v_mixed_orders int;
+  v_multi_issued int;
+begin
+  select count(*) into v_dup_orders
+  from (
+    select order_id
+    from public.bills
+    group by order_id
+    having count(*) > 1
+  ) dups;
+
+  if v_dup_orders > 0 then
+    select count(*) into v_multi_issued
+    from (
+      select order_id
+      from public.bills
+      where status = 'issued'
+      group by order_id
+      having count(*) > 1
+    ) mi;
+
+    select count(*) into v_mixed_orders
+    from (
+      select order_id
+      from public.bills
+      group by order_id
+      having count(*) filter (where status = 'issued') > 0
+         and count(*) filter (where status = 'cancelled') > 0
+    ) mo;
+
+    raise exception 'URB:ambiguous_multiple_bills_detected: % order(s) have multiple associated bills (multiple issued: %, mixed issued/cancelled: %). Manual reconciliation required before migration.',
+      v_dup_orders, coalesce(v_multi_issued, 0), coalesce(v_mixed_orders, 0);
+  end if;
+end $$;
+
 -- 2. Authoritative Backfill of Historical Issued Bills & Linked Orders
 -- Under the pre-0016 operational convention, an issued bill represents a settled order.
 -- Method is left NULL so reports classify the collection as unclassified rather than guessing Cash or UPI.
@@ -59,6 +100,10 @@ from public.bills b
 where b.order_id = o.id
   and b.status = 'cancelled'
   and o.order_source in ('qr', 'manual')
+  and not exists (
+    select 1 from public.bills b_issued
+    where b_issued.order_id = o.id and b_issued.status = 'issued'
+  )
   and (o.payment_status is not null or coalesce(o.paid_paise, 0) <> 0);
 
 -- 4. Historical Orders Without Any Bill (Cancelled or Unbilled Completed/Active)

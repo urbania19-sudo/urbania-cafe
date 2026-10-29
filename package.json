@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:integration:financial": "vitest run tests/financial-workflow-integration.test.ts --config vitest.integration.config.ts",
-    "test:integration:disposable": "powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-disposable-financial-integration.ps1"
+    "test:integration:disposable": "powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-disposable-financial-integration.ps1",
+    "test:migration:replay": "powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-two-phase-migration-replay.ps1"
   },
   "keywords": [],
   "author": "",
