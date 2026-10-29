@@ -98,9 +98,11 @@ Urbania Café strictly distinguishes between **voiding/cancelling a bill** and *
    - Historical bills issued before migration 0016 have `payment_method = NULL`.
    - Reports (`src/lib/reports.ts`) treat these as **unclassified** collections.
    - Code must **never** fabricate or assume legacy collections were Cash or UPI.
-3. **Reversal & Refund Accounting in Reports**:
-   - If a `customer_payments` row carries `status = 'refunded'`, it is excluded from gross/net receipts.
-   - It is displayed in `customerRefundsPaise` for audit purposes but is **never subtracted a second time** from net collections (preventing double-deduction).
+3. **Historical Audit Classification ('refunded') in Reports**:
+   - Financial refunds, partial refunds, and payment reversals are not implemented in Urbania Café POS.
+   - If a historical `customer_payments` row carries `status = 'refunded'`, it is strictly an audit classification of an existing record and does **not** represent proof that a financial refund payout occurred.
+   - It is reported under `customerRefundsPaise` (and its alias `historicalRefundClassifiedPaise` / `todayHistoricalRefundClassifiedPaise`) for audit transparency, but is **never subtracted a second time** from collections (preventing double-deduction).
+   - Ordinary completed collections (`customerCollectedPaise`, `cashCollectedPaise`, `onlineCollectedPaise`) strictly exclude these rows.
 4. **Timezone Boundaries**:
    - All financial and audit daily metrics adhere to **Asia/Kolkata (IST, UTC+05:30)** business day boundaries (from 18:30 UTC previous day to 18:29:59.999 UTC current day).
 5. **Fail-Closed Reporting**:
@@ -161,28 +163,21 @@ npm run build           # Next.js production build succeeds
 
 ---
 
-## 6. Setting Up an Isolated Staging Supabase Project
+## 6. Testing Environments: Disposable Local Containers & Optional Hosted Staging
 
-### Step 1: Create a Staging Supabase Project
+The Urbania Café POS testing strategy does **not** require provisioning a hosted staging Supabase project. Instead, the project uses two complementary, isolated environments:
+1. **Automated Disposable Local Integration Runner (`npm run test:integration:disposable`)**: Spawns an ephemeral Supabase container stack on isolated ports (`54421` API, `54422` DB), applies migrations 0001 through 0026 from scratch, executes financial integration tests, and unconditionally tears down all containers, volumes, and temporary workspaces.
+2. **Safe Vercel Preview Demo Mode (`src/lib/demo-fixtures.ts`)**: For Vercel Preview deployments, synthetic in-memory fixtures render the admin dashboard, staff queue, and QR menu safely without connecting to any database or requiring cloud staging infrastructure.
+
+### Optional: Hosted Staging Project Setup (Optional Manual Cloud Staging Only)
+If the café management optionally chooses to maintain a dedicated hosted staging project in the future:
 1. Log in to [Supabase](https://supabase.com/dashboard).
 2. Click **New Project** and name it `urbania-cafe-staging` (choose region `ap-south-1` Mumbai to match production).
 3. Set a strong database password and save it securely.
-
-### Step 2: Retrieve API Keys
-In Supabase Dashboard, navigate to **Project Settings** → **API**:
-- **Project URL**: `https://<staging-ref>.supabase.co`
-- **Project API Keys**: `anon` public key and `service_role` secret key.
-
-### Step 3: Apply Migrations in Sequence
-In the Supabase SQL Editor for the **staging project only**, execute migrations 0001 through 0026 in exact chronological sequence.
-
-### Step 4: Seed Staging Data
-Run `supabase/seed.sql` in the staging SQL editor:
-- Creates the 5 standard café tables (Tables 1 through 5) with active QR tokens.
-- Populates standard menu categories and items with integer-paise pricing.
-
-### Step 5: Create Staging Accounts
-Create owner (`owner@staging.urbania.cafe`) and staff (`staff@staging.urbania.cafe`) accounts in Supabase Auth, and assign their roles in `public.admin_profiles`.
+4. Retrieve API Keys (`anon` public key and `service_role` secret key).
+5. Apply migrations 0001 through 0026 in sequence via the SQL Editor.
+6. Run `supabase/seed.sql`.
+7. Create test owner and staff accounts in Supabase Auth.
 
 ---
 
@@ -208,18 +203,23 @@ In Vercel Dashboard → **Settings** → **Environment Variables** (check **ONLY
 
 ### Verified in Current Candidate
 - [x] All 26 migrations statically analyzed, ordered, and reconciled.
-- [x] Local PostgreSQL integration tests verified against local Supabase (`127.0.0.1:54321`).
+- [x] Ephemeral integration tests verified against disposable Supabase container stack (`127.0.0.1:54421/54422`) via `npm run test:integration:disposable`.
 - [x] Unpaid default payment status on bill generation verified.
 - [x] Partial and full Cash & UPI payment workflows verified with immutable ledger protection.
 - [x] Explicit rejection of unsupported refund operations on payment, cancel, and settle endpoints verified.
-- [x] Administrative bill cancellation verified;paying cancelled bills blocked.
+- [x] Administrative bill cancellation verified; paying cancelled bills blocked.
 - [x] Idempotency replay and conflict detection verified on customer payments and admin credit orders.
 - [x] Asia/Kolkata timezone reconciliation verified.
-- [x] Preview Demo Mode with synthetic fixtures verified fail-closed.
-- [x] 469/469 automated tests pass. TypeScript, ESLint, and Next.js production build pass.
+- [x] Preview Demo Mode with synthetic fixtures verified fail-closed without requiring hosted staging infrastructure.
+- [x] 479/479 automated tests pass across 39 test files. TypeScript, ESLint, and Next.js production build pass.
 
-### Items Requiring External / Business Action (Remaining Blockers)
-- [ ] **Dedicated Isolated Staging Supabase Database**: A live, isolated Supabase project has not yet been provisioned by the owner. End-to-end cloud testing requires provisioning this project and setting Preview environment variables.
+> [!WARNING]
+> **Production readiness has NOT been approved.** The candidate is locally verified and code-complete, but formal release and deployment to production remain blocked pending stakeholder sign-off and the operational prerequisites listed below.
+
+### Items Requiring External / Business Action (Remaining Blockers — Production Readiness NOT Approved)
+- [ ] **Release & Staging Approval**: Formal sign-off from café owners/stakeholders to authorize staging and production deployment.
 - [ ] **Physical Thermal Printer Hardware**: Thermal receipt canvas rendering is verified via jsdom/canvas, but ESC/POS raw raster stream compatibility with the physical Bluetooth/USB thermal printer requires on-site hardware verification.
 - [ ] **Production Migration Deployment**: Migrations 0007–0026 have not been applied to production Supabase (`rexeyagnvssvjlukjcbd`). Applying migrations requires explicit release approval and scheduled maintenance.
 - [ ] **Full Refund Ledger Specification**: If the business requires partial or full cash/UPI refund tracking in the future, a dedicated schema migration and product specification must be designed.
+
+*(Note: Provisioning a hosted staging Supabase database is NOT a blocker; the project uses the automated disposable local integration environment and synthetic Preview Demo Mode.)*

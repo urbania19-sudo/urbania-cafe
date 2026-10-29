@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
     "refund_paise" in rawBody
   ) {
     return NextResponse.json(
-      { error: "Refunds and settlement reversals are not supported. Ledger corrections must be recorded through authorized workflows." },
+      { error: "Refunds and settlement reversals are not supported or implemented." },
       { status: 400 }
     );
   }
@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
   const { orderId, amountPaise, paymentMethod, notes } = parsed.data;
 
   try {
-    // 1. Try atomic RPC
+    // 1. Atomic RPC: sole write path
     const { data: rpcRes, error: rpcErr } = await db.rpc('settle_admin_credit_payment', {
       p_order_id: orderId,
       p_amount_paise: amountPaise,
@@ -62,105 +62,56 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(rpcRes, { status: 200 });
     }
 
-    // If RPC returned a business exception (e.g. over-settling or not admin credit), surface it
-    if (rpcErr && !rpcErr.message.includes('function public.settle_admin_credit_payment') && !rpcErr.message.includes('does not exist')) {
-      return NextResponse.json({ error: rpcErr.message }, { status: 400 });
-    }
+    if (rpcErr) {
+      const msg = rpcErr.message || '';
+      const code = (rpcErr as { code?: string }).code || '';
 
-    // 2. Direct transactional fallback if RPC is pending migration
-    const { data: order, error: orderErr } = await db
-      .from('orders')
-      .select('id, order_number, total_paise, paid_paise, payment_status, status, order_source, admin_user_id')
-      .eq('id', orderId)
-      .maybeSingle();
+      // 1. Fail closed with 503 if RPC is missing / unavailable (e.g. pending migration)
+      const isMissingRpc =
+        code === 'PGRST202' ||
+        code === '42883' ||
+        msg.includes('function public.settle_admin_credit_payment') ||
+        (msg.includes('settle_admin_credit_payment') &&
+          (msg.includes('does not exist') || msg.includes('schema cache')));
 
-    if (orderErr || !order) {
-      return NextResponse.json({ error: 'Order not found' }, { status: 404 });
-    }
+      if (isMissingRpc) {
+        return NextResponse.json(
+          {
+            error:
+              'Service Unavailable: Atomic settlement procedure is unavailable. Please ensure database migrations are applied.',
+          },
+          { status: 503 }
+        );
+      }
 
-    if (order.order_source !== 'admin_credit') {
-      return NextResponse.json({ error: 'Selected order is not an admin credit order' }, { status: 400 });
-    }
+      // 2. Authorization failure inside RPC
+      if (msg.includes('forbidden') || msg.includes('admin privileges')) {
+        return NextResponse.json({ error: msg }, { status: 403 });
+      }
 
-    if (order.status === 'CANCELLED') {
-      return NextResponse.json({ error: 'Cannot record settlement for a cancelled order' }, { status: 400 });
-    }
+      // 3. Order not found
+      if (msg.includes('order not found') || msg.includes('URB:not_found')) {
+        return NextResponse.json({ error: 'Order not found' }, { status: 404 });
+      }
 
-    const currentPaid = order.paid_paise || 0;
-    const remaining = order.total_paise - currentPaid;
+      // 4. Business rule validation failures (e.g. over-settlement, non-credit, cancelled, zero amount)
+      if (
+        msg.includes('greater than zero') ||
+        msg.includes('is not an admin credit order') ||
+        msg.includes('cannot settle payment for cancelled order') ||
+        msg.includes('exceeds outstanding balance')
+      ) {
+        return NextResponse.json({ error: msg }, { status: 400 });
+      }
 
-    if (amountPaise > remaining) {
+      // 5. Genuine database errors
       return NextResponse.json(
-        {
-          error: `Payment amount (₹${(amountPaise / 100).toFixed(2)}) exceeds outstanding balance of ₹${(remaining / 100).toFixed(2)}`,
-        },
-        { status: 400 }
+        { error: friendlyBillingError(rpcErr) || msg },
+        { status: 500 }
       );
     }
 
-    const newPaid = currentPaid + amountPaise;
-    const newStatus = newPaid >= order.total_paise ? 'paid' : 'partially_paid';
-
-    const {
-      data: { user },
-    } = await db.auth.getUser();
-
-    // Record settlement
-    const { data: settlement, error: stlErr } = await db
-      .from('admin_credit_settlements')
-      .insert({
-        order_id: order.id,
-        admin_user_id: order.admin_user_id,
-        amount_paise: amountPaise,
-        payment_method: paymentMethod,
-        notes: notes?.trim() || null,
-        received_by: user?.id || null,
-        settled_at: new Date().toISOString(),
-      })
-      .select()
-      .single();
-
-    if (stlErr) {
-      console.warn('Settlement record insert error:', stlErr.message);
-    }
-
-    // Update order
-    const { error: updErr } = await db
-      .from('orders')
-      .update({
-        paid_paise: newPaid,
-        payment_status: newStatus,
-      })
-      .eq('id', order.id);
-
-    if (updErr) {
-      console.error('Failed to update order settlement status:', updErr);
-      return NextResponse.json({ error: friendlyBillingError(updErr) }, { status: 500 });
-    }
-
-    // Update bill if present
-    await db
-      .from('bills')
-      .update({
-        paid_paise: newPaid,
-        payment_status: newStatus,
-      })
-      .eq('order_id', order.id);
-
-    return NextResponse.json(
-      {
-        ok: true,
-        settlement_id: settlement?.id || crypto.randomUUID(),
-        order_id: order.id,
-        order_number: order.order_number,
-        amount_paise: amountPaise,
-        paid_paise: newPaid,
-        total_paise: order.total_paise,
-        payment_status: newStatus,
-        settled_at: new Date().toISOString(),
-      },
-      { status: 200 }
-    );
+    return NextResponse.json({ error: 'Unexpected settlement response' }, { status: 500 });
   } catch (err) {
     console.error('API Error in POST /api/admin/credit-orders/settle:', err);
     return NextResponse.json(

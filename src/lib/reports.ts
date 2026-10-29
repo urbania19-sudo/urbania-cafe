@@ -29,7 +29,18 @@ export interface CafeReportMetrics {
   cashCollectedPaise: number; // cash customer payments collected today
   onlineCollectedPaise: number; // online/UPI customer payments collected today
   customerCollectedPaise: number; // net recorded customer collections, including unclassified legacy receipts
-  customerRefundsPaise: number; // net refunds recorded today
+  /**
+   * Sum of historical customer_payments rows carrying status = 'refunded'.
+   * NOTE: Financial refunds, partial refunds, and payment reversals are NOT implemented.
+   * This does NOT represent confirmed money returned to customers; it is an audit classification
+   * of historical records. Excluded from completed customer collections.
+   */
+  customerRefundsPaise: number;
+  /**
+   * Unambiguous alias for customerRefundsPaise to prevent staff or auditors from mistaking
+   * historical audit classifications for confirmed financial refund payouts.
+   */
+  historicalRefundClassifiedPaise: number;
   unclassifiedCollectedPaise: number; // legacy/other-method collections not safely attributable to cash or UPI
   customerOutstandingPaise: number; // unpaid/partial customer bill balances
   collectedPaise: number; // actual money collected by Urbania (customer payments + settled admin credit)
@@ -296,9 +307,9 @@ export async function getDailyServiceMetrics(
   let unclassifiedCollectedPaise = 0;
   let customerRefundsPaise = 0;
 
-  // The current schema uses status='refunded' to mark a payment record as refunded,
-  // not as a separate refund transaction. Exclude it from gross receipts and do not
-  // subtract it a second time. Partial refunds require a separate refund ledger/event.
+  // The schema allows status='refunded' as an audit classification on historical payment records;
+  // it is not a financial refund transaction. Exclude any non-completed rows from receipts.
+  // Financial refunds and partial refunds are not implemented.
   const paymentsByBill = new Map<string, typeof customerPayments>();
   for (const payment of customerPayments) {
     const rows = paymentsByBill.get(payment.bill_id) || [];
@@ -308,8 +319,8 @@ export async function getDailyServiceMetrics(
 
   for (const payment of customerPayments) {
     if (payment.status === 'refunded') {
-      // A refunded status means the original payment was reversed in full.
-      // Show it as a refund for audit, but do not subtract it again from net collections.
+      // Historical payment record classified with status 'refunded' for audit purposes.
+      // Financial refunds are not implemented; this is an audit classification only.
       customerRefundsPaise += payment.amount_paise || 0;
       continue;
     }
@@ -322,10 +333,30 @@ export async function getDailyServiceMetrics(
     }
   }
 
+  // Check which bills have transaction ledger rows in history to avoid
+  // treating modern bills paid on another day as legacy cash/online on their issue date.
+  const billIds = customerBills.map((b) => b.id).filter(Boolean);
+  const billsWithLedgerPayments = new Set<string>();
+  if (billIds.length > 0) {
+    try {
+      const selectBuilder = db.from('customer_payments').select('bill_id');
+      if (typeof (selectBuilder as any)?.in === 'function') {
+        const { data: ledgerRows } = await (selectBuilder as any).in('bill_id', billIds);
+        if (Array.isArray(ledgerRows)) {
+          for (const row of ledgerRows) {
+            if (row?.bill_id) billsWithLedgerPayments.add(row.bill_id);
+          }
+        }
+      }
+    } catch {
+      // Table or method may not exist in mock/legacy setups; safely ignore
+    }
+  }
+
   // Reconcile older bills that predate the transaction ledger. Preserve their recorded
   // paid balance but do not invent Cash/UPI. A bill with ledger rows is never counted twice.
   for (const bill of customerBills) {
-    if (paymentsByBill.has(bill.id)) continue;
+    if (paymentsByBill.has(bill.id) || billsWithLedgerPayments.has(bill.id)) continue;
     const amount = Math.max(0, bill.paid_paise ?? (bill.payment_status === 'paid' ? bill.total_paise : 0));
     if (!amount) continue;
     if (bill.payment_method === 'cash') cashCollectedPaise += amount;
@@ -333,8 +364,8 @@ export async function getDailyServiceMetrics(
     else unclassifiedCollectedPaise += amount;
   }
 
-  // Refunded rows are excluded above, so subtracting customerRefundsPaise here would
-  // double-count a full refund. Partial refunds require a separate refund transaction model.
+  // Non-completed / refunded records are excluded from collections above.
+  // Financial refunds are not implemented; do not subtract customerRefundsPaise again.
   const customerCollectedPaise = Math.max(
     0,
     cashCollectedPaise + onlineCollectedPaise + unclassifiedCollectedPaise
@@ -380,6 +411,7 @@ export async function getDailyServiceMetrics(
     onlineCollectedPaise,
     customerCollectedPaise,
     customerRefundsPaise,
+    historicalRefundClassifiedPaise: customerRefundsPaise,
     unclassifiedCollectedPaise,
     customerOutstandingPaise,
     collectedPaise,

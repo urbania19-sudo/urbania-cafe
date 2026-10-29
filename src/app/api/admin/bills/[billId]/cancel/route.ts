@@ -34,7 +34,7 @@ export async function POST(
     "refund_amount_rupees" in rawBody
   ) {
     return NextResponse.json(
-      { error: "Direct financial refunds are not supported during bill cancellation. Voiding a bill only cancels the bill and order for audit purposes without issuing a financial refund." },
+      { error: "Financial refunds are not supported during bill cancellation. Voiding a bill only cancels the bill and order for audit purposes and does not issue a financial refund." },
       { status: 400 }
     );
   }

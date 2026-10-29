@@ -25,6 +25,7 @@ vi.mock('@/lib/reports', async (importOriginal) => {
       customerCollectedPaise: 50000,
       customerOutstandingPaise: 0,
       customerRefundsPaise: 0,
+      historicalRefundClassifiedPaise: 0,
       adminCreditSettledTodayPaise: 0,
       externalPlatformCount: 0,
       externalPlatformValuePaise: 0,

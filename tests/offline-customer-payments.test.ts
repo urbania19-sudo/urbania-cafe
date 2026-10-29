@@ -566,7 +566,7 @@ describe('Urbania Café POS — Offline Customer Payment Methods', () => {
       expect(metrics.customerCollectedPaise).toBe(1000);
     });
 
-    it('does not subtract a fully refunded payment twice', async () => {
+    it('excludes historical refund-classified payment rows from collections and does not subtract twice', async () => {
       const mockDb = {
         from: (table: string) => ({
           select: () => ({
@@ -589,6 +589,7 @@ describe('Urbania Café POS — Offline Customer Payment Methods', () => {
       const metrics = await getDailyServiceMetrics(mockDb as any, '2026-10-28', 'Asia/Kolkata');
       expect(metrics.cashCollectedPaise).toBe(0);
       expect(metrics.customerRefundsPaise).toBe(1000);
+      expect(metrics.historicalRefundClassifiedPaise).toBe(1000);
       expect(metrics.customerCollectedPaise).toBe(0);
     });
 

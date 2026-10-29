@@ -30,8 +30,7 @@ export async function POST(
     body = {};
   }
 
-  // Explicitly reject refund and partial-refund operations. Reversals and partial
-  // refunds require a dedicated append-only refund ledger and must not be treated as payments.
+  // Explicitly reject refund and partial-refund operations. Financial refunds and partial refunds are not implemented and must not be treated as payments.
   const rawObj = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
   if (
     rawObj.action === "refund" ||
@@ -43,7 +42,7 @@ export async function POST(
     "refund_amount_rupees" in rawObj
   ) {
     return NextResponse.json(
-      { error: "Refunds and partial refunds are not supported. Reversals must be recorded through an authorized ledger workflow." },
+      { error: "Refunds and partial refunds are not supported. Financial refunds and partial refunds are not supported or implemented." },
       { status: 400 }
     );
   }

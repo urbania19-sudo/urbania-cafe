@@ -40,9 +40,31 @@ describe('Urbania Café — Financial Workflow Integration & Database Release Ga
 
   beforeAll(async () => {
     // -------------------------------------------------------------------------
-    // Safety Guard: Fail closed if SUPABASE_URL is not strictly local
+    // Isolation Requirement Guard
+    // Financial integration tests mutate the append-only customer_payments ledger,
+    // which cannot be deleted or mutated without violating the customer_payments_immutable
+    // trigger. Therefore, this suite must only run against a dedicated disposable
+    // database environment explicitly invoked via:
+    //   ALLOW_DISPOSABLE_FINANCIAL_INTEGRATION=true npm run test:integration:financial
     // -------------------------------------------------------------------------
-    const urlObj = new URL(SUPABASE_URL);
+    const isExplicitDisposable =
+      process.env.ALLOW_DISPOSABLE_FINANCIAL_INTEGRATION === 'true' ||
+      Boolean(process.env.DISPOSABLE_SUPABASE_URL);
+
+    if (!isExplicitDisposable) {
+      throw new Error(
+        'BLOCKED: Financial integration tests mutate the append-only customer_payments ledger, which cannot be cleaned up on a shared instance without violating the customer_payments_immutable trigger or dropping the database. To protect the persistent development database (127.0.0.1:54321), this integration suite must be explicitly invoked against a dedicated disposable test database using `npm run test:integration:financial` with ALLOW_DISPOSABLE_FINANCIAL_INTEGRATION=true.'
+      );
+    }
+
+    // -------------------------------------------------------------------------
+    // Safety Guard: Fail closed if target database is not strictly local
+    // -------------------------------------------------------------------------
+    const targetUrl = process.env.DISPOSABLE_SUPABASE_URL || SUPABASE_URL;
+    const targetAnonKey = process.env.DISPOSABLE_ANON_KEY || ANON_KEY;
+    const targetServiceKey = process.env.DISPOSABLE_SERVICE_KEY || SERVICE_KEY;
+
+    const urlObj = new URL(targetUrl);
     const isLocal =
       urlObj.hostname === 'localhost' ||
       urlObj.hostname === '127.0.0.1' ||
@@ -51,11 +73,11 @@ describe('Urbania Café — Financial Workflow Integration & Database Release Ga
 
     if (!isLocal) {
       throw new Error(
-        `SECURITY CHECK FAILED: Financial integration test suite is strictly prohibited from running against non-local environments (${SUPABASE_URL}). Tests aborted.`
+        `SECURITY CHECK FAILED: Financial integration test suite is strictly prohibited from running against non-local environments (${targetUrl}). Tests aborted.`
       );
     }
 
-    adminClient = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
+    adminClient = createClient(targetUrl, targetServiceKey, { auth: { persistSession: false } });
 
     async function setupTestUserSession(email: string, envPasswordKey: string) {
       const { data: usersData, error: listErr } = await adminClient.auth.admin.listUsers();
@@ -76,7 +98,7 @@ describe('Urbania Café — Financial Workflow Integration & Database Release Ga
         await adminClient.auth.admin.updateUserById(user.id, { password: testPassword });
       }
 
-      const client = createClient(SUPABASE_URL, ANON_KEY, { auth: { persistSession: false } });
+      const client = createClient(targetUrl, targetAnonKey, { auth: { persistSession: false } });
       const { data: authData, error: authErr } = await client.auth.signInWithPassword({
         email,
         password: testPassword,
@@ -86,7 +108,7 @@ describe('Urbania Café — Financial Workflow Integration & Database Release Ga
         throw new Error(`Failed to authenticate ${email}: ${authErr?.message}`);
       }
 
-      const authedClient = createClient(SUPABASE_URL, ANON_KEY, {
+      const authedClient = createClient(targetUrl, targetAnonKey, {
         auth: { persistSession: false },
         global: { headers: { Authorization: `Bearer ${authData.session.access_token}` } },
       });
@@ -97,34 +119,63 @@ describe('Urbania Café — Financial Workflow Integration & Database Release Ga
     const ownerAuth = await setupTestUserSession('owner@urbaniacafe.com', 'TEST_OWNER_PASSWORD');
     ownerClient = ownerAuth.client;
     ownerUserId = ownerAuth.user.id;
+    await adminClient.from('admin_profiles').upsert({ user_id: ownerUserId, role: 'owner' });
 
     const staffAuth = await setupTestUserSession('staff@urbaniacafe.com', 'TEST_STAFF_PASSWORD');
     staffClient = staffAuth.client;
     staffUserId = staffAuth.user.id;
+    await adminClient.from('admin_profiles').upsert({ user_id: staffUserId, role: 'staff' });
 
-    // Fetch active table and menu item
+    // Fetch active table and menu item (or seed fallback if starting with bare migrations)
     const { data: tables } = await adminClient.from('cafe_tables').select('id, qr_token').eq('is_active', true).limit(1);
-    tableId = tables?.[0]?.id || null;
-    qrToken = tables?.[0]?.qr_token || null;
+    if (tables && tables.length > 0) {
+      tableId = tables[0].id;
+      qrToken = tables[0].qr_token;
+    } else {
+      const { data: newTable } = await adminClient.from('cafe_tables').insert({
+        table_number: 99,
+        label: 'Table 99',
+        qr_token: crypto.randomUUID(),
+        is_active: true,
+      }).select().single();
+      tableId = newTable?.id || null;
+      qrToken = newTable?.qr_token || null;
+    }
 
     const { data: items } = await adminClient.from('menu_items').select('id, price_paise').eq('is_available', true).limit(1);
-    menuItemId = items?.[0]?.id || null;
-    menuItemPricePaise = items?.[0]?.price_paise || 20000;
+    if (items && items.length > 0) {
+      menuItemId = items[0].id;
+      menuItemPricePaise = items[0].price_paise || 20000;
+    } else {
+      let { data: cat } = await adminClient.from('menu_categories').select('id').limit(1).maybeSingle();
+      if (!cat) {
+        const { data: newCat } = await adminClient.from('menu_categories').insert({
+          name: 'Coffee',
+          slug: 'coffee',
+          sort_order: 1,
+        }).select().single();
+        cat = newCat;
+      }
+      const { data: newItem } = await adminClient.from('menu_items').insert({
+        category_id: cat?.id,
+        name: 'Cappuccino',
+        description: 'Test Cappuccino',
+        price_paise: 20000,
+        is_veg: true,
+        is_available: true,
+        sort_order: 1,
+      }).select().single();
+      menuItemId = newItem?.id || null;
+      menuItemPricePaise = newItem?.price_paise || 20000;
+    }
   });
 
   afterAll(async () => {
     // Non-destructive cleanup of ephemeral test records
-    if (createdBillIds.length > 0) {
-      await adminClient.from('bill_audit_events').delete().in('bill_id', createdBillIds);
-      await adminClient.from('customer_payments').delete().in('bill_id', createdBillIds);
-      await adminClient.from('bills').delete().in('id', createdBillIds);
-    }
-    if (createdOrderIds.length > 0) {
-      await adminClient.from('order_kitchen_tickets').delete().in('order_id', createdOrderIds);
-      await adminClient.from('admin_credit_settlements').delete().in('order_id', createdOrderIds);
-      await adminClient.from('order_items').delete().in('order_id', createdOrderIds);
-      await adminClient.from('orders').delete().in('id', createdOrderIds);
-    }
+    // Note: customer_payments has an immutable trigger preventing DELETE/UPDATE.
+    // In our disposable database architecture, cleanup is performed at the container/volume
+    // level by scripts/run-disposable-financial-integration.ps1 tearing down the ephemeral stack.
+    // Payment rows are never deleted via SQL.
   });
 
   // ===========================================================================
@@ -468,6 +519,7 @@ describe('Urbania Café — Financial Workflow Integration & Database Release Ga
     );
     expect(metrics.grossSalesPaise).toBeGreaterThanOrEqual(metrics.netSalesPaise);
     expect(metrics.customerRefundsPaise).toBeGreaterThanOrEqual(0);
+    expect(metrics.historicalRefundClassifiedPaise).toBe(metrics.customerRefundsPaise);
   });
 
   // ===========================================================================
@@ -542,7 +594,7 @@ describe('Urbania Café — Financial Workflow Integration & Database Release Ga
       const res = await cancelPost(req as any, { params: Promise.resolve({ billId: testUuid }) });
       expect(res.status).toBe(400);
       const data = await res.json();
-      expect(data.error).toContain('Direct financial refunds are not supported during bill cancellation');
+      expect(data.error).toContain('Financial refunds are not supported during bill cancellation');
     });
 
     it('7.4 POST /api/admin/credit-orders/settle rejects refund / reversal actions', async () => {
