@@ -75,7 +75,7 @@ describe('Migrations 0019 & 0020: PostgreSQL RLS Authorization & Order Integrity
       if (listErr) throw new Error(`Failed to list users: ${listErr.message}`);
 
       let user = usersData.users.find((u) => u.email === email);
-      const testPassword = process.env[envPasswordKey] || `${crypto.randomUUID()}!Aa1`;
+      const testPassword = process.env[envPasswordKey] || env[envPasswordKey] || `${crypto.randomUUID()}!Aa1`;
 
       if (!user) {
         // Create user if not present
