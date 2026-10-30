@@ -163,9 +163,9 @@ as $$
       where user_id = _user_id and role = _role
     )
     when exists (
-      select 1 from public.user_roles requester
+      select 1 from public.admin_profiles requester
       where requester.user_id = auth.uid()
-        and requester.role = 'admin'::public.app_role
+        and requester.role in ('owner', 'admin')
     ) then exists (
       select 1 from public.user_roles target
       where target.user_id = _user_id and target.role = _role
@@ -187,9 +187,9 @@ as $$
       select 1 from public.user_roles where user_id = _user_id
     )
     when exists (
-      select 1 from public.user_roles requester
+      select 1 from public.admin_profiles requester
       where requester.user_id = auth.uid()
-        and requester.role = 'admin'::public.app_role
+        and requester.role in ('owner', 'admin')
     ) then exists (
       select 1 from public.user_roles target where target.user_id = _user_id
     )
