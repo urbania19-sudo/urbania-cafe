@@ -1,12 +1,12 @@
 # Urbania Café — Production Database Migration Readiness & Runbook
 
-**Document Version:** 1.4.0 (Hardened Rollback Assertions, Isolation Verification & Official Backup/Restore Scope Specification)<br />
-**Release Candidate Commit:** [`7663b32`](https://github.com/urbania19-sudo/urbania-cafe/commit/7663b32)<br />
+**Document Version:** 1.5.0 (Final Harness Hardening & Captured Production Baseline)<br />
+**Release Candidate Commit:** Current head of `feat/operational-improvements`; see [PR #8](https://github.com/urbania19-sudo/urbania-cafe/pull/8) for the exact SHA.<br />
 **Release Candidate Branch:** `feat/operational-improvements`<br />
 **Pull Request:** [#8 (feat: operational improvements)](https://github.com/urbania19-sudo/urbania-cafe/pull/8)<br />
 **Production Supabase Reference:** `asdrrunxpsqzbvswmzgv`<br />
 **Production Vercel Branch:** `main`<br />
-**Vercel Preview Deployment:** Verified live at [PR #8 Preview Deployment](https://urbania-cafe-git-feat-operational-improvements-urbania19-sudo.vercel.app)
+**Vercel Preview Deployment:** Use the latest READY deployment for the current branch head from the [Vercel project](https://vercel.com/urbania19-sudo/urbania-cafe).
 
 ---
 
@@ -20,7 +20,7 @@ While the application software, UI components, mobile dialogs, and TypeScript ba
 +-----------------------------------------------------------------------------------------------+
 |                                    VERDICT: NO-GO                                             |
 +-----------------------------------------------------------------------------------------------+
-|  1. Software Release Candidate 7663b32+: VERIFIED & READY                                     |
+|  1. Current feature-branch release candidate: VERIFIED & READY                                 |
 |  2. Migration Scripts 0016–0026: CORRECTED & REHEARSED                                        |
 |  3. Production Preflight Inspection: SCRIPT PREPARED (supabase/preflight-production-release.sql)|
 |  4. Production Database asdrrunxpsqzbvswmzgv: UNPREPARED (Stopped at 0015)                    |
@@ -131,20 +131,20 @@ While the application software, UI components, mobile dialogs, and TypeScript ba
 
 ## 6. Pre-Migration Baseline Queries & Expected Counts
 
-The database operator must run [`supabase/preflight-production-release.sql`](file:///C:/Users/Rumble/.gemini/antigravity/scratch/urbania-cafe-nextjs-port/supabase/preflight-production-release.sql) in the Supabase SQL Editor on `asdrrunxpsqzbvswmzgv`.
+The database operator must rerun [`supabase/preflight-production-release.sql`](../supabase/preflight-production-release.sql) in the Supabase SQL Editor on `asdrrunxpsqzbvswmzgv` immediately before any approved migration. The read-only baseline captured on 2026-10-30 is archived in [`docs/production-baseline-2026-10-30.md`](production-baseline-2026-10-30.md). All 13 read-only statements were executed individually without SQL errors; this is a point-in-time baseline, not permission to migrate.
 
 ### Expected Pre-Migration Diagnostic Findings on Production:
 
 1. **Finding 1 — Unbilled Orders:**
    - Cancelled QR/Manual orders without bill: **4 rows**, total **147,600 paise** (₹1,476).
    - Completed QR/Manual orders without bill: **3 rows**, total **38,700 paise** (₹387).
-   - Completed QR/Manual orders with issued bill: **1 row**, total **25,800 paise** (₹258).
-   - *Pre-migration total:* 8 orders, 212,100 paise.
-   - *Post-migration expectation:* Exactly 1 order marked paid (₹258); 7 unbilled orders remain `unpaid` with `paid_paise = 0`.
+   - Completed QR/Manual orders with issued bills: **24 rows**, total **663,500 paise** (₹6,635): one QR order worth **25,800 paise** and 23 manual orders worth **637,700 paise**.
+   - *Pre-migration unbilled population:* 7 orders, 186,300 paise; all remain `unpaid` with `paid_paise = 0`.
+   - *Post-migration expectation:* The 24 issued-bill-linked orders are reconciled to their issued bill totals; unbilled orders remain unpaid. These are point-in-time figures and must be rechecked before migration.
 2. **Finding 2 — Discounted Manual Bills:**
    - Issued manual bills where order total exceeds bill total: **5 rows**, aggregate difference **21,200 paise** (₹212).
-   - *Pre-migration state:* `orders.total_paise` = 165,000 paise; `bills.total_paise` = 143,800 paise.
-   - *Post-migration expectation:* `orders.paid_paise` = `bills.paid_paise` = 143,800 paise. Zero discrepancy.
+   - *Pre-migration state at 2026-10-30:* `orders.total_paise` = **160,000 paise**; `bills.total_paise` = **138,800 paise**; difference = **21,200 paise (₹212)**.
+   - *Post-migration expectation:* linked `orders.paid_paise` = `bills.paid_paise` = **138,800 paise** in aggregate. Zero discrepancy.
 3. **Finding 3 — Cancelled Historical Bills:**
    - Cancelled historical bills: **17 rows**, total **481,100 paise** (₹4,811).
    - *Pre-migration state:* Retains invalid 0016 default `paid` with `paid_paise = 0`.
@@ -388,13 +388,15 @@ Before applying migrations to production, the operator should validate that the 
 
 ## 10. Go/No-Go Decision Gates
 
+The first read-only production baseline has been captured and archived on 2026-10-30. Gate 5 is satisfied for this snapshot only; repeat it immediately before execution because production records can change.
+
 | Gate ID | Gate Name | Required Criterion | Current Status | Gate Verdict |
 |---|---|---|---|---|
 | **GATE-1** | **Software Build & Verification** | Typecheck, lint, build, unit tests, and disposable integration test suite pass cleanly. | All passed (Unit: 517/517 OK; Financial Integration: 12/12 OK; TypeScript & ESLint: 0 errors; Build: OK) | 🟢 **PASSED** |
 | **GATE-2** | **Backfill Correction Verification** | Deterministic regression tests prove findings 1, 2, 3 and multiple-bill safety gates are resolved. | `tests/payment-reconciliation-migration.test.ts` passed (13/13 OK) | 🟢 **PASSED** |
 | **GATE-3** | **Preflight Script Readiness** | Read-only SQL diagnostic verified on legacy and modern databases without relation or column errors. | `supabase/preflight-production-release.sql` verified on both 0015 and 0026 schemas | 🟢 **PASSED** |
 | **GATE-4** | **Rehearsal on Clean Container** | Isolated two-phase replay applies 0016–0026 over real historical fixtures, and dedicated fail-closed harness tests actual migration 0018 failure against duplicate-bill fixtures. | Verified via `npm run test:migration:replay` (9/9 post-migration assertions OK) and `npm run test:migration:fail-closed` (exit code 1, URB:ambiguous_multiple_bills_detected, 0 partial changes) | 🟢 **PASSED** |
-| **GATE-5** | **Production Baseline Inspection** | Operator runs preflight SQL on `asdrrunxpsqzbvswmzgv` and archives baseline. | Not yet run on live production | 🔴 **PENDING (Operator action)** |
+| **GATE-5** | **Production Baseline Inspection** | Read-only preflight executed and baseline archived; repeat immediately before migration. | Captured 2026-10-30 and archived in `docs/production-baseline-2026-10-30.md`; refresh required before change window. | 🟢 **BASELINE CAPTURED (RECHECK REQUIRED)** |
 | **GATE-6** | **Owner Backup Verification** | Complete project backup & recovery readiness: Platform snapshot/PITR verification, logical dumps (roles, schema, data, customizations diff), storage sync (`menu-images`), and supported restore verification. | Pending owner execution | 🔴 **PENDING (Owner action)** |
 | **GATE-7** | **Owner Accounting Sign-Off** | Owner accepts unreconciled NULL status for 17 cancelled bills and 0-discrepancy discount logic. | Pending owner review | 🔴 **PENDING (Owner action)** |
 | **GATE-8** | **Maintenance Window Scheduling** | Dedicated change window approved by business owners. | Pending owner scheduling | 🔴 **PENDING (Owner authorization)** |
