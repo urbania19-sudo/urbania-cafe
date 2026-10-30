@@ -146,8 +146,58 @@ revoke execute on function public.admin_list_staff() from public, anon;
 revoke execute on function public.admin_set_role(text, public.app_role, boolean) from public, anon;
 revoke execute on function public.acknowledge_kitchen_ticket(uuid, text, jsonb, jsonb, uuid) from public, anon;
 
--- Role helpers remain executable by authenticated because RLS policies use them.
--- has_role() and is_staff(uuid) are no longer needed by anon after the policy changes.
+-- Restrict role lookups to the caller's own user ID, except that an admin may
+-- inspect another account. This prevents authenticated users from probing arbitrary
+-- UUIDs through SECURITY DEFINER helper RPCs. RLS policies call these with auth.uid().
+create or replace function public.has_role(_user_id uuid, _role public.app_role)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select case
+    when auth.uid() is null or _user_id is null then false
+    when _user_id = auth.uid() then exists (
+      select 1 from public.user_roles
+      where user_id = _user_id and role = _role
+    )
+    when exists (
+      select 1 from public.user_roles requester
+      where requester.user_id = auth.uid()
+        and requester.role = 'admin'::public.app_role
+    ) then exists (
+      select 1 from public.user_roles target
+      where target.user_id = _user_id and target.role = _role
+    )
+    else false
+  end;
+$$;
+
+create or replace function public.is_staff(_user_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select case
+    when auth.uid() is null or _user_id is null then false
+    when _user_id = auth.uid() then exists (
+      select 1 from public.user_roles where user_id = _user_id
+    )
+    when exists (
+      select 1 from public.user_roles requester
+      where requester.user_id = auth.uid()
+        and requester.role = 'admin'::public.app_role
+    ) then exists (
+      select 1 from public.user_roles target where target.user_id = _user_id
+    )
+    else false
+  end;
+$$;
+
+-- These helpers remain executable by authenticated because RLS policies use them.
 revoke execute on function public.has_role(uuid, public.app_role) from public, anon;
 grant execute on function public.has_role(uuid, public.app_role) to authenticated, service_role;
 
@@ -202,11 +252,13 @@ begin
   end loop;
 end $$;
 
--- 6. Prevent future SECURITY DEFINER functions created by the migration role from
--- automatically becoming callable by PUBLIC/anon/authenticated. New RPCs must add
--- explicit EXECUTE grants for each application role that needs them.
+-- 6. Prevent future functions created by the migration owner from inheriting the
+-- global PUBLIC EXECUTE grant and the schema-specific anon/authenticated grants.
+-- PUBLIC must be revoked globally; a schema-scoped revoke cannot cancel that default.
+alter default privileges for role postgres
+  revoke execute on functions from public;
 alter default privileges for role postgres in schema public
-  revoke execute on functions from public, anon, authenticated;
+  revoke execute on functions from anon, authenticated;
 
 -- 7. Preserve public customer QR endpoints; their calls are protected by opaque tokens
 -- and input validation. No REVOKE is issued for these functions:
