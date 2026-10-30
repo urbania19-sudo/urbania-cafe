@@ -119,9 +119,9 @@ Migration `202610310027_harden_rpc_execution_privileges.sql` was added to PR #8 
 - Restricts anonymous category visibility to active categories while preserving authenticated administrator access to inactive categories.
 - Revokes `PUBLIC` and `anon` execution from privileged billing, payment, order-management, and administrator RPCs.
 - Preserves the four intended public token-based QR endpoints: `place_order`, `place_public_order`, `get_order_status`, and `get_table_by_token`.
-- Keeps role-check helpers executable for authenticated RLS evaluation and removes direct client execution from trigger-only helpers.
+- Keeps role-check helpers executable for authenticated RLS evaluation while limiting UUID-based role lookups to the caller’s own account unless the caller is an owner/admin; removes direct client execution from trigger-only helpers.
 - Conditionally removes Data API privileges from production-only `_backup_pre_0009_*` tables while retaining service-role read access.
-- Revokes broad future function EXECUTE defaults for the `postgres` migration role.
+- Revokes the global future `PUBLIC` function EXECUTE default and the `anon`/`authenticated` defaults in the `public` schema for the `postgres` migration role.
 
 A static regression suite was added at `tests/security-definer-grants.test.ts`. **Neither migration 0027 nor its test has yet been run in the disposable local PostgreSQL/Supabase replay.** These changes must remain unverified until that run succeeds. Supabase leaked-password protection was also observed disabled and remains a separate dashboard security setting to review.
 
