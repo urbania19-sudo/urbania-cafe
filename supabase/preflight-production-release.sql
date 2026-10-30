@@ -329,7 +329,7 @@ select
   'Finding 1: Completed QR/Manual Orders WITH Issued Bill' as diagnostic_case,
   count(*) as affected_row_count,
   coalesce(sum(o.total_paise), 0) as total_amount_paise,
-  'Expected Pre: 1 row (25,800 paise / ₹258). Expected Post: payment_status = paid, paid_paise = 25,800' as expectation
+  'Expected Pre: 24 rows (663,500 paise / ₹6,635): 1 QR order = 25,800 paise and 23 manual orders = 637,700 paise. Expected Post: linked order paid balances equal issued bill totals.' as expectation
 from public.orders o
 where o.order_source in ('qr', 'manual')
   and o.status = 'COMPLETED'
@@ -341,7 +341,7 @@ select
   'Finding 2: Issued Manual Bills where Order Total > Bill Total (Discounts)' as diagnostic_case,
   count(*) as affected_row_count,
   coalesce(sum(o.total_paise - b.total_paise), 0) as total_amount_paise,
-  'Expected Pre: 5 rows (21,200 paise / ₹212 diff). Expected Post: orders.paid_paise = bills.total_paise' as expectation
+  'Expected Pre: 5 rows; order totals = 160,000 paise, issued bill totals = 138,800 paise, difference = 21,200 paise (₹212). Expected Post: linked order and bill paid balances equal the issued bill total.' as expectation
 from public.bills b
 join public.orders o on o.id = b.order_id
 where b.status = 'issued'
