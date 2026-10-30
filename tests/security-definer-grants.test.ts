@@ -50,6 +50,16 @@ describe('Migration 0027: SECURITY DEFINER execution privilege hardening', () =>
         `grant execute on function public.${signature} to authenticated, service_role;`
       );
     }
+
+    expect(flatSql).toContain(
+      'when _user_id = auth.uid() then exists ( select 1 from public.user_roles where user_id = _user_id and role = _role )'
+    );
+    expect(flatSql).toContain(
+      "requester.role = 'admin'::public.app_role"
+    );
+    expect(flatSql).toContain(
+      'when _user_id = auth.uid() then exists ( select 1 from public.user_roles where user_id = _user_id )'
+    );
   });
 
   it('restricts internal-data policies to authenticated but preserves public active-category reads', () => {
@@ -114,7 +124,10 @@ describe('Migration 0027: SECURITY DEFINER execution privilege hardening', () =>
 
   it('removes broad future default EXECUTE grants for the migration role', () => {
     expect(flatSql).toContain(
-      'alter default privileges for role postgres in schema public revoke execute on functions from public, anon, authenticated;'
+      'alter default privileges for role postgres revoke execute on functions from public;'
+    );
+    expect(flatSql).toContain(
+      'alter default privileges for role postgres in schema public revoke execute on functions from anon, authenticated;'
     );
     expect(flatSql).not.toContain('alter default privileges for role supabase_admin');
   });
