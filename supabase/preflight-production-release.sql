@@ -155,6 +155,7 @@ order by ei.index_name;
 -- =============================================================================
 -- 5. RPC Functions & Security Definer Signatures Audit
 -- Inspects existence, language, security definer property, and search_path of RPCs.
+-- Includes identity-aware helpers and both public token-based and authenticated RPCs.
 -- =============================================================================
 with expected_functions as (
   select unnest(array[
@@ -169,8 +170,15 @@ with expected_functions as (
     'is_admin',
     'is_staff',
     'cancel_bill',
+    'create_manual_order',
+    'edit_order_items',
+    'get_bill_for_order',
+    'record_bill_reprint',
+    'update_staff_order_status',
     'place_public_order',
-    'create_manual_order'
+    'get_order_status',
+    'get_table_by_token',
+    'place_order'
   ]) as func_name
 )
 select
@@ -196,42 +204,42 @@ select
   has_function_privilege('authenticated', p.oid, 'EXECUTE') as authenticated_can_execute,
   has_function_privilege('service_role', p.oid, 'EXECUTE') as service_role_can_execute,
   case
-    when has_function_privilege('anon', p.oid, 'EXECUTE') and p.proname in (
-      'settle_admin_credit_payment',
-      'record_customer_payment',
-      'create_external_platform_order',
-      'create_admin_credit_order',
-      'has_role',
-      'is_staff',
-      'is_admin',
+    when p.proname in (
+      'get_authorized_admins',
       'settle_admin_credit_payment',
       'record_customer_payment',
       'create_external_platform_order',
       'create_admin_credit_order',
       'order_has_items',
+      'has_role',
+      'is_admin',
+      'is_staff',
       'cancel_bill',
       'create_manual_order',
       'edit_order_items',
       'get_bill_for_order',
       'record_bill_reprint',
       'update_staff_order_status'
-    ) then 'FAIL: SENSITIVE RPC CALLABLE BY ANON'
-    when not has_function_privilege('anon', p.oid, 'EXECUTE') and p.proname in (
-      'has_role',
-      'is_staff',
-      'is_admin',
+    ) and has_function_privilege('anon', p.oid, 'EXECUTE')
+      then 'FAIL: SENSITIVE RPC CALLABLE BY ANON'
+    when p.proname in (
+      'get_authorized_admins',
       'settle_admin_credit_payment',
       'record_customer_payment',
       'create_external_platform_order',
       'create_admin_credit_order',
       'order_has_items',
+      'has_role',
+      'is_admin',
+      'is_staff',
       'cancel_bill',
       'create_manual_order',
       'edit_order_items',
       'get_bill_for_order',
       'record_bill_reprint',
       'update_staff_order_status'
-    ) then 'PASS: RESTRICTED FROM ANON'
+    ) and not has_function_privilege('anon', p.oid, 'EXECUTE')
+      then 'PASS: RESTRICTED FROM ANON'
     when p.proname in ('place_public_order', 'get_order_status', 'get_table_by_token', 'place_order')
       then 'INFO: INTENTIONALLY PUBLIC QR/TOKEN RPC'
     else 'INFO: UNCHECKED'
@@ -249,6 +257,7 @@ where p.pronamespace = 'public'::regnamespace
     'is_admin',
     'is_staff',
     'cancel_bill',
+    'create_manual_order',
     'edit_order_items',
     'get_bill_for_order',
     'record_bill_reprint',
@@ -256,13 +265,11 @@ where p.pronamespace = 'public'::regnamespace
     'place_public_order',
     'get_order_status',
     'get_table_by_token',
-    'place_order',
-    'create_manual_order'
+    'place_order'
   )
-order by p.proname;
+order by p.proname, pg_get_function_identity_arguments(p.oid);
 
 
--- =============================================================================
 -- 7. Row Level Security (RLS) & Policies Audit
 -- Verifies RLS policies on orders, order_items, customer_payments, admin_credit_settlements.
 -- =============================================================================
