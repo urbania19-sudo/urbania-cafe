@@ -1,17 +1,34 @@
 -- Migration 0027: Harden exposed SECURITY DEFINER RPC execution privileges.
 --
--- The production advisor found multiple SECURITY DEFINER routines that inherited
--- EXECUTE for anon through default privileges. Keep customer-facing QR endpoints
--- callable with their existing token validation, but restrict staff/admin operations
--- to signed-in users and remove direct execution on trigger-only helpers.
+-- The production advisor found privileged SECURITY DEFINER routines inheriting EXECUTE
+-- for anon from broad default privileges. This migration narrows the Data API surface,
+-- preserves intentionally public token-based QR endpoints, and protects existing RLS.
 --
--- This migration changes privileges only. It does not mutate application data.
+-- Privilege/policy changes only. No application financial or order data is modified.
 
 begin;
 
--- 1. Revoke unauthenticated execution from privileged application RPCs.
--- Existing authenticated grants are intentionally preserved; each function still
--- performs its own owner/admin/staff authorization check in the function body.
+-- 1. Split the category read policy so anonymous menu reads do not need has_role().
+-- Previously this combined anon/authenticated policy called has_role(auth.uid(), ...),
+-- making that user-role lookup callable by anon as part of RLS evaluation.
+drop policy if exists "Public reads active categories" on public.categories;
+drop policy if exists "Authenticated reads active categories" on public.categories;
+
+create policy "Public reads active categories"
+  on public.categories
+  for select
+  to anon
+  using (is_active);
+
+create policy "Authenticated reads active categories"
+  on public.categories
+  for select
+  to authenticated
+  using (is_active or public.has_role(auth.uid(), 'admin'::public.app_role));
+
+-- 2. Revoke anonymous execution from privileged application RPCs.
+-- Authenticated grants are retained; function bodies continue to enforce their own
+-- owner/admin/staff authorization checks.
 revoke execute on function public.get_authorized_admins() from public, anon;
 revoke execute on function public.settle_admin_credit_payment(uuid, integer, text, text) from public, anon;
 revoke execute on function public.record_customer_payment(uuid, integer, text, text, text) from public, anon;
@@ -28,24 +45,30 @@ revoke execute on function public.admin_list_staff() from public, anon;
 revoke execute on function public.admin_set_role(text, public.app_role, boolean) from public, anon;
 revoke execute on function public.acknowledge_kitchen_ticket(uuid, text, jsonb, jsonb, uuid) from public, anon;
 
--- These look-up helpers accept an arbitrary user ID. They are not application
--- endpoints; do not let anon or regular authenticated users enumerate role membership.
-revoke execute on function public.has_role(uuid, public.app_role) from public, anon, authenticated;
-revoke execute on function public.is_staff(uuid) from public, anon, authenticated;
+-- These helpers remain available to authenticated because existing RLS policies use
+-- them. has_role() remains unavailable to anon after the category policy split.
+revoke execute on function public.has_role(uuid, public.app_role) from public, anon;
+grant execute on function public.has_role(uuid, public.app_role) to authenticated;
 
--- 2. Re-assert least-privilege on functions introduced in migrations 0020-0021.
+revoke execute on function public.is_staff(uuid) from public, anon;
+grant execute on function public.is_staff(uuid) to authenticated;
+
+-- is_admin() and is_staff() (zero-argument forms) remain unchanged: multiple existing
+-- policies are TO PUBLIC and invoke them to return false for anonymous requests.
+
+-- 3. Re-assert least-privilege on functions introduced in migrations 0020-0021.
 revoke execute on function public.create_external_platform_order(jsonb) from public, anon;
 revoke execute on function public.create_admin_credit_order(jsonb) from public, anon;
 revoke execute on function public.order_has_items(uuid) from public, anon;
 
--- 3. Trigger/event-trigger entry points are not RPCs. Their triggers continue to
--- invoke them as configured; application roles must not call them directly.
+-- 4. Trigger/event-trigger entry points are not RPCs. Existing triggers continue to
+-- invoke them; clients must not call them directly.
 revoke execute on function public.log_order_status() from public, anon, authenticated;
 revoke execute on function public.rls_auto_enable() from public, anon, authenticated;
 revoke execute on function public.prevent_customer_payment_mutation() from public, anon, authenticated;
 
--- 4. Keep archived pre-0009 snapshots in place, but remove direct Data API grants.
--- Their RLS has no policies by design; this is defense-in-depth for retained backups.
+-- 5. Retain pre-0009 snapshots, but remove anon/authenticated Data API grants.
+-- service_role retains SELECT-only access for privileged backup/recovery workflows.
 revoke all privileges on table
   public._backup_pre_0009_admin_profiles,
   public._backup_pre_0009_bills,
@@ -58,20 +81,31 @@ revoke all privileges on table
   public._backup_pre_0009_orders
 from public, anon, authenticated;
 
--- 5. Prevent future SECURITY DEFINER functions created by either migration owner
--- from automatically becoming callable by anon/authenticated/PUBLIC. New RPCs must
--- add explicit EXECUTE grants for the application roles that need them.
+grant select on table
+  public._backup_pre_0009_admin_profiles,
+  public._backup_pre_0009_bills,
+  public._backup_pre_0009_cafe_settings,
+  public._backup_pre_0009_cafe_tables,
+  public._backup_pre_0009_menu_categories,
+  public._backup_pre_0009_menu_item_options,
+  public._backup_pre_0009_menu_items,
+  public._backup_pre_0009_order_items,
+  public._backup_pre_0009_orders
+to service_role;
+
+-- 6. Prevent future SECURITY DEFINER functions created by migration owners from
+-- automatically becoming callable by PUBLIC/anon/authenticated. New RPCs must add
+-- explicit EXECUTE grants for each application role that needs them.
 alter default privileges for role postgres in schema public
   revoke execute on functions from public, anon, authenticated;
 alter default privileges for role supabase_admin in schema public
   revoke execute on functions from public, anon, authenticated;
 
--- 6. Preserve the deliberately public QR/menu endpoints. Their inputs are protected
--- by unguessable table/public tokens and their own validation:
+-- 7. Preserve public customer QR endpoints; their calls are protected by opaque tokens
+-- and input validation. No REVOKE is issued for these functions:
 --   place_order(text, jsonb, text, integer, text)
 --   place_public_order(jsonb)
 --   get_order_status(uuid, text)
 --   get_table_by_token(text)
--- No REVOKE is issued for these customer-facing entry points.
 
 commit;
