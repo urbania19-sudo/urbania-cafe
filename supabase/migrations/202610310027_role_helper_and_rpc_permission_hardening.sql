@@ -1,6 +1,6 @@
 -- Urbania Café — Migration 0027: Role Helper & RPC Permission Hardening
 -- Additive security hardening. No business data is rewritten.
--- Apply only after migrations 0016–0026 have been rehearsed on a disposable database.
+-- Apply only after migrations 0016–0026 have been rehearsed on a disposable database; migration 0027 must then be included in the same complete chronological replay.
 
 begin;
 
