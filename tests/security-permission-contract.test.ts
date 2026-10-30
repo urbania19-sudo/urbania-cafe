@@ -48,6 +48,22 @@ describe('Migration 0027 — role helper and RPC permission contract', () => {
     expect(sql).toContain('grant execute on function public.get_table_by_token(text) to anon, authenticated, service_role');
   });
 
+
+  it('moves staff/admin row policies off PUBLIC while preserving public menu paths', () => {
+    for (const policy of [
+      '"admins read profiles"',
+      '"staff read own profile"',
+      '"staff read bills"',
+      '"staff read orders"',
+      '"staff and admins read kitchen tickets"',
+    ]) {
+      expect(sql).toContain(`alter policy ${policy}`);
+    }
+    expect(sql).toContain('to authenticated');
+    expect(sql).toContain('create policy "Public reads active categories"');
+    expect(sql).toContain('on public.categories');
+  });
+
   it('keeps the migration transactional and does not modify business rows', () => {
     expect(sql.trimStart().startsWith('begin;')).toBe(true);
     expect(sql.trimEnd().endsWith('commit;')).toBe(true);
