@@ -1,8 +1,9 @@
 # Urbania Café — Production Database Migration Readiness & Runbook
 
-**Document Version:** 1.5.0 (Final Harness Hardening & Captured Production Baseline)<br />
+**Document Version:** 1.6.0 (Approved Accounting Treatment & Security Migration 0027)<br />
 **Release Candidate Commit:** Current head of `feat/operational-improvements`; see [PR #8](https://github.com/urbania19-sudo/urbania-cafe/pull/8) for the exact SHA.<br />
-**Release Candidate Branch:** `feat/operational-improvements`<br />
+**Application Release Branch:** `feat/operational-improvements` (PR #8)<br />
+**Security Hardening Branch:** `chore/release-security-hardening` (separate review branch; not merged)<br />
 **Pull Request:** [#8 (feat: operational improvements)](https://github.com/urbania19-sudo/urbania-cafe/pull/8)<br />
 **Production Supabase Reference:** `asdrrunxpsqzbvswmzgv`<br />
 **Production Vercel Branch:** `main`<br />
@@ -21,21 +22,21 @@ While the application software, UI components, mobile dialogs, and TypeScript ba
 |                                    VERDICT: NO-GO                                             |
 +-----------------------------------------------------------------------------------------------+
 |  1. Current feature-branch release candidate: VERIFIED & READY                                 |
-|  2. Migration Scripts 0016–0026: CORRECTED & REHEARSED                                        |
+|  2. Migrations 0016–0026: previously rehearsed; Migration 0027: NOT YET REHEARSED              |
 |  3. Production Preflight Inspection: SCRIPT PREPARED (supabase/preflight-production-release.sql)|
 |  4. Production Database asdrrunxpsqzbvswmzgv: UNPREPARED (Stopped at 0015)                    |
 |  5. Verified Cold/Hot Backup & Restore: PENDING OWNER EXECUTION                               |
 |  6. Formal Maintenance Window & Change Approval: PENDING OWNER SIGN-OFF                       |
-|  7. Owner Reconciliation of 17 Cancelled Historical Bills: PENDING OWNER DECISION             |
+|  7. Historical Accounting Treatment: OWNER APPROVED 2026-10-31                                |
 +-----------------------------------------------------------------------------------------------+
 ```
 
 ### Why Production Execution is Currently Blocked:
-1. **Unapplied Migration Delta:** Production Supabase project `asdrrunxpsqzbvswmzgv` currently stops at migration `202610260015`. Migrations `0016` through `0026` (11 distinct migration files) have not yet been applied.
+1. **Unapplied Migration Delta:** Production Supabase project `asdrrunxpsqzbvswmzgv` currently stops at migration `202610260015`. Migrations `0016` through `0027` (12 distinct migration files) have not yet been applied.
 2. **Missing Financial Infrastructure:** In production, `public.customer_payments`, `public.admin_credit_settlements`, `orders.payment_status`, and `bills.paid_paise` do not exist. Any direct deployment of PR #8 code to production without applying the database migrations will result in immediate runtime errors for billing and order workflows.
-3. **Backup / Recovery Point Pending:** The owner has not yet captured and verified a point-in-time recovery backup or downloadable logical dump (`pg_dump`) immediately preceding this 11-migration batch.
+3. **Backup / Recovery Point Pending:** An encrypted logical PostgreSQL archive exists in restricted business Drive storage, but it does not include managed Auth, storage binary objects, or complete Supabase configuration. Supported restore readiness and pre-release backup verification are not yet complete.
 4. **Append-Only Trigger Safety:** Migration 0018 installs an immutable trigger preventing deletion/updates to `customer_payments`. Applying this requires scheduled maintenance authorization.
-5. **Historical Cancelled Bills Reconciliation:** Production has 17 cancelled bills totaling 481,100 paise (₹4,811) with unknown payment status. The owner must be informed of their unreconciled (`payment_status = NULL`) state.
+5. **Historical Accounting Treatment:** Owner approved on 2026-10-31 that cancelled bills remain unknown/unreconciled, issued discounted bills reconcile to actual issued bill totals, and unbilled orders remain unpaid. The post-baseline cancellation of bill `UB-01041` is recorded in Section 7; it is not evidence of a refund.
 
 ---
 
@@ -58,6 +59,7 @@ While the application software, UI components, mobile dialogs, and TypeScript ba
   9. `202610290024_option_snapshot_price_consistency.sql`
   10. `202610290025_admin_credit_order_idempotency.sql`
   11. `202610290026_admin_credit_payload_hash.sql`
+  12. `202610310027_role_helper_and_rpc_permission_hardening.sql`
 
 ---
 
@@ -86,6 +88,8 @@ While the application software, UI components, mobile dialogs, and TypeScript ba
 | **RPC Functions** | `create_external_platform_order(...)` | ❌ **ABSENT** | ✅ `SECURITY DEFINER` (Restricted from public/anon) | `0020`, `0023`, `0024` |
 | **RPC Functions** | `create_admin_credit_order(...)` | ❌ **ABSENT** | ✅ `SECURITY DEFINER` (Restricted from public/anon) | `0020`, `0024`, `0025`, `0026` |
 | **RPC Functions** | `order_has_items(uuid)` | ❌ **ABSENT** | ✅ `SECURITY DEFINER` (Restricted from public/anon) | `0021`, `0022` |
+| **RPC / RLS Security** | `has_role(uuid, app_role)` and `is_staff(uuid)` | ⚠️ Legacy helpers query `user_roles` and accept arbitrary IDs | ✅ Self-only checks sourced from `admin_profiles`; anon execution revoked | `0027` |
+| **RLS Policies** | Staff/admin read and write policies | ⚠️ Several policies target `PUBLIC` | ✅ Restricted to `authenticated`; anonymous active-category browsing retained | `0027` |
 | **RPC Functions** | `prevent_customer_payment_mutation()`| ❌ **ABSENT** | ✅ Trigger procedure raising exception on edit/delete | `0018` |
 | **Triggers** | `customer_payments_immutable` | ❌ **ABSENT** | ✅ BEFORE UPDATE OR DELETE on `customer_payments` | `0018` |
 | **RLS Policies** | `orders` insert policy | ⚠️ Legacy permissive | ✅ Hardened least-privilege insert policy | `0019` |
@@ -142,9 +146,9 @@ The database operator must rerun [`supabase/preflight-production-release.sql`](.
    - *Pre-migration unbilled population:* 7 orders, 186,300 paise; all remain `unpaid` with `paid_paise = 0`.
    - *Post-migration expectation:* The 24 issued-bill-linked orders are reconciled to their issued bill totals; unbilled orders remain unpaid. These are point-in-time figures and must be rechecked before migration.
 2. **Finding 2 — Discounted Manual Bills:**
-   - Issued manual bills where order total exceeds bill total: **5 rows**, aggregate difference **21,200 paise** (₹212).
-   - *Pre-migration state at 2026-10-30:* `orders.total_paise` = **160,000 paise**; `bills.total_paise` = **138,800 paise**; difference = **21,200 paise (₹212)**.
-   - *Post-migration expectation:* linked `orders.paid_paise` = `bills.paid_paise` = **138,800 paise** in aggregate. Zero discrepancy.
+   - Archived 2026-10-30 baseline: **5 issued manual bills**, aggregate discount delta **21,200 paise** (₹212). After UB-01041 was cancelled, latest verified live population: **4 issued discounted manual bills**, aggregate discount delta **16,300 paise** (₹163).
+   - *Archived baseline state:* `orders.total_paise` = **160,000 paise**; `bills.total_paise` = **138,800 paise**; difference = **21,200 paise (₹212)**. The latest issued-only live discount delta is **16,300 paise (₹163)** across 4 bills.
+   - *Post-migration expectation:* for every issued bill, linked `orders.paid_paise` = `bills.paid_paise` = `bills.total_paise`; no assumption that cancelled bills were refunded or paid.
 3. **Finding 3 — Cancelled Historical Bills:**
    - Cancelled historical bills: **17 rows**, total **481,100 paise** (₹4,811).
    - *Pre-migration state:* Retains invalid 0016 default `paid` with `paid_paise = 0`.
@@ -160,17 +164,21 @@ The database operator must rerun [`supabase/preflight-production-release.sql`](.
 
 ---
 
-## 7. Remaining Accounting Decisions Requiring Owner Reconciliation
+## 7. Approved Historical Accounting Treatment (Owner Sign-Off: 2026-10-31)
 
-> [!IMPORTANT]
-> **Owner Sign-Off Required for 17 Cancelled Historical Bills:**
-> Production contains 17 cancelled bills issued before migration 0016, with an aggregate value of ₹4,811 (481,100 paise).
-> Because the legacy system did not record payment transaction logs or refund slips, the database cannot know whether:
-> 1. Cash was collected by staff and later voided/pocketed.
-> 2. The order was cancelled before the customer paid (customer walked away or cancelled order).
-> 3. The customer paid and was given a manual cash refund from the till.
-> 
-> **Action:** Migration 0018 safely sets `payment_status = NULL` and `paid_paise = 0` so these bills do not artificially inflate financial receipts. The owner should review the list of 17 cancelled bill numbers (available from Section 9C of `preflight-production-release.sql`) and reconcile them with physical cash register books if desired.
+> [!NOTE]
+> **Owner accounting treatment approved on 2026-10-31.** This approval covers the migration classification rules below; it does not authorize production SQL execution, PR merge, production deployment, or a maintenance window.
+
+| Historical population | Latest verified count / amount | Approved migration treatment |
+|---|---:|---|
+| Cancelled QR/manual bills | 18 / ₹4,911 | `payment_status = NULL`, `paid_paise = 0`, `payment_method = NULL` |
+| Issued discounted manual bills | 4 / ₹163 aggregate discount | Reconcile paid balances to each issued bill's actual `total_paise`; never to the pre-discount order total |
+| Cancelled QR/manual orders without any bill | 4 / ₹1,476 | Remain `unpaid`, `paid_paise = 0`, `payment_method = NULL` |
+| Completed QR/manual orders without any bill | 3 / ₹387 | Remain `unpaid`, `paid_paise = 0`, `payment_method = NULL` |
+
+**Important interpretation:** The earlier 2026-10-30 baseline recorded 17 cancelled bills / ₹4,811 and 5 issued discounted manual bills / ₹212. These are preserved in the archived baseline document as a dated snapshot. Subsequent cancellation of UB-01041 (Order #48) accounts for the change to 18 / ₹4,911 and 4 active issued discounted bills / ₹163. UB-01041 was issued at ₹100 after a ₹49 discount from ₹149; its audit trail shows issuance, two view/reprint events, and cancellation at approximately 18:16 IST on 2026-10-30. No refund event was found. This cancellation does not prove that a customer paid or received a refund.
+
+The production preflight must be re-run immediately before any approved migration window. If the current counts change again, stop and refresh the reconciliation rather than relying on these checkpoint numbers.
 
 ---
 
@@ -398,8 +406,9 @@ The first read-only production baseline has been captured and archived on 2026-1
 | **GATE-4** | **Rehearsal on Clean Container** | Isolated two-phase replay applies 0016–0026 over real historical fixtures, and dedicated fail-closed harness tests actual migration 0018 failure against duplicate-bill fixtures. | Verified via `npm run test:migration:replay` (9/9 post-migration assertions OK) and `npm run test:migration:fail-closed` (exit code 1, URB:ambiguous_multiple_bills_detected, 0 partial changes) | 🟢 **PASSED** |
 | **GATE-5** | **Production Baseline Inspection** | Read-only preflight executed and baseline archived; repeat immediately before migration. | Captured 2026-10-30 and archived in `docs/production-baseline-2026-10-30.md`; refresh required before change window. | 🟢 **BASELINE CAPTURED (RECHECK REQUIRED)** |
 | **GATE-6** | **Owner Backup Verification** | Complete project backup & recovery readiness: Platform snapshot/PITR verification, logical dumps (roles, schema, data, customizations diff), storage sync (`menu-images`), and supported restore verification. | Pending owner execution | 🔴 **PENDING (Owner action)** |
-| **GATE-7** | **Owner Accounting Sign-Off** | Owner accepts unreconciled NULL status for 17 cancelled bills and 0-discrepancy discount logic. | Pending owner review | 🔴 **PENDING (Owner action)** |
-| **GATE-8** | **Maintenance Window Scheduling** | Dedicated change window approved by business owners. | Pending owner scheduling | 🔴 **PENDING (Owner authorization)** |
+| **GATE-7** | **Owner Accounting Sign-Off** | Owner accepts NULL/unreconciled classification for cancelled bills, issued-bill paid balances, and unpaid unbilled orders. | Explicitly approved 2026-10-31; latest checkpoint is 18 cancelled bills / ₹4,911 and 4 issued discounted manual bills / ₹163 delta. | 🟢 **APPROVED** |
+| **GATE-8** | **Security Migration 0027 Rehearsal** | Disposable Postgres/Supabase replay, anonymous-vs-authenticated grants, RLS policies, public QR paths, and role-self/cross-user checks all pass. | Migration and tests prepared on a separate hardening branch; no disposable replay or test execution yet. | 🔴 **PENDING** |
+| **GATE-9** | **Maintenance Window Scheduling** | Dedicated change window approved by business owners. | Pending owner scheduling | 🔴 **PENDING (Owner authorization)** |
 
 ### Final Verdict:
-**🔴 NO-GO FOR PRODUCTION EXECUTION until Gates 5, 6, 7, and 8 are satisfied.**
+**🔴 NO-GO FOR PRODUCTION EXECUTION until Gates 5, 6, 8, and 9 are satisfied.** Gate 7 accounting sign-off is complete; supported backup/restore, refreshed preflight, and security migration rehearsal remain outstanding.
