@@ -46,7 +46,7 @@ revoke execute on function public.admin_set_role(text, public.app_role, boolean)
 revoke execute on function public.acknowledge_kitchen_ticket(uuid, text, jsonb, jsonb, uuid) from public, anon;
 
 -- These helpers remain available to authenticated because existing RLS policies use
--- them. has_role() remains unavailable to anon after the category policy split.
+-- them. The category policy split removes anon's need to execute has_role().
 revoke execute on function public.has_role(uuid, public.app_role) from public, anon;
 grant execute on function public.has_role(uuid, public.app_role) to authenticated;
 
@@ -97,8 +97,6 @@ to service_role;
 -- automatically becoming callable by PUBLIC/anon/authenticated. New RPCs must add
 -- explicit EXECUTE grants for each application role that needs them.
 alter default privileges for role postgres in schema public
-  revoke execute on functions from public, anon, authenticated;
-alter default privileges for role supabase_admin in schema public
   revoke execute on functions from public, anon, authenticated;
 
 -- 7. Preserve public customer QR endpoints; their calls are protected by opaque tokens
