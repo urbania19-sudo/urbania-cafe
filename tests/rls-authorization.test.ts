@@ -1758,4 +1758,67 @@ describe('Migrations 0019 & 0020: PostgreSQL RLS Authorization & Order Integrity
     });
     expect(legacyReplayApiRes.status).toBe(409);
   });
+  // ---------------------------------------------------------------------------
+  // 19. Identity-bound role helper hardening (Migration 0027)
+  // ---------------------------------------------------------------------------
+  it('19. Role helpers allow self-checks, reject cross-user checks, and deny anon execution', async () => {
+    const { data: ownerAdmin, error: ownerAdminErr } = await ownerClient.rpc('has_role', {
+      _user_id: ownerUserId,
+      _role: 'admin',
+    });
+    expect(ownerAdminErr).toBeNull();
+    expect(ownerAdmin).toBe(true);
+
+    const { data: staffAdmin, error: staffAdminErr } = await staffClient.rpc('has_role', {
+      _user_id: ownerUserId,
+      _role: 'admin',
+    });
+    expect(staffAdminErr).toBeNull();
+    expect(staffAdmin).toBe(false);
+
+    const { data: staffKitchen, error: staffKitchenErr } = await staffClient.rpc('has_role', {
+      _user_id: staffUserId,
+      _role: 'kitchen',
+    });
+    expect(staffKitchenErr).toBeNull();
+    expect(staffKitchen).toBe(true);
+
+    const { data: staffSelf, error: staffSelfErr } = await staffClient.rpc('is_staff', {
+      _user_id: staffUserId,
+    });
+    expect(staffSelfErr).toBeNull();
+    expect(staffSelf).toBe(true);
+
+    const { data: crossUserStaff, error: crossUserStaffErr } = await ownerClient.rpc('is_staff', {
+      _user_id: staffUserId,
+    });
+    expect(crossUserStaffErr).toBeNull();
+    expect(crossUserStaff).toBe(false);
+
+    const { error: anonRoleErr } = await anonClient.rpc('has_role', {
+      _user_id: ownerUserId,
+      _role: 'admin',
+    });
+    expect(anonRoleErr).not.toBeNull();
+    expect(anonRoleErr?.message).toMatch(/permission denied/i);
+
+    const { error: anonStaffErr } = await anonClient.rpc('is_staff', {
+      _user_id: staffUserId,
+    });
+    expect(anonStaffErr).not.toBeNull();
+    expect(anonStaffErr?.message).toMatch(/permission denied/i);
+
+    const { error: publicCategoryErr } = await anonClient
+      .from('categories')
+      .select('id')
+      .limit(1);
+    expect(publicCategoryErr).toBeNull();
+
+    const { error: publicStatusErr } = await anonClient.rpc('get_order_status', {
+      _order_id: crypto.randomUUID(),
+      _public_token: 'nonexistent-public-token-00000000',
+    });
+    expect(publicStatusErr).toBeNull();
+  });
+
 });
