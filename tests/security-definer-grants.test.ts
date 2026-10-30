@@ -55,7 +55,7 @@ describe('Migration 0027: SECURITY DEFINER execution privilege hardening', () =>
       'when _user_id = auth.uid() then exists ( select 1 from public.user_roles where user_id = _user_id and role = _role )'
     );
     expect(flatSql).toContain(
-      "requester.role = 'admin'::public.app_role"
+      "from public.admin_profiles requester where requester.user_id = auth.uid() and requester.role in ('owner', 'admin')"
     );
     expect(flatSql).toContain(
       'when _user_id = auth.uid() then exists ( select 1 from public.user_roles where user_id = _user_id )'
