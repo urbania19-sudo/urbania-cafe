@@ -21,7 +21,7 @@ While the application software, UI components, mobile dialogs, and TypeScript ba
 +-----------------------------------------------------------------------------------------------+
 |                                    VERDICT: NO-GO                                             |
 +-----------------------------------------------------------------------------------------------+
-|  1. Current feature-branch release candidate: VERIFIED & READY                                 |
+|  1. PR #8 application candidate: previously build/test verified; PR #9 security hardening: NOT YET REHEARSED |
 |  2. Migrations 0016–0026: previously rehearsed; Migration 0027: NOT YET REHEARSED              |
 |  3. Production Preflight Inspection: SCRIPT PREPARED (supabase/preflight-production-release.sql)|
 |  4. Production Database asdrrunxpsqzbvswmzgv: UNPREPARED (Stopped at 0015)                    |
@@ -102,7 +102,7 @@ While the application software, UI components, mobile dialogs, and TypeScript ba
 
 ---
 
-## 4. Migration Corrections & Detailed Inventory (0016–0026)
+## 4. Migration Corrections & Detailed Inventory (0016–0027)
 
 ### Key Revisions Implemented in Migrations 0016 & 0018:
 1. **Migration 0016 Column Definition:**
@@ -110,11 +110,18 @@ While the application software, UI components, mobile dialogs, and TypeScript ba
    - Allowed `payment_status` to be nullable (`CHECK (payment_status is null or payment_status in ('unpaid', 'partially_paid', 'paid', 'external'))`).
 2. **Migration 0018 Authoritative Backfill Corrections:**
    - **Finding 1 Fix:** Only QR/manual orders with an **issued bill** (`b.status = 'issued'`) are marked paid. Unbilled orders (cancelled without bill, completed without bill, active) strictly remain `payment_status = 'unpaid'` and `paid_paise = 0`.
-   - **Finding 2 Fix:** Order paid balance is set using `b.total_paise` (the actual issued bill total, after any bill-level discount), NOT `o.total_paise`. If a discount was applied at bill issuance (`b.total_paise < o.total_paise`), order and bill paid balances agree exactly, eliminating the 21,200 paise (₹212) discrepancy across 5 manual bills.
-   - **Finding 3 Fix:** Cancelled historical bills (17 bills, 481,100 paise) and their linked orders are set to `payment_status = NULL` and `paid_paise = 0`. This avoids falsely asserting that money was collected (`'paid'`) or never collected (`'unpaid'`), honestly capturing the historical uncertainty.
+   - **Finding 2 Fix:** Order paid balance is set using `b.total_paise` (the actual issued bill total, after any bill-level discount), NOT `o.total_paise`. If a discount was applied at bill issuance (`b.total_paise < o.total_paise`), order and bill paid balances agree exactly. The 21,200 paise (₹212) difference across 5 manual bills is the archived morning baseline; later UB-01041 cancellation leaves 4 active issued discounted manual bills with a ₹163 aggregate discount.
+   - **Finding 3 Fix:** The archived morning baseline had 17 cancelled historical bills (481,100 paise); after the later cancellation of UB-01041, the latest read-only population is 18 bills / 491,100 paise. All cancelled historical bills and their linked orders are set to `payment_status = NULL` and `paid_paise = 0`. This avoids falsely asserting that money was collected (`'paid'`) or never collected (`'unpaid'`), honestly capturing the historical uncertainty.
    - **Multiple-Bill Safety Gate & Fail-Closed Invariant:** Guarded migration 0018 against non-deterministic SQL updates by introducing an explicit pre-execution assertion. If any order is associated with more than 1 bill (`SELECT count(*) FROM public.bills GROUP BY order_id HAVING count(*) > 1`), migration 0018 immediately fails closed with `RAISE EXCEPTION 'URB:ambiguous_multiple_bills_detected'`. Additionally, Step 3 of Migration 0018 includes defense-in-depth condition `NOT EXISTS (SELECT 1 FROM public.bills b_issued WHERE b_issued.order_id = o.id AND b_issued.status = 'issued')` to prevent cancelled bills from clobbering orders with issued bills.
 
 ---
+
+
+### Migration 0027 — Role helper and RPC permission hardening
+
+Migration 0027 is a separate security hardening step after 0016–0026. It changes the UUID-based `has_role` and `is_staff` helpers to accept only the authenticated caller's own ID and to read the active `admin_profiles` role source. The old enum value `kitchen` maps to current `admin_profiles.role = 'staff'`. It also moves staff/admin table policies to `authenticated`, splits active category reads so anonymous menu browsing remains available, revokes anon/PUBLIC execution from sensitive staff/admin RPCs, and explicitly preserves public token-based QR order/status/table functions.
+
+**Migration 0027 is written but not yet executed or rehearsed.** Its static contract test and RLS integration test are prepared in draft PR #9. The exact-head Vercel preview compiled and passed TypeScript, but this does not verify PostgreSQL syntax, grants, RLS behavior, or QR flows. Do not apply it to production until the disposable 0016–0027 replay and role/RPC tests pass.
 
 ## 5. Financial Data Backfill Semantics & Accounting Interpretation
 
@@ -381,7 +388,7 @@ Before applying migrations to production, the operator should validate that the 
    - *STOP CONDITION:* If any baseline row counts deviate from documented expectations, halt and investigate.
 2. **Step 2:** Verify owner backup dump.
    - *STOP CONDITION:* Do not execute migration DDL without an offline dump.
-3. **Step 3:** Apply migrations 0016 through 0026 in order.
+3. **Step 3:** Apply migrations 0016 through 0027 in order, only after the complete disposable replay has passed.
    - *STOP CONDITION:* If any statement fails with relation, constraint, or syntax error, halt immediately.
 4. **Step 4:** Reload PostgREST schema cache:
    ```sql
@@ -389,7 +396,7 @@ Before applying migrations to production, the operator should validate that the 
    ```
 5. **Step 5:** Run Section 9C post-migration verification in `supabase/preflight-production-release.sql`.
    - *STOP CONDITION:* Verify `Post-Migration Discrepancy Check` reports 0 rows, and `Post-Migration False-Paid Cancelled Bills Check` reports 0 rows.
-6. **Step 6:** Promote PR #8 into `main` on Vercel.
+6. **Step 6:** Only after all gates pass and owner change authorization is documented, review/merge draft PR #9 into PR #8's release branch, then consider PR #8 for `main`. Verify the Vercel production branch/alias mapping before any production promotion. No merge or promotion is authorized by this runbook.
 7. **Step 7:** Run post-migration smoke tests.
 
 ---
