@@ -67,6 +67,6 @@ describe('Migration 0027 — role helper and RPC permission contract', () => {
   it('keeps the migration transactional and does not modify business rows', () => {
     expect(sql.trimStart().startsWith('begin;')).toBe(true);
     expect(sql.trimEnd().endsWith('commit;')).toBe(true);
-    expect(sql.toLowerCase()).not.toMatch(/\b(insert into|update public\.|delete from public\.)\b/);
+    expect(sql).not.toMatch(/\b(insert\s+into|update\s+public\.|delete\s+from\s+public\.)/i);
   });
 });
