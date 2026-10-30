@@ -1,7 +1,7 @@
 -- =============================================================================
 -- Urbania Café — Production Preflight Release Inspection Script
 -- Target Project Ref: asdrrunxpsqzbvswmzgv (Supabase Production)
--- Target Release Branch: feat/operational-improvements (PR #8)
+-- Target Release: PR #8 feat/operational-improvements plus draft PR #9 chore/release-security-hardening (migration 0027)
 -- 
 -- SAFETY NOTICE:
 -- 100% READ-ONLY. Contains only SELECT statements.
