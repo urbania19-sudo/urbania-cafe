@@ -14,14 +14,14 @@
 -- 1. Applied Migrations Audit
 -- Inspects recorded migration history to verify where production currently stops.
 -- Expected baseline before release: stops at 202610260015.
--- Pending release migrations: 0016 through 0026.
+-- Pending release migrations: 0016 through 0027 (including role-helper/RPC permission hardening).
 -- =============================================================================
 select
   version,
   name,
   case
     when version <= '202610260015' then 'APPLIED_BASELINE'
-    when version between '202610280016' and '202610290026' then 'RELEASE_CANDIDATE_MIGRATION'
+    when version between '202610280016' and '202610310027' then 'RELEASE_CANDIDATE_MIGRATION'
     else 'UNKNOWN_MIGRATION'
   end as release_status
 from supabase_migrations.schema_migrations
@@ -32,8 +32,9 @@ select
   count(*) as total_applied_migrations,
   max(version) as latest_applied_version,
   case
-    when max(version) = '202610260015' then 'READY_FOR_0016_0026 (Stopped at 0015)'
-    when max(version) >= '202610290026' then 'MIGRATIONS_ALREADY_APPLIED (0026+)'
+    when max(version) = '202610260015' then 'READY_FOR_0016_0027 (Stopped at 0015)'
+    when max(version) between '202610280016' and '202610290026' then 'RELEASE_IN_PROGRESS (0027 pending)'
+    when max(version) >= '202610310027' then 'MIGRATIONS_ALREADY_APPLIED (0027+)'
     else 'UNEXPECTED_STATE'
   end as migration_readiness_status
 from supabase_migrations.schema_migrations;
@@ -164,6 +165,7 @@ with expected_functions as (
     'create_admin_credit_order',
     'order_has_items',
     'prevent_customer_payment_mutation',
+    'has_role',
     'is_admin',
     'is_staff',
     'cancel_bill',
@@ -185,7 +187,7 @@ order by ef.func_name;
 -- =============================================================================
 -- 6. Function Execution Grants & Least-Privilege Audit
 -- Audits permissions granted to public, anon, authenticated, and service_role.
--- Migrations 0022 and 0023 revoke execute from public and anon on critical RPCs.
+-- Migrations 0022, 0023, and 0027 restrict application RPC execution to authenticated/service roles unless a QR function is intentionally public.
 -- =============================================================================
 select
   p.proname as function_name,
@@ -199,20 +201,39 @@ select
       'record_customer_payment',
       'create_external_platform_order',
       'create_admin_credit_order',
-      'order_has_items',
-      'cancel_bill',
-      'create_manual_order'
-    ) then 'FAIL: SENSITIVE RPC CALLABLE BY ANON'
-    when not has_function_privilege('anon', p.oid, 'EXECUTE') and p.proname in (
+      'has_role',
+      'is_staff',
+      'is_admin',
       'settle_admin_credit_payment',
       'record_customer_payment',
       'create_external_platform_order',
       'create_admin_credit_order',
       'order_has_items',
       'cancel_bill',
-      'create_manual_order'
+      'create_manual_order',
+      'edit_order_items',
+      'get_bill_for_order',
+      'record_bill_reprint',
+      'update_staff_order_status'
+    ) then 'FAIL: SENSITIVE RPC CALLABLE BY ANON'
+    when not has_function_privilege('anon', p.oid, 'EXECUTE') and p.proname in (
+      'has_role',
+      'is_staff',
+      'is_admin',
+      'settle_admin_credit_payment',
+      'record_customer_payment',
+      'create_external_platform_order',
+      'create_admin_credit_order',
+      'order_has_items',
+      'cancel_bill',
+      'create_manual_order',
+      'edit_order_items',
+      'get_bill_for_order',
+      'record_bill_reprint',
+      'update_staff_order_status'
     ) then 'PASS: RESTRICTED FROM ANON'
-    when p.proname = 'place_public_order' then 'INFO: PUBLIC CUSTOMER QR ORDER RPC'
+    when p.proname in ('place_public_order', 'get_order_status', 'get_table_by_token', 'place_order')
+      then 'INFO: INTENTIONALLY PUBLIC QR/TOKEN RPC'
     else 'INFO: UNCHECKED'
   end as privilege_audit_verdict
 from pg_proc p
@@ -224,8 +245,18 @@ where p.pronamespace = 'public'::regnamespace
     'create_external_platform_order',
     'create_admin_credit_order',
     'order_has_items',
+    'has_role',
+    'is_admin',
+    'is_staff',
     'cancel_bill',
+    'edit_order_items',
+    'get_bill_for_order',
+    'record_bill_reprint',
+    'update_staff_order_status',
     'place_public_order',
+    'get_order_status',
+    'get_table_by_token',
+    'place_order',
     'create_manual_order'
   )
 order by p.proname;
@@ -246,7 +277,7 @@ select
   with_check
 from pg_policies
 where schemaname = 'public'
-  and tablename in ('orders', 'order_items', 'bills', 'customer_payments', 'admin_credit_settlements')
+  and tablename in ('orders', 'order_items', 'bills', 'customer_payments', 'admin_credit_settlements', 'admin_profiles', 'categories', 'menu_categories', 'menu_items', 'menu_item_options', 'cafe_settings', 'cafe_tables', 'bill_audit_events', 'order_kitchen_tickets', 'user_roles')
 order by tablename, policyname;
 
 
@@ -341,7 +372,7 @@ select
   'Finding 2: Issued Manual Bills where Order Total > Bill Total (Discounts)' as diagnostic_case,
   count(*) as affected_row_count,
   coalesce(sum(o.total_paise - b.total_paise), 0) as total_amount_paise,
-  'Expected Pre: 5 rows; order totals = 160,000 paise, issued bill totals = 138,800 paise, difference = 21,200 paise (₹212). Expected Post: linked order and bill paid balances equal the issued bill total.' as expectation
+  '2026-10-30 baseline snapshot: 5 rows; order totals = 160,000 paise, issued bill totals = 138,800 paise, difference = 21,200 paise (₹212). Recheck live: one discounted bill (UB-01041) was cancelled later on 2026-10-30.' as expectation
 from public.bills b
 join public.orders o on o.id = b.order_id
 where b.status = 'issued'
@@ -354,7 +385,7 @@ select
   'Finding 3: Cancelled Historical Bills (Unknown Payment State)' as diagnostic_case,
   count(*) as affected_row_count,
   coalesce(sum(b.total_paise), 0) as total_amount_paise,
-  'Expected Pre: 17 rows (481,100 paise / ₹4,811). Expected Post: payment_status = NULL, paid_paise = 0' as expectation
+  '2026-10-30 baseline snapshot: 17 rows (481,100 paise / ₹4,811). Recheck live: UB-01041 was cancelled later on 2026-10-30; approved current snapshot is 18 rows / 491,100 paise. Post-migration: payment_status = NULL, paid_paise = 0' as expectation
 from public.bills b
 where b.status = 'cancelled'
   and b.order_source in ('qr', 'manual')
@@ -472,6 +503,37 @@ having count(*) > 1;
 
 
 -- =============================================================================
+
+-- 9E. Current Approved Accounting Snapshot (read-only; refresh immediately before migration)
+-- The 2026-10-30 baseline file predates the cancellation of UB-01041.
+-- Latest read-only reconciliation on 2026-10-31:
+--   Cancelled QR/manual bills: 18 / 491,100 paise (₹4,911).
+--   Issued discounted manual bills: 4 / 16,300 paise discount (₹163).
+--   Unbilled cancelled orders: 4 / 147,600 paise (₹1,476).
+--   Unbilled completed orders: 3 / 38,700 paise (₹387).
+-- These are a dated checkpoint, not hard-coded expected values for future days.
+select
+  'Current cancelled QR/manual bills (latest verified 2026-10-31)' as diagnostic_case,
+  count(*) as affected_row_count,
+  coalesce(sum(b.total_paise), 0) as total_amount_paise,
+  'Latest verified: 18 rows / 491,100 paise; cancelled payments remain unknown, not assumed refunded.' as expectation
+from public.bills b
+where b.status = 'cancelled'
+  and b.order_source in ('qr', 'manual')
+
+union all
+
+select
+  'Current issued discounted manual bills (latest verified 2026-10-31)' as diagnostic_case,
+  count(*) as affected_row_count,
+  coalesce(sum(o.total_paise - b.total_paise), 0) as total_amount_paise,
+  'Latest verified: 4 rows / 16,300 paise discount; migration reconciles paid balances to billed totals.' as expectation
+from public.bills b
+join public.orders o on o.id = b.order_id
+where b.status = 'issued'
+  and b.order_source = 'manual'
+  and o.total_paise > b.total_paise;
+
 -- 10. Audit Events & Table Health Check
 -- Confirms existing billing audit events and profiles are intact.
 -- =============================================================================
