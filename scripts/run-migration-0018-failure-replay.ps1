@@ -37,6 +37,16 @@ function Write-Failure($msg) {
     Write-Host "[ERROR] $msg" -ForegroundColor Red
 }
 
+function Query-DisposableDb($sql) {
+    $out = docker exec -i $DbContainerName psql -U postgres -d postgres -t -A -c $sql
+    if ($out -is [array]) {
+        return ($out -join "`n").Trim()
+    } elseif ($null -ne $out) {
+        return ([string]$out).Trim()
+    }
+    return ""
+}
+
 $RepoRoot = (Get-Item $PSScriptRoot).Parent.FullName
 $ProjectId = "urbania-migration-fail-closed-env"
 $ApiPort = 54441
@@ -169,11 +179,29 @@ ALTER TABLE public.bills DROP CONSTRAINT IF EXISTS bills_order_source_check;
     }
     Write-Success "Migrations 0016 and 0017 applied successfully (recorded count: 17)."
 
-    # Record pre-0018 row state
-    $pre18OrderState = docker exec -i $DbContainerName psql -U postgres -d postgres -t -A -c "SELECT coalesce(payment_status, 'NULL') || '|' || paid_paise FROM public.orders WHERE id = '$testOrderId';"
-    Write-Host "Pre-0018 order state: $pre18OrderState (expected: unpaid|0)"
-    if ($pre18OrderState.Trim() -ne "unpaid|0") {
-        throw "Unexpected pre-0018 order state: $pre18OrderState"
+    # =========================================================================
+    # Capture comprehensive pre-0018 state to verify complete DDL & data rollback
+    # =========================================================================
+    Write-Step "Capturing baseline schema, constraint, trigger, and row state prior to migration 0018..."
+    $preOrdersNullable = Query-DisposableDb "SELECT is_nullable FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'orders' AND column_name = 'payment_status';"
+    $preBillsNullable = Query-DisposableDb "SELECT is_nullable FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'bills' AND column_name = 'payment_status';"
+    $preConstraints = Query-DisposableDb "SELECT conname || '::' || pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid IN ('public.orders'::regclass, 'public.bills'::regclass) AND conname LIKE '%payment_status%' ORDER BY conname;"
+    $preTriggers = Query-DisposableDb "SELECT tgname FROM pg_trigger WHERE tgrelid = 'public.customer_payments'::regclass AND NOT tgisinternal ORDER BY tgname;"
+    $preOrderPayment = Query-DisposableDb "SELECT coalesce(payment_status, 'NULL') || '|' || paid_paise FROM public.orders WHERE id = '$testOrderId';"
+    $preBillsPayment = Query-DisposableDb "SELECT bill_number || '::' || coalesce(payment_status, 'NULL') || '|' || paid_paise FROM public.bills WHERE order_id = '$testOrderId' ORDER BY bill_number;"
+    $preLatestVersion = Query-DisposableDb "SELECT max(version) FROM supabase_migrations.schema_migrations;"
+
+    Write-Host "Pre-0018 state captured:"
+    Write-Host "  orders.payment_status nullable: $preOrdersNullable"
+    Write-Host "  bills.payment_status nullable:  $preBillsNullable"
+    Write-Host "  constraints:                    $preConstraints"
+    Write-Host "  customer_payments triggers:     $(if ($preTriggers) { $preTriggers } else { '<none>' })"
+    Write-Host "  order payment values:           $preOrderPayment"
+    Write-Host "  bills payment values:           $preBillsPayment"
+    Write-Host "  latest migration version:       $preLatestVersion"
+
+    if ($preOrderPayment -ne "unpaid|0" -or $preLatestVersion -ne "202610280017") {
+        throw "Unexpected pre-0018 baseline state: Order=$preOrderPayment, Version=$preLatestVersion"
     }
 
     Write-Step "Copying actual migration 0018 and executing against duplicate-bill fixture..."
@@ -198,48 +226,93 @@ ALTER TABLE public.bills DROP CONSTRAINT IF EXISTS bills_order_source_check;
     }
     Write-Success "Actual migration 0018 FAILED CLOSED as expected with 'URB:ambiguous_multiple_bills_detected'!"
 
-    Write-Step "Verifying transaction atomicity (no partial changes left)..."
-    
-    # Verify the order was NOT updated (if migration had run un-atomically, it would be 'paid' with 25000)
-    $postFailOrderState = docker exec -i $DbContainerName psql -U postgres -d postgres -t -A -c "SELECT coalesce(payment_status, 'NULL') || '|' || paid_paise FROM public.orders WHERE id = '$testOrderId';"
-    if ($postFailOrderState.Trim() -ne "unpaid|0") {
-        throw "Atomicity violation: Order state was altered during aborted migration! Current state: $postFailOrderState"
-    }
-    Write-Success "Order state confirmed unchanged: $postFailOrderState (unpaid, 0 paid_paise)."
+    # =========================================================================
+    # Verify comprehensive rollback assertions (all properties unchanged)
+    # =========================================================================
+    Write-Step "Verifying full DDL, constraint, trigger, and data rollback assertions..."
 
-    # Verify bills were NOT updated to 0018 statuses
-    $postFailBill1 = docker exec -i $DbContainerName psql -U postgres -d postgres -t -A -c "SELECT coalesce(payment_status, 'NULL') || '|' || paid_paise FROM public.bills WHERE bill_number = 'UB-DUP-01';"
-    $postFailBill2 = docker exec -i $DbContainerName psql -U postgres -d postgres -t -A -c "SELECT coalesce(payment_status, 'NULL') || '|' || paid_paise FROM public.bills WHERE bill_number = 'UB-DUP-02';"
-    if ($postFailBill1.Trim() -ne "unpaid|0" -or $postFailBill2.Trim() -ne "unpaid|0") {
-        throw "Atomicity violation: Bills were partially modified during aborted migration! Bill1: $postFailBill1, Bill2: $postFailBill2"
+    # 1. orders.payment_status nullability
+    $postOrdersNullable = Query-DisposableDb "SELECT is_nullable FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'orders' AND column_name = 'payment_status';"
+    if ($postOrdersNullable -ne $preOrdersNullable) {
+        throw "DDL rollback violation: orders.payment_status nullability altered! (Pre: $preOrdersNullable, Post: $postOrdersNullable)"
     }
-    Write-Success "Bills confirmed unchanged: UB-DUP-01 ($postFailBill1), UB-DUP-02 ($postFailBill2)."
+    Write-Success "Confirmed: orders.payment_status nullability unchanged ($postOrdersNullable)."
 
-    # Verify customer_payments_immutable trigger was NOT installed
-    $triggerExists = docker exec -i $DbContainerName psql -U postgres -d postgres -t -A -c "SELECT count(*) FROM pg_trigger WHERE tgname = 'customer_payments_immutable';"
-    if ([int]$triggerExists.Trim() -ne 0) {
+    # 2. bills.payment_status nullability
+    $postBillsNullable = Query-DisposableDb "SELECT is_nullable FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'bills' AND column_name = 'payment_status';"
+    if ($postBillsNullable -ne $preBillsNullable) {
+        throw "DDL rollback violation: bills.payment_status nullability altered! (Pre: $preBillsNullable, Post: $postBillsNullable)"
+    }
+    Write-Success "Confirmed: bills.payment_status nullability unchanged ($postBillsNullable)."
+
+    # 3. Check constraints
+    $postConstraints = Query-DisposableDb "SELECT conname || '::' || pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid IN ('public.orders'::regclass, 'public.bills'::regclass) AND conname LIKE '%payment_status%' ORDER BY conname;"
+    if ($postConstraints -ne $preConstraints) {
+        throw "DDL rollback violation: Payment-status check constraints altered! (Pre: $preConstraints, Post: $postConstraints)"
+    }
+    Write-Success "Confirmed: Payment-status check constraints unchanged."
+
+    # 4. Triggers on customer_payments
+    $postTriggers = Query-DisposableDb "SELECT tgname FROM pg_trigger WHERE tgrelid = 'public.customer_payments'::regclass AND NOT tgisinternal ORDER BY tgname;"
+    if ($postTriggers -ne $preTriggers) {
+        throw "DDL rollback violation: Triggers on customer_payments altered! (Pre: $preTriggers, Post: $postTriggers)"
+    }
+    $triggerExists = Query-DisposableDb "SELECT count(*) FROM pg_trigger WHERE tgname = 'customer_payments_immutable';"
+    if ([int]$triggerExists -ne 0) {
         throw "Atomicity violation: customer_payments_immutable trigger was installed despite migration abort!"
     }
-    Write-Success "Trigger customer_payments_immutable confirmed NOT installed."
+    Write-Success "Confirmed: customer_payments triggers unchanged; customer_payments_immutable was NOT installed."
 
-    Write-Step "Verifying migration 0018 is NOT recorded in schema_migrations..."
-    $m18Recorded = docker exec -i $DbContainerName psql -U postgres -d postgres -t -A -c "SELECT count(*) FROM supabase_migrations.schema_migrations WHERE version = '202610280018';"
-    $latestVersion = docker exec -i $DbContainerName psql -U postgres -d postgres -t -A -c "SELECT max(version) FROM supabase_migrations.schema_migrations;"
+    # 5. Order payment values
+    $postOrderPayment = Query-DisposableDb "SELECT coalesce(payment_status, 'NULL') || '|' || paid_paise FROM public.orders WHERE id = '$testOrderId';"
+    if ($postOrderPayment -ne $preOrderPayment) {
+        throw "Data rollback violation: Order payment state altered! (Pre: $preOrderPayment, Post: $postOrderPayment)"
+    }
+    Write-Success "Confirmed: Order payment values unchanged ($postOrderPayment)."
+
+    # 6. Bills payment values
+    $postBillsPayment = Query-DisposableDb "SELECT bill_number || '::' || coalesce(payment_status, 'NULL') || '|' || paid_paise FROM public.bills WHERE order_id = '$testOrderId' ORDER BY bill_number;"
+    if ($postBillsPayment -ne $preBillsPayment) {
+        throw "Data rollback violation: Bills payment state altered! (Pre: $preBillsPayment, Post: $postBillsPayment)"
+    }
+    Write-Success "Confirmed: Bills payment values unchanged ($postBillsPayment)."
+
+    # 7. Migration history tracking
+    Write-Step "Verifying migration 0018 is absent from schema_migrations..."
+    $m18Recorded = Query-DisposableDb "SELECT count(*) FROM supabase_migrations.schema_migrations WHERE version = '202610280018';"
+    $postLatestVersion = Query-DisposableDb "SELECT max(version) FROM supabase_migrations.schema_migrations;"
     
-    if ([int]$m18Recorded.Trim() -ne 0) {
+    if ([int]$m18Recorded -ne 0) {
         throw "Migration tracking violation: Migration 0018 is recorded in schema_migrations despite aborting!"
     }
-    if ($latestVersion.Trim() -ne "202610280017") {
-        throw "Migration tracking violation: Latest version is $latestVersion, expected 202610280017."
+    if ($postLatestVersion -ne $preLatestVersion) {
+        throw "Migration tracking violation: Latest version is $postLatestVersion, expected $preLatestVersion."
     }
-    Write-Success "Confirmed: Migration 0018 is NOT recorded in schema_migrations. Latest applied version remains: $latestVersion."
+    Write-Success "Confirmed: Migration 0018 is absent from schema_migrations. Latest applied version remains: $postLatestVersion."
 
-    Write-Step "Verifying persistent local database (54321) was NOT touched..."
-    $persistentCheck = docker exec -i supabase_db_urbania-cafe-nextjs-port psql -U postgres -d postgres -t -A -c "SELECT count(*) FROM public.orders WHERE order_number = 98801;" 2>$null
-    if ($persistentCheck -and [int]$persistentCheck.Trim() -ne 0) {
-        throw "Isolation violation: Test order 98801 found on persistent local database!"
+    # =========================================================================
+    # Explicit persistent local database isolation verification
+    # =========================================================================
+    Write-Step "Verifying persistent local database isolation..."
+    $persistentContainerName = "supabase_db_urbania-cafe-nextjs-port"
+    $persistentRunning = docker ps --filter "name=^/${persistentContainerName}$" --filter "status=running" --format "{{.Names}}"
+
+    if (-not $persistentRunning -or $persistentRunning.Trim() -ne $persistentContainerName) {
+        Write-Failure "ISOLATION VERIFICATION BLOCKED: Expected persistent local container '$persistentContainerName' is not running or unreachable."
+        throw "ISOLATION VERIFICATION BLOCKED: Persistent local container '$persistentContainerName' is not running."
     }
-    Write-Success "Confirmed: Persistent local database at 54321 is completely untouched."
+
+    $persistentCheck = docker exec -i $persistentContainerName psql -U postgres -d postgres -v ON_ERROR_STOP=1 -t -A -c "SELECT count(*) FROM public.orders WHERE order_number = 98801;" 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Failure "ISOLATION VERIFICATION BLOCKED: Read-only query execution failed on persistent container '$persistentContainerName': $persistentCheck"
+        throw "ISOLATION VERIFICATION BLOCKED: Read-only query execution failed on persistent container."
+    }
+
+    $persistentCount = [int]$persistentCheck.Trim()
+    if ($persistentCount -ne 0) {
+        throw "Isolation violation: Test order 98801 found on persistent local database (found $persistentCount rows)!"
+    }
+    Write-Success "Confirmed: Persistent local database '$persistentContainerName' was reached and is completely untouched (test order count = 0)."
 
     $ReplayExitCode = 0
     Write-Step "MIGRATION 0018 FAIL-CLOSED ABORT REPLAY COMPLETED SUCCESSFULLY!"
@@ -255,10 +328,18 @@ ALTER TABLE public.bills DROP CONSTRAINT IF EXISTS bills_order_source_check;
         if ($lingering) {
             docker rm -f $lingering 2>$null | Out-Null
         }
+        $lingeringNetworks = docker network ls -q --filter "name=$ProjectId"
+        if ($lingeringNetworks) {
+            docker network rm $lingeringNetworks 2>$null | Out-Null
+        }
+        $lingeringVolumes = docker volume ls -q --filter "name=$ProjectId"
+        if ($lingeringVolumes) {
+            docker volume rm $lingeringVolumes 2>$null | Out-Null
+        }
         if (Test-Path $DisposableDir) {
             Remove-Item -Recurse -Force $DisposableDir -ErrorAction SilentlyContinue
         }
-        Write-Success "Disposable fail-closed stack and workspace destroyed cleanly."
+        Write-Success "Disposable fail-closed stack, networks, volumes, and workspace destroyed cleanly without touching unrelated Docker resources."
     }
 }
 
