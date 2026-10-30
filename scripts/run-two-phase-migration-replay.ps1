@@ -250,19 +250,8 @@ try {
     }
     Write-Success "Confirmed: 0 cancelled bills have payment_status = paid."
 
-    # -------------------------------------------------------------------------
-    # 9. Multiple-Bill Safety Gate Rehearsal (Task 3)
-    # -------------------------------------------------------------------------
-    Write-Step "Rehearsing multiple-bill safety gate (Task 3)..."
-    $rehearsalSqlPath = Join-Path $RepoRoot "supabase\tests\rehearse-multiple-bill-safety.sql"
-    $null = Get-Content $rehearsalSqlPath -Raw | docker exec -i "supabase_db_$ProjectId" psql -U postgres -d postgres -v ON_ERROR_STOP=1
-    if ($LASTEXITCODE -ne 0) {
-        throw "Multiple-bill safety gate rehearsal failed."
-    }
-    Write-Success "Multiple-bill safety gate rehearsal passed: successfully caught ambiguous duplicate bills and failed closed."
-
     $ReplayExitCode = 0
-    Write-Step "TWO-PHASE HISTORICAL MIGRATION REPLAY COMPLETED SUCCESSFULLY!"
+    Write-Step "NORMAL TWO-PHASE HISTORICAL MIGRATION REPLAY COMPLETED SUCCESSFULLY!"
 
 } catch {
     Write-Failure "Two-phase migration replay failed: $_"

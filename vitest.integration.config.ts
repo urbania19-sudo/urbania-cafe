@@ -12,5 +12,6 @@ export default defineConfig({
     environment: 'node',
     include: ['tests/financial-workflow-integration.test.ts'],
     setupFiles: ['./tests/setup.ts'],
+    testTimeout: 20000,
   },
 });

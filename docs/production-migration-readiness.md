@@ -1,12 +1,12 @@
 # Urbania Café — Production Database Migration Readiness & Runbook
 
-**Document Version:** 1.2.0 (Two-Phase Historical Replay, Preflight Audit Table Alignment & Multiple-Bill Safety Gate)<br />
-**Release Candidate Commit:** [`22aff3b`](https://github.com/urbania19-sudo/urbania-cafe/commit/22aff3b)<br />
+**Document Version:** 1.3.0 (Fail-Closed Replay Verification & Documented Backup/Restore Specification)<br />
+**Release Candidate Commit:** [`9fe78fe`](https://github.com/urbania19-sudo/urbania-cafe/commit/9fe78fe)<br />
 **Release Candidate Branch:** `feat/operational-improvements`<br />
 **Pull Request:** [#8 (feat: operational improvements)](https://github.com/urbania19-sudo/urbania-cafe/pull/8)<br />
 **Production Supabase Reference:** `asdrrunxpsqzbvswmzgv`<br />
 **Production Vercel Branch:** `main`<br />
-**Vercel Preview Deployment:** Verified live at PR #8
+**Vercel Preview Deployment:** Verified live at [PR #8 Preview Deployment](https://urbania-cafe-git-feat-operational-improvements-urbania19-sudo.vercel.app)
 
 ---
 
@@ -20,7 +20,7 @@ While the application software, UI components, mobile dialogs, and TypeScript ba
 +-----------------------------------------------------------------------------------------------+
 |                                    VERDICT: NO-GO                                             |
 +-----------------------------------------------------------------------------------------------+
-|  1. Software Release Candidate 5ccc920+: VERIFIED & READY                                     |
+|  1. Software Release Candidate 9fe78fe+: VERIFIED & READY                                     |
 |  2. Migration Scripts 0016–0026: CORRECTED & REHEARSED                                        |
 |  3. Production Preflight Inspection: SCRIPT PREPARED (supabase/preflight-production-release.sql)|
 |  4. Production Database asdrrunxpsqzbvswmzgv: UNPREPARED (Stopped at 0015)                    |
@@ -177,12 +177,12 @@ The database operator must run [`supabase/preflight-production-release.sql`](fil
 ## 8. Backup & Restore Readiness Checklist & Safe Verification Protocol
 
 > [!WARNING]
-> **A Schema-Limited `pg_dump` is NOT a Complete Production Backup!**
-> Running `pg_dump -n public -n supabase_migrations` captures only application tables and migration records. It completely omits:
+> **A Default CLI or Schema-Limited `pg_dump` is NOT a Complete Production Backup!**
+> Running `supabase db dump` without specific schema options or `pg_dump -n public` only dumps user-space application tables and migration records. It completely omits or filters out Supabase internal schemas:
 > 1. The `auth` schema (user profiles, encrypted passwords, authentication providers, active refresh tokens, sessions).
 > 2. The `storage` schema (bucket definitions, storage security policies, file metadata objects).
 > 3. Database roles and global grants (`postgres`, `authenticated`, `anon`, `service_role`).
-> 4. Physical storage bucket files (menu item images, customer bills, attachments) stored in S3/Supabase Storage.
+> 4. Physical storage bucket files (menu item images, cafe branding) stored in S3/Supabase Storage.
 >
 > A true production recovery plan requires capturing platform-managed snapshots, full logical dumps, storage media, and verifying restorability in a disposable environment.
 
@@ -190,66 +190,104 @@ The database operator must run [`supabase/preflight-production-release.sql`](fil
 
 - [ ] **1. Verify Dashboard Daily Backups (Managed Physical Snapshots):**
   - Navigate to Supabase Dashboard: **Project `asdrrunxpsqzbvswmzgv` > Project Settings > Database > Backups**.
-  - Confirm that scheduled daily physical backups are running and reporting healthy.
+  - Confirm that scheduled daily physical snapshots are active and healthy.
   - Note: Daily physical backups have a Recovery Point Objective (RPO) of up to 24 hours.
-- [ ] **2. Verify Point-in-Time Recovery (PITR) Status:**
-  - If PITR is enabled on project `asdrrunxpsqzbvswmzgv`, Supabase continuously streams Write-Ahead Logs (WAL) to physical storage, allowing recovery to any second within the retention window (typically 7–30 days).
-  - Immediately before starting migration execution, the operator must record the exact UTC timestamp:
+- [ ] **2. Verify Point-in-Time Recovery (PITR) Availability & Cost Notice:**
+  - **Plan Requirement & Cost:** Point-in-Time Recovery (PITR) is a paid add-on on Supabase Pro/Team plans ($100/month for a 7-day retention window). It is **not** enabled by default. Do not assume PITR is enabled unless explicitly verified in the project's dashboard/billing settings.
+  - **If PITR is enabled:** Supabase continuously streams Write-Ahead Logs (WAL) to physical storage, allowing restoration down to the second. Immediately before initiating migration execution, record the exact UTC timestamp:
     ```powershell
     $migrationStartUtc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
     Write-Output "PITR Target Recovery Timestamp: $migrationStartUtc"
     ```
-  - In the event of catastrophic data corruption, this timestamp serves as the target recovery point in the Supabase Dashboard.
+    In case of catastrophic failure or migration regression, this timestamp serves as the target recovery point in the Supabase Dashboard.
+  - **If PITR is not enabled:** The database relies on daily snapshots, meaning any rollback will revert to the last daily snapshot (up to 24 hours of data loss). In this scenario, capturing offline logical backups immediately prior to migration is even more critical.
 
 ### 8.2. Complete Logical Backup Strategy (Roles, Schema, Data)
 
-The database owner should capture three distinct logical dump layers using the Supabase CLI or PostgreSQL utilities before applying migrations:
+> [!IMPORTANT]
+> **Secure Secret Handling:**
+> Never commit connection strings, database passwords, or auth secrets to git or version-controlled scripts. Pass the connection string via an environment variable (`$env:SUPABASE_DB_URL`) or prompt securely in PowerShell:
+> ```powershell
+> # Prompt securely for database password and assemble connection URL
+> $securePass = Read-Host -Prompt "Enter Supabase Database Password for asdrrunxpsqzbvswmzgv" -AsSecureString
+> $plainPass = [System.Net.NetworkCredential]::new("", $securePass).Password
+> $DbUrl = "postgresql://postgres:$([System.Uri]::EscapeDataString($plainPass))@db.asdrrunxpsqzbvswmzgv.supabase.co:5432/postgres"
+> ```
+
+The database owner should capture three distinct logical dump layers using the documented Supabase CLI commands (or direct PostgreSQL utilities):
 
 - [ ] **3. Logical Roles & Permissions Backup:**
   - Captures database roles, grants, memberships, and authentication flags:
     ```powershell
-    supabase db dump --project-ref asdrrunxpsqzbvswmzgv --roles -f "urbania_prod_roles_$(Get-Date -Format 'yyyyMMdd_HHmm').sql"
+    supabase db dump --db-url "$DbUrl" -f "urbania_prod_roles_$(Get-Date -Format 'yyyyMMdd_HHmm').sql" --role-only
     ```
     *Alternative using pg_dumpall with connection string:*
     ```powershell
-    pg_dumpall --roles-only -h db.asdrrunxpsqzbvswmzgv.supabase.co -U postgres -f "urbania_prod_roles_$(Get-Date -Format 'yyyyMMdd_HHmm').sql"
+    pg_dumpall --roles-only -d "$DbUrl" -f "urbania_prod_roles_$(Get-Date -Format 'yyyyMMdd_HHmm').sql"
     ```
-- [ ] **4. Complete Logical Schema Dump (DDL across all schemas):**
-  - Captures all table structures, constraints, RLS policies, triggers, and functions across `public`, `auth`, `storage`, and `supabase_migrations`:
+
+- [ ] **4. Complete Logical Schema Dump (DDL across public schemas):**
+  - Captures table structures, constraints, RLS policies, triggers, and functions:
     ```powershell
-    supabase db dump --project-ref asdrrunxpsqzbvswmzgv -f "urbania_prod_schema_$(Get-Date -Format 'yyyyMMdd_HHmm').sql"
+    supabase db dump --db-url "$DbUrl" -f "urbania_prod_schema_$(Get-Date -Format 'yyyyMMdd_HHmm').sql"
     ```
-    *Alternative using pg_dump in custom directory format:*
+    *Note:* Default `supabase db dump` filters internal schemas (`auth`, `storage`). To dump internal schemas if needed:
     ```powershell
-    pg_dump -h db.asdrrunxpsqzbvswmzgv.supabase.co -U postgres -d postgres --schema-only -Fc -f "urbania_prod_schema_$(Get-Date -Format 'yyyyMMdd_HHmm').dump"
+    supabase db dump --db-url "$DbUrl" -s auth -f "urbania_prod_schema_auth_$(Get-Date -Format 'yyyyMMdd_HHmm').sql"
+    supabase db dump --db-url "$DbUrl" -s storage -f "urbania_prod_schema_storage_$(Get-Date -Format 'yyyyMMdd_HHmm').sql"
     ```
+    *Alternative using pg_dump:*
+    ```powershell
+    pg_dump -d "$DbUrl" --schema-only -Fc -f "urbania_prod_schema_$(Get-Date -Format 'yyyyMMdd_HHmm').dump"
+    ```
+
 - [ ] **5. Complete Logical Data Dump (Table Records):**
-  - Captures actual row data across all user-facing and configuration tables:
+  - Captures actual row data across user-facing tables using fast COPY statements:
     ```powershell
-    supabase db dump --project-ref asdrrunxpsqzbvswmzgv --data-only -f "urbania_prod_data_$(Get-Date -Format 'yyyyMMdd_HHmm').sql"
+    supabase db dump --db-url "$DbUrl" -f "urbania_prod_data_$(Get-Date -Format 'yyyyMMdd_HHmm').sql" --use-copy --data-only
     ```
     *Alternative using pg_dump (excluding ephemeral runtime analytics schemas):*
     ```powershell
-    pg_dump -h db.asdrrunxpsqzbvswmzgv.supabase.co -U postgres -d postgres --data-only --exclude-schema _analytics --exclude-schema _realtime -Fc -f "urbania_prod_data_$(Get-Date -Format 'yyyyMMdd_HHmm').dump"
+    pg_dump -d "$DbUrl" --data-only --exclude-schema _analytics --exclude-schema _realtime -Fc -f "urbania_prod_data_$(Get-Date -Format 'yyyyMMdd_HHmm').dump"
     ```
 
 ### 8.3. Storage Bucket Files & Media Assets Backup
 
-- [ ] **6. Supabase Storage Object Sync:**
-  - PostgreSQL table dumps do NOT contain the actual binary media files (menu item images, cafe logos) uploaded to Supabase Storage buckets.
-  - Sync all bucket objects locally using AWS CLI with Supabase S3 Access Keys (obtained from **Project Settings > Storage**):
+- [ ] **6. Supabase Storage Object Sync (Bucket: `menu-images`):**
+  - PostgreSQL table dumps do NOT contain the actual binary media files (menu item images, cafe branding) stored in object storage.
+  - The repository utilizes the **`menu-images`** bucket (defined in migration `202610200008` and managed via `MenuManager.tsx`).
+  - Sync all bucket objects locally using AWS CLI with Supabase S3 Access Keys (obtained from **Supabase Dashboard > Project Settings > Storage > S3 Access Keys**):
     ```powershell
-    aws s3 sync s3://<project-ref>-storage-bucket ./urbania_storage_backup/ --endpoint-url https://asdrrunxpsqzbvswmzgv.supabase.co/storage/v1/s3
+    aws s3 sync s3://menu-images ./urbania_storage_backup/menu-images --endpoint-url https://asdrrunxpsqzbvswmzgv.supabase.co/storage/v1/s3
     ```
 
-### 8.4. Safe Restore Validation Protocol (Disposable Instance Testing)
+### 8.4. Project Configuration & Settings Backup
 
-Before proceeding with migration execution, the operator must validate that the captured logical backups are valid, complete, and restorable:
+- [ ] **7. Project Settings & Auth Configuration Snapshot:**
+  - Export and archive non-secret project configurations from Supabase Dashboard:
+    - PostgREST API settings (exposed schemas, extra search path)
+    - Auth settings (external providers, email templates, rate limits, JWT expiry)
+    - Custom extensions (`pgcrypto`, etc.)
+    - Environment variables configured in Vercel (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`)
 
-- [ ] **7. Rehearse Restoration on a Disposable Verification Container:**
-  - Launch an isolated temporary PostgreSQL/Supabase instance (e.g. using Docker on an ephemeral port):
+### 8.5. Safe Restore Validation Protocol (PostgreSQL 17 Verification Container)
+
+Before applying migrations to production, the operator must validate that the captured logical backups are complete, syntactically valid, and restorable.
+
+> [!IMPORTANT]
+> **PostgreSQL Version Compatibility:**
+> Production database `asdrrunxpsqzbvswmzgv` runs **PostgreSQL 17.11** (`PostgreSQL 17.11 on aarch64-unknown-linux-gnu`).
+> Verification must be performed on an isolated **PostgreSQL 17** compatible container (`postgres:17`). Never test restoration on `postgres:15` or older engines due to potential syntax and catalogue differences.
+> **Isolation Guarantee:** This verification runs in a dedicated ephemeral Docker container and NEVER touches production or the persistent local Supabase instance at `54321`.
+
+- [ ] **8. Rehearse Restoration on a Disposable PostgreSQL 17 Container:**
+  - Launch an isolated temporary PostgreSQL 17 instance on an ephemeral port (e.g., `54433`):
     ```powershell
-    docker run --name urbania-backup-verify -e POSTGRES_PASSWORD=postgres -p 54433:5432 -d postgres:15
+    docker run --name urbania-backup-verify -e POSTGRES_PASSWORD=postgres -p 54433:5432 -d postgres:17
+    ```
+  - Wait for PostgreSQL 17 container initialization:
+    ```powershell
+    Start-Sleep -Seconds 5
     ```
   - Restore roles:
     ```powershell
@@ -263,16 +301,41 @@ Before proceeding with migration execution, the operator must validate that the 
     ```powershell
     psql -h 127.0.0.1 -p 54433 -U postgres -d postgres -f "urbania_prod_data_*.sql"
     ```
-  - Assert row count parity against production baseline:
+
+- [ ] **9. Run Structural and Row-Count Parity Verification:**
+  - Check tables existence and row count parity against the production preflight baseline:
     ```powershell
-    psql -h 127.0.0.1 -p 54433 -U postgres -d postgres -c "SELECT count(*) FROM public.orders; SELECT count(*) FROM public.bills; SELECT count(*) FROM public.bill_audit_events; SELECT count(*) FROM auth.users;"
+    psql -h 127.0.0.1 -p 54433 -U postgres -d postgres -c @"
+    SELECT 'orders' AS tbl, count(*) FROM public.orders
+    UNION ALL SELECT 'bills', count(*) FROM public.bills
+    UNION ALL SELECT 'bill_audit_events', count(*) FROM public.bill_audit_events
+    UNION ALL SELECT 'menu_items', count(*) FROM public.menu_items
+    UNION ALL SELECT 'admin_profiles', count(*) FROM public.admin_profiles
+    UNION ALL SELECT 'schema_migrations', count(*) FROM supabase_migrations.schema_migrations;
+    "@
     ```
-  - Tear down the verification container:
+  - Verify `auth.users` records (if auth schema was captured):
+    ```powershell
+    psql -h 127.0.0.1 -p 54433 -U postgres -d postgres -c "SELECT count(*) AS auth_users_count FROM auth.users;" 2>$null
+    ```
+  - Verify Row-Level Security (RLS) is enabled on all tables:
+    ```powershell
+    psql -h 127.0.0.1 -p 54433 -U postgres -d postgres -c "SELECT tablename, rowsecurity FROM pg_tables WHERE schemaname = 'public';"
+    ```
+  - Verify functions, triggers, and extensions:
+    ```powershell
+    psql -h 127.0.0.1 -p 54433 -U postgres -d postgres -c "SELECT proname FROM pg_proc JOIN pg_namespace ON pg_proc.pronamespace = pg_namespace.oid WHERE nspname = 'public';"
+    psql -h 127.0.0.1 -p 54433 -U postgres -d postgres -c "SELECT extname, extversion FROM pg_extension;"
+    ```
+  - Verify storage file integrity: verify downloaded `menu-images` files match expected media counts.
+
+- [ ] **10. Teardown Verification Container:**
+  - After verifying backup integrity, terminate and remove the disposable container:
     ```powershell
     docker rm -f urbania-backup-verify
     ```
 
-### 8.5. Owner Gate Status
+### 8.6. Owner Gate Status
 
 - [ ] **Owner Action Required:** The automated agent and non-owner operators have read-only access to production and cannot capture credentials or download full production database backups.
 - **GATE-6 Status:** 🔴 **PENDING OWNER EXECUTION**. Production migration execution remains blocked until the owner completes the above checklist and verifies restorability.
@@ -305,7 +368,7 @@ Before proceeding with migration execution, the operator must validate that the 
 | **GATE-1** | **Software Build & Verification** | Typecheck, lint, build, unit tests, and disposable integration test suite pass cleanly. | All passed (Unit: 517/517 OK; Financial Integration: 12/12 OK; TypeScript & ESLint: 0 errors; Build: OK) | 🟢 **PASSED** |
 | **GATE-2** | **Backfill Correction Verification** | Deterministic regression tests prove findings 1, 2, 3 and multiple-bill safety gates are resolved. | `tests/payment-reconciliation-migration.test.ts` passed (13/13 OK) | 🟢 **PASSED** |
 | **GATE-3** | **Preflight Script Readiness** | Read-only SQL diagnostic verified on legacy and modern databases without relation or column errors. | `supabase/preflight-production-release.sql` verified on both 0015 and 0026 schemas | 🟢 **PASSED** |
-| **GATE-4** | **Rehearsal on Clean Container** | Isolated two-phase replay applies 0016–0026 over real historical fixtures, verifying actual rows and fail-closed safety gate. | Verified via `npm run test:migration:replay` (9/9 post-migration assertions OK, gate OK) | 🟢 **PASSED** |
+| **GATE-4** | **Rehearsal on Clean Container** | Isolated two-phase replay applies 0016–0026 over real historical fixtures, and dedicated fail-closed harness tests actual migration 0018 failure against duplicate-bill fixtures. | Verified via `npm run test:migration:replay` (9/9 post-migration assertions OK) and `npm run test:migration:fail-closed` (exit code 1, URB:ambiguous_multiple_bills_detected, 0 partial changes) | 🟢 **PASSED** |
 | **GATE-5** | **Production Baseline Inspection** | Operator runs preflight SQL on `asdrrunxpsqzbvswmzgv` and archives baseline. | Not yet run on live production | 🔴 **PENDING (Operator action)** |
 | **GATE-6** | **Owner Backup Verification** | Full platform snapshot (PITR), logical dumps (roles, schema, data), and storage sync verified via disposable restore. | Pending owner execution | 🔴 **PENDING (Owner action)** |
 | **GATE-7** | **Owner Accounting Sign-Off** | Owner accepts unreconciled NULL status for 17 cancelled bills and 0-discrepancy discount logic. | Pending owner review | 🔴 **PENDING (Owner action)** |
