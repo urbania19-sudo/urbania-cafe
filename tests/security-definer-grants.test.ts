@@ -7,6 +7,7 @@ const migrationPath = path.resolve(
   'supabase/migrations/202610310027_harden_rpc_execution_privileges.sql'
 );
 const sql = fs.readFileSync(migrationPath, 'utf8');
+const flatSql = sql.toLowerCase().replace(/\s+/g, ' ');
 
 describe('Migration 0027: SECURITY DEFINER execution privilege hardening', () => {
   it('revokes anonymous execution from privileged billing, payments, admin, and order RPCs', () => {
@@ -29,86 +30,104 @@ describe('Migration 0027: SECURITY DEFINER execution privilege hardening', () =>
     ];
 
     for (const signature of protectedFunctions) {
-      const escaped = signature.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      expect(sql).toMatch(
-        new RegExp(
-          `revoke execute on function public\\.${escaped} from public, anon;`,
-          'i'
-        )
+      expect(flatSql).toContain(
+        `revoke execute on function public.${signature.toLowerCase()} from public, anon;`
       );
     }
   });
 
-  it('preserves authenticated execution for role helpers used by existing RLS policies', () => {
-    expect(sql).toMatch(
-      /revoke execute on function public\.has_role\(uuid, public\.app_role\) from public, anon;/i
-    );
-    expect(sql).toMatch(
-      /grant execute on function public\.has_role\(uuid, public\.app_role\) to authenticated;/i
-    );
-    expect(sql).toMatch(
-      /revoke execute on function public\.is_staff\(uuid\) from public, anon;/i
-    );
-    expect(sql).toMatch(
-      /grant execute on function public\.is_staff\(uuid\) to authenticated;/i
-    );
-    expect(sql).not.toMatch(/revoke execute on function public\.is_admin\(\)/i);
-    expect(sql).not.toMatch(/revoke execute on function public\.is_staff\(\)/i);
+  it('keeps role helper execution for authenticated RLS while removing anonymous execution', () => {
+    for (const signature of [
+      'has_role(uuid, public.app_role)',
+      'is_staff(uuid)',
+      'is_admin()',
+      'is_staff()',
+    ]) {
+      expect(flatSql).toContain(
+        `revoke execute on function public.${signature} from public, anon;`
+      );
+      expect(flatSql).toContain(
+        `grant execute on function public.${signature} to authenticated, service_role;`
+      );
+    }
   });
 
-  it('splits public category reads from authenticated admin visibility', () => {
-    expect(sql).toMatch(
-      /create policy "Public reads active categories"[\s\S]*?to anon[\s\S]*?using \(is_active\);/i
-    );
-    expect(sql).toMatch(
-      /create policy "Authenticated reads active categories"[\s\S]*?to authenticated[\s\S]*?has_role\(auth\.uid\(\), 'admin'::public\.app_role\)/i
+  it('restricts internal-data policies to authenticated but preserves public active-category reads', () => {
+    const authenticatedPolicies = [
+      '"admins read profiles"',
+      '"staff read bill audit events"',
+      '"admins manage bills"',
+      '"staff read bills"',
+      '"admins manage settings"',
+      '"staff read settings"',
+      '"admins manage tables"',
+      '"staff read tables"',
+      '"admins manage categories"',
+      '"admins manage options"',
+      '"admins manage items"',
+      '"admins read order items"',
+      '"staff read order items"',
+      '"staff and admins insert kitchen tickets"',
+      '"staff and admins read kitchen tickets"',
+      '"admins read orders"',
+      '"admins update orders"',
+      '"staff read orders"',
+      '"admins manage admin credit settlements"',
+      '"staff read customer payments"',
+      '"Authenticated reads active categories"',
+    ];
+
+    for (const policyName of authenticatedPolicies) {
+      const index = flatSql.indexOf(`create policy ${policyName.toLowerCase()}`);
+      expect(index, `Missing recreated policy ${policyName}`).toBeGreaterThanOrEqual(0);
+      const policySql = flatSql.slice(index, flatSql.indexOf(';', index) + 1);
+      expect(policySql).toContain('to authenticated');
+    }
+
+    expect(flatSql).toContain(
+      'create policy "public reads active categories" on public.categories for select to anon using (is_active);'
     );
   });
 
-  it('does not revoke the intentionally public token-based QR endpoints', () => {
-    const qrFunctions = [
+  it('does not revoke intentionally public token-based QR endpoints', () => {
+    const publicQrFunctions = [
       'place_order(text, jsonb, text, integer, text)',
       'place_public_order(jsonb)',
       'get_order_status(uuid, text)',
       'get_table_by_token(text)',
     ];
-    for (const signature of qrFunctions) {
-      expect(sql).not.toMatch(
-        new RegExp(
-          `revoke execute on function public\\.${signature.replace(/[.*+?^\${}()|[\]\\]/g, '\\$&')}`,
-          'i'
-        )
+
+    for (const signature of publicQrFunctions) {
+      expect(flatSql).not.toContain(
+        `revoke execute on function public.${signature.toLowerCase()}`
       );
     }
   });
 
-  it('removes Data API access to archived backups while retaining service-role read access', () => {
-    expect(sql).toMatch(
-      /revoke all privileges on table[\s\S]*?_backup_pre_0009_orders[\s\S]*?from public, anon, authenticated;/i
+  it('conditionally removes Data API grants from production-only archive tables', () => {
+    expect(flatSql).toContain("to_regclass(format('public.%i', v_table)) is not null");
+    expect(flatSql).toContain(
+      'revoke all privileges on table public.%i from public, anon, authenticated'
     );
-    expect(sql).toMatch(
-      /grant select on table[\s\S]*?_backup_pre_0009_orders[\s\S]*?to service_role;/i
-    );
+    expect(flatSql).toContain('grant select on table public.%i to service_role');
   });
 
-  it('removes broad future default EXECUTE grants for migration owners', () => {
-    expect(sql).toMatch(
-      /alter default privileges for role postgres in schema public\s+revoke execute on functions from public, anon, authenticated;/i
+  it('removes broad future default EXECUTE grants for the migration role', () => {
+    expect(flatSql).toContain(
+      'alter default privileges for role postgres in schema public revoke execute on functions from public, anon, authenticated;'
     );
-    expect(sql).toMatch(
-      /alter default privileges for role supabase_admin in schema public\s+revoke execute on functions from public, anon, authenticated;/i
-    );
+    expect(flatSql).not.toContain('alter default privileges for role supabase_admin');
   });
 
   it('removes direct client execution from trigger-only helpers', () => {
-    expect(sql).toMatch(
-      /revoke execute on function public\.log_order_status\(\) from public, anon, authenticated;/i
-    );
-    expect(sql).toMatch(
-      /revoke execute on function public\.rls_auto_enable\(\) from public, anon, authenticated;/i
-    );
-    expect(sql).toMatch(
-      /revoke execute on function public\.prevent_customer_payment_mutation\(\) from public, anon, authenticated;/i
-    );
+    for (const signature of [
+      'log_order_status()',
+      'rls_auto_enable()',
+      'prevent_customer_payment_mutation()',
+    ]) {
+      expect(flatSql).toContain(
+        `revoke execute on function public.${signature} from public, anon, authenticated;`
+      );
+    }
   });
 });
