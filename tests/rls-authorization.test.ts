@@ -1768,6 +1768,13 @@ describe('Migrations 0019 & 0020: PostgreSQL RLS Authorization & Order Integrity
     });
     expect(ownerAdminErr).toBeNull();
     expect(ownerAdmin).toBe(true);
+    const { data: ownerIsAdmin, error: ownerIsAdminErr } = await ownerClient.rpc('is_admin');
+    expect(ownerIsAdminErr).toBeNull();
+    expect(ownerIsAdmin).toBe(true);
+
+    const { data: staffIsStaff, error: staffIsStaffErr } = await staffClient.rpc('is_staff');
+    expect(staffIsStaffErr).toBeNull();
+    expect(staffIsStaff).toBe(true);
 
     const { data: staffAdmin, error: staffAdminErr } = await staffClient.rpc('has_role', {
       _user_id: ownerUserId,
@@ -1807,6 +1814,13 @@ describe('Migrations 0019 & 0020: PostgreSQL RLS Authorization & Order Integrity
     });
     expect(anonStaffErr).not.toBeNull();
     expect(anonStaffErr?.message).toMatch(/permission denied/i);
+    const { error: anonIsAdminErr } = await anonClient.rpc('is_admin');
+    expect(anonIsAdminErr).not.toBeNull();
+    expect(anonIsAdminErr?.message).toMatch(/permission denied/i);
+
+    const { error: anonIsStaffErr } = await anonClient.rpc('is_staff');
+    expect(anonIsStaffErr).not.toBeNull();
+    expect(anonIsStaffErr?.message).toMatch(/permission denied/i);
 
     const { error: publicCategoryErr } = await anonClient
       .from('categories')
