@@ -14,7 +14,7 @@
 
 ### Current Verdict: 🔴 STRICT NO-GO FOR PRODUCTION EXECUTION
 
-While the application software, UI components, mobile dialogs, and TypeScript backend in PR #8 are fully verified and passing all integration suites on a disposable container, **production database migration execution is strictly gated and must NOT proceed until mandatory pre-requisites are fulfilled by the repository and database owners**.
+Core application software, UI components, mobile dialogs, and TypeScript backend were verified in the preceding release run. The new migration 0027 and its security regression test are committed but still require a clean disposable replay; **production database migration execution must NOT proceed until all mandatory prerequisites are fulfilled by the repository and database owners**.
 
 ```
 +-----------------------------------------------------------------------------------------------+
@@ -33,7 +33,7 @@ While the application software, UI components, mobile dialogs, and TypeScript ba
 ### Why Production Execution is Currently Blocked:
 1. **Unapplied Migration Delta:** Production Supabase project `asdrrunxpsqzbvswmzgv` currently stops at migration `202610260015`. Migrations `0016` through `0027` (12 distinct migration files) have not yet been applied.
 2. **Missing Financial Infrastructure:** In production, `public.customer_payments`, `public.admin_credit_settlements`, `orders.payment_status`, and `bills.paid_paise` do not exist. Any direct deployment of PR #8 code to production without applying the database migrations will result in immediate runtime errors for billing and order workflows.
-3. **Backup / Recovery Point Pending:** The owner has not yet captured and verified a point-in-time recovery backup or downloadable logical dump (`pg_dump`) immediately preceding this 11-migration batch.
+3. **Backup / Recovery Point Pending:** The owner has not yet captured and verified a point-in-time recovery backup or downloadable logical dump (`pg_dump`) immediately preceding this 12-migration batch.
 4. **Append-Only Trigger Safety:** Migration 0018 installs an immutable trigger preventing deletion/updates to `customer_payments`. Applying this requires scheduled maintenance authorization.
 5. **Historical Cancelled Bills Reconciliation:** The latest read-only capture has 19 cancelled bills totaling 509,000 paise (₹5,090), including `UB-01042` cancelled on 2026-10-31 at 00:35:51 IST. The owner approved the unknown/unreconciled (`payment_status = NULL`) classification on 2026-10-31; approval is not permission to execute SQL.
 
@@ -126,7 +126,6 @@ Migration `202610310027_harden_rpc_execution_privileges.sql` was added to PR #8 
 A static regression suite was added at `tests/security-definer-grants.test.ts`. **Neither migration 0027 nor its test has yet been run in the disposable local PostgreSQL/Supabase replay.** These changes must remain unverified until that run succeeds. Supabase leaked-password protection was also observed disabled and remains a separate dashboard security setting to review.
 
 ---
----
 
 ## 5. Financial Data Backfill Semantics & Accounting Interpretation
 
@@ -162,17 +161,17 @@ The refreshed SELECT-only capture is archived in `docs/production-baseline-2026-
 These values supersede the older figures below for current pre-migration planning. The older 2026-10-30 figures remain in the historical baseline archive and are not to be treated as the latest expected counts. Run the preflight again immediately before an approved change window.
 ### Expected Pre-Migration Diagnostic Findings on Production:
 
-1. **Finding 1 — Unbilled Orders:**
+1. **Finding 1 — Unbilled Orders (historical 2026-10-30 snapshot; see the latest 2026-10-31 counts above):**
    - Cancelled QR/Manual orders without bill: **4 rows**, total **147,600 paise** (₹1,476).
    - Completed QR/Manual orders without bill: **3 rows**, total **38,700 paise** (₹387).
    - Completed QR/Manual orders with issued bills: **24 rows**, total **663,500 paise** (₹6,635): one QR order worth **25,800 paise** and 23 manual orders worth **637,700 paise**.
    - *Pre-migration unbilled population:* 7 orders, 186,300 paise; all remain `unpaid` with `paid_paise = 0`.
    - *Post-migration expectation:* The 24 issued-bill-linked orders are reconciled to their issued bill totals; unbilled orders remain unpaid. These are point-in-time figures and must be rechecked before migration.
-2. **Finding 2 — Discounted Manual Bills:**
+2. **Finding 2 — Discounted Manual Bills (historical 2026-10-30 snapshot; see the latest 2026-10-31 counts above):**
    - Issued manual bills where order total exceeds bill total: **5 rows**, aggregate difference **21,200 paise** (₹212).
    - *Pre-migration state at 2026-10-30:* `orders.total_paise` = **160,000 paise**; `bills.total_paise` = **138,800 paise**; difference = **21,200 paise (₹212)**.
    - *Post-migration expectation:* linked `orders.paid_paise` = `bills.paid_paise` = **138,800 paise** in aggregate. Zero discrepancy.
-3. **Finding 3 — Cancelled Historical Bills:**
+3. **Finding 3 — Cancelled Historical Bills (historical 2026-10-30 snapshot; see the latest 2026-10-31 counts above):**
    - Cancelled historical bills: **17 rows**, total **481,100 paise** (₹4,811).
    - *Pre-migration state:* Retains invalid 0016 default `paid` with `paid_paise = 0`.
    - *Post-migration expectation:* `payment_status = NULL`, `paid_paise = 0`. False `paid` state eliminated.
@@ -400,7 +399,7 @@ Before applying migrations to production, the operator should validate that the 
    - *STOP CONDITION:* If any baseline row counts deviate from documented expectations, halt and investigate.
 2. **Step 2:** Verify owner backup dump.
    - *STOP CONDITION:* Do not execute migration DDL without an offline dump.
-3. **Step 3:** Apply migrations 0016 through 0026 in order.
+3. **Step 3:** Apply migrations 0016 through 0027 in order.
    - *STOP CONDITION:* If any statement fails with relation, constraint, or syntax error, halt immediately.
 4. **Step 4:** Reload PostgREST schema cache:
    ```sql
@@ -419,7 +418,7 @@ A fresh read-only production baseline was captured on 2026-10-31 and archived in
 
 | Gate ID | Gate Name | Required Criterion | Current Status | Gate Verdict |
 |---|---|---|---|---|
-| **GATE-1** | **Software Build & Verification** | Typecheck, lint, build, unit tests, and disposable integration test suite pass cleanly on the current head. | Earlier 517/517 unit/UI and 12/12 financial integration suites passed before 0027; current Vercel check reported success, but the new 0027 test still needs local execution. | 🟡 **PARTIAL (new test pending)** |
+| **GATE-1** | **Software Build & Verification** | Typecheck, lint, build, unit tests, and disposable integration test suite pass cleanly on the current head. | Earlier 517/517 unit/UI and 12/12 financial integration suites passed before 0027; Vercel reported success for security-code commit `0f49128d`; subsequent runbook/baseline documentation commits require their own current-head check, and the new 0027 test still needs local execution. | 🟡 **PARTIAL (new test pending)** |
 | **GATE-2** | **Backfill Correction Verification** | Deterministic regression tests prove findings 1, 2, 3 and multiple-bill safety gates are resolved. | `tests/payment-reconciliation-migration.test.ts` passed (13/13 OK) | 🟢 **PASSED** |
 | **GATE-3** | **Preflight Script Readiness** | Read-only SQL diagnostic verified on legacy and modern databases without relation or column errors. | `supabase/preflight-production-release.sql` verified on both 0015 and 0026 schemas | 🟢 **PASSED** |
 | **GATE-4** | **Rehearsal on Clean Container** | Isolated replay applies 0016–0027 and the fail-closed migration 0018 harness behaves correctly. | Prior replay and fail-closed tests verified 0016–0026; migration 0027 and `tests/security-definer-grants.test.ts` still require a fresh isolated replay/run. | 🟡 **PARTIAL (0027 pending)** |
