@@ -1,6 +1,6 @@
 # Urbania Café — Production Database Migration Readiness & Runbook
 
-**Document Version:** 1.5.0 (Final Harness Hardening & Captured Production Baseline)<br />
+**Document Version:** 1.6.0 (2026-10-31 Baseline Refresh & RPC Permission Hardening)<br />
 **Release Candidate Commit:** Current head of `feat/operational-improvements`; see [PR #8](https://github.com/urbania19-sudo/urbania-cafe/pull/8) for the exact SHA.<br />
 **Release Candidate Branch:** `feat/operational-improvements`<br />
 **Pull Request:** [#8 (feat: operational improvements)](https://github.com/urbania19-sudo/urbania-cafe/pull/8)<br />
@@ -20,22 +20,22 @@ While the application software, UI components, mobile dialogs, and TypeScript ba
 +-----------------------------------------------------------------------------------------------+
 |                                    VERDICT: NO-GO                                             |
 +-----------------------------------------------------------------------------------------------+
-|  1. Current feature-branch release candidate: VERIFIED & READY                                 |
-|  2. Migration Scripts 0016–0026: CORRECTED & REHEARSED                                        |
+|  1. Feature branch: app build/preview check reported successful; security migration replay pending |
+|  2. Migrations 0016–0026: prior replay passed; new 0027 security replay pending                 |
 |  3. Production Preflight Inspection: SCRIPT PREPARED (supabase/preflight-production-release.sql)|
 |  4. Production Database asdrrunxpsqzbvswmzgv: UNPREPARED (Stopped at 0015)                    |
 |  5. Verified Cold/Hot Backup & Restore: PENDING OWNER EXECUTION                               |
 |  6. Formal Maintenance Window & Change Approval: PENDING OWNER SIGN-OFF                       |
-|  7. Owner Reconciliation of 17 Cancelled Historical Bills: PENDING OWNER DECISION             |
+|  7. Owner accounting classification for 19 cancelled bills: APPROVED 2026-10-31               |
 +-----------------------------------------------------------------------------------------------+
 ```
 
 ### Why Production Execution is Currently Blocked:
-1. **Unapplied Migration Delta:** Production Supabase project `asdrrunxpsqzbvswmzgv` currently stops at migration `202610260015`. Migrations `0016` through `0026` (11 distinct migration files) have not yet been applied.
+1. **Unapplied Migration Delta:** Production Supabase project `asdrrunxpsqzbvswmzgv` currently stops at migration `202610260015`. Migrations `0016` through `0027` (12 distinct migration files) have not yet been applied.
 2. **Missing Financial Infrastructure:** In production, `public.customer_payments`, `public.admin_credit_settlements`, `orders.payment_status`, and `bills.paid_paise` do not exist. Any direct deployment of PR #8 code to production without applying the database migrations will result in immediate runtime errors for billing and order workflows.
 3. **Backup / Recovery Point Pending:** The owner has not yet captured and verified a point-in-time recovery backup or downloadable logical dump (`pg_dump`) immediately preceding this 11-migration batch.
 4. **Append-Only Trigger Safety:** Migration 0018 installs an immutable trigger preventing deletion/updates to `customer_payments`. Applying this requires scheduled maintenance authorization.
-5. **Historical Cancelled Bills Reconciliation:** Production has 17 cancelled bills totaling 481,100 paise (₹4,811) with unknown payment status. The owner must be informed of their unreconciled (`payment_status = NULL`) state.
+5. **Historical Cancelled Bills Reconciliation:** The latest read-only capture has 19 cancelled bills totaling 509,000 paise (₹5,090), including `UB-01042` cancelled on 2026-10-31 at 00:35:51 IST. The owner approved the unknown/unreconciled (`payment_status = NULL`) classification on 2026-10-31; approval is not permission to execute SQL.
 
 ---
 
@@ -58,6 +58,7 @@ While the application software, UI components, mobile dialogs, and TypeScript ba
   9. `202610290024_option_snapshot_price_consistency.sql`
   10. `202610290025_admin_credit_order_idempotency.sql`
   11. `202610290026_admin_credit_payload_hash.sql`
+  12. `202610310027_harden_rpc_execution_privileges.sql` *(Prepared on the feature branch; local replay pending)*
 
 ---
 
@@ -98,7 +99,7 @@ While the application software, UI components, mobile dialogs, and TypeScript ba
 
 ---
 
-## 4. Migration Corrections & Detailed Inventory (0016–0026)
+## 4. Migration Corrections & Detailed Inventory (0016–0027)
 
 ### Key Revisions Implemented in Migrations 0016 & 0018:
 1. **Migration 0016 Column Definition:**
@@ -110,6 +111,21 @@ While the application software, UI components, mobile dialogs, and TypeScript ba
    - **Finding 3 Fix:** Cancelled historical bills (17 bills, 481,100 paise) and their linked orders are set to `payment_status = NULL` and `paid_paise = 0`. This avoids falsely asserting that money was collected (`'paid'`) or never collected (`'unpaid'`), honestly capturing the historical uncertainty.
    - **Multiple-Bill Safety Gate & Fail-Closed Invariant:** Guarded migration 0018 against non-deterministic SQL updates by introducing an explicit pre-execution assertion. If any order is associated with more than 1 bill (`SELECT count(*) FROM public.bills GROUP BY order_id HAVING count(*) > 1`), migration 0018 immediately fails closed with `RAISE EXCEPTION 'URB:ambiguous_multiple_bills_detected'`. Additionally, Step 3 of Migration 0018 includes defense-in-depth condition `NOT EXISTS (SELECT 1 FROM public.bills b_issued WHERE b_issued.order_id = o.id AND b_issued.status = 'issued')` to prevent cancelled bills from clobbering orders with issued bills.
 
+### Migration 0027 — SECURITY DEFINER execution privilege hardening
+
+Migration `202610310027_harden_rpc_execution_privileges.sql` was added to PR #8 after read-only production inspection identified privileged functions and archive tables with overly broad API grants. It:
+
+- Recreates internal admin/staff RLS policies as `TO authenticated`, retaining the existing authorization predicates.
+- Restricts anonymous category visibility to active categories while preserving authenticated administrator access to inactive categories.
+- Revokes `PUBLIC` and `anon` execution from privileged billing, payment, order-management, and administrator RPCs.
+- Preserves the four intended public token-based QR endpoints: `place_order`, `place_public_order`, `get_order_status`, and `get_table_by_token`.
+- Keeps role-check helpers executable for authenticated RLS evaluation and removes direct client execution from trigger-only helpers.
+- Conditionally removes Data API privileges from production-only `_backup_pre_0009_*` tables while retaining service-role read access.
+- Revokes broad future function EXECUTE defaults for the `postgres` migration role.
+
+A static regression suite was added at `tests/security-definer-grants.test.ts`. **Neither migration 0027 nor its test has yet been run in the disposable local PostgreSQL/Supabase replay.** These changes must remain unverified until that run succeeds. Supabase leaked-password protection was also observed disabled and remains a separate dashboard security setting to review.
+
+---
 ---
 
 ## 5. Financial Data Backfill Semantics & Accounting Interpretation
@@ -131,8 +147,19 @@ While the application software, UI components, mobile dialogs, and TypeScript ba
 
 ## 6. Pre-Migration Baseline Queries & Expected Counts
 
-The database operator must rerun [`supabase/preflight-production-release.sql`](../supabase/preflight-production-release.sql) in the Supabase SQL Editor on `asdrrunxpsqzbvswmzgv` immediately before any approved migration. The read-only baseline captured on 2026-10-30 is archived in [`docs/production-baseline-2026-10-30.md`](production-baseline-2026-10-30.md). All 13 read-only statements were executed individually without SQL errors; this is a point-in-time baseline, not permission to migrate.
+The database operator must rerun [`supabase/preflight-production-release.sql`](../supabase/preflight-production-release.sql) in the Supabase SQL Editor on `asdrrunxpsqzbvswmzgv` immediately before any approved migration. The 2026-10-30 snapshot remains archived in [`docs/production-baseline-2026-10-30.md`](production-baseline-2026-10-30.md). The newer SELECT-only capture is in [`docs/production-baseline-2026-10-31.md`](production-baseline-2026-10-31.md); it supersedes the earlier figures for the current population but is still only a point-in-time baseline, not permission to migrate.
 
+### Latest read-only population captured 2026-10-31
+
+The refreshed SELECT-only capture is archived in `docs/production-baseline-2026-10-31.md`. The current diagnostics returned:
+
+- Cancelled QR/manual bills: **19 / 509,000 paise (₹5,090)**, including `UB-01042` cancelled at 00:35:51 IST on 2026-10-31.
+- Issued discounted manual bills: **4**, aggregate discount **16,300 paise (₹163)**; their subtotal is **145,100 paise (₹1,451)** and actual billed total **128,800 paise (₹1,288)**.
+- Unbilled cancelled orders: **4 / ₹1,476**; unbilled completed orders: **3 / ₹387**.
+- Completed orders with issued bills: **23**, actual billed total **632,300 paise (₹6,323)**.
+- Orders with multiple associated bills: **0**.
+
+These values supersede the older figures below for current pre-migration planning. The older 2026-10-30 figures remain in the historical baseline archive and are not to be treated as the latest expected counts. Run the preflight again immediately before an approved change window.
 ### Expected Pre-Migration Diagnostic Findings on Production:
 
 1. **Finding 1 — Unbilled Orders:**
@@ -160,17 +187,17 @@ The database operator must rerun [`supabase/preflight-production-release.sql`](.
 
 ---
 
-## 7. Remaining Accounting Decisions Requiring Owner Reconciliation
+## 7. Owner Accounting Decision and Remaining Execution Gates
 
 > [!IMPORTANT]
-> **Owner Sign-Off Required for 17 Cancelled Historical Bills:**
-> Production contains 17 cancelled bills issued before migration 0016, with an aggregate value of ₹4,811 (481,100 paise).
+> **Owner accounting sign-off completed on 2026-10-31 for 19 cancelled historical bills:**
+> The latest read-only capture found 19 cancelled QR/manual bills with an aggregate value of ₹5,090 (509,000 paise). The newest addition is `UB-01042` (Order #49), issued for ₹179 and cancelled on 2026-10-31 at 00:35:51 IST.
 > Because the legacy system did not record payment transaction logs or refund slips, the database cannot know whether:
 > 1. Cash was collected by staff and later voided/pocketed.
 > 2. The order was cancelled before the customer paid (customer walked away or cancelled order).
 > 3. The customer paid and was given a manual cash refund from the till.
 > 
-> **Action:** Migration 0018 safely sets `payment_status = NULL` and `paid_paise = 0` so these bills do not artificially inflate financial receipts. The owner should review the list of 17 cancelled bill numbers (available from Section 9C of `preflight-production-release.sql`) and reconcile them with physical cash register books if desired.
+> **Approved treatment:** The owner explicitly approved leaving cancelled bills at `payment_status = NULL`, `paid_paise = 0`, and `payment_method = NULL`. Cancellation does not prove whether cash was collected or refunded. This approval is a classification decision only; it does not authorize migration execution or merge.
 
 ---
 
@@ -388,18 +415,20 @@ Before applying migrations to production, the operator should validate that the 
 
 ## 10. Go/No-Go Decision Gates
 
-The first read-only production baseline has been captured and archived on 2026-10-30. Gate 5 is satisfied for this snapshot only; repeat it immediately before execution because production records can change.
+A fresh read-only production baseline was captured on 2026-10-31 and archived in `docs/production-baseline-2026-10-31.md`. The 2026-10-30 baseline remains historical. Repeat the current preflight immediately before execution because production records can change.
 
 | Gate ID | Gate Name | Required Criterion | Current Status | Gate Verdict |
 |---|---|---|---|---|
-| **GATE-1** | **Software Build & Verification** | Typecheck, lint, build, unit tests, and disposable integration test suite pass cleanly. | All passed (Unit: 517/517 OK; Financial Integration: 12/12 OK; TypeScript & ESLint: 0 errors; Build: OK) | 🟢 **PASSED** |
+| **GATE-1** | **Software Build & Verification** | Typecheck, lint, build, unit tests, and disposable integration test suite pass cleanly on the current head. | Earlier 517/517 unit/UI and 12/12 financial integration suites passed before 0027; current Vercel check reported success, but the new 0027 test still needs local execution. | 🟡 **PARTIAL (new test pending)** |
 | **GATE-2** | **Backfill Correction Verification** | Deterministic regression tests prove findings 1, 2, 3 and multiple-bill safety gates are resolved. | `tests/payment-reconciliation-migration.test.ts` passed (13/13 OK) | 🟢 **PASSED** |
 | **GATE-3** | **Preflight Script Readiness** | Read-only SQL diagnostic verified on legacy and modern databases without relation or column errors. | `supabase/preflight-production-release.sql` verified on both 0015 and 0026 schemas | 🟢 **PASSED** |
-| **GATE-4** | **Rehearsal on Clean Container** | Isolated two-phase replay applies 0016–0026 over real historical fixtures, and dedicated fail-closed harness tests actual migration 0018 failure against duplicate-bill fixtures. | Verified via `npm run test:migration:replay` (9/9 post-migration assertions OK) and `npm run test:migration:fail-closed` (exit code 1, URB:ambiguous_multiple_bills_detected, 0 partial changes) | 🟢 **PASSED** |
-| **GATE-5** | **Production Baseline Inspection** | Read-only preflight executed and baseline archived; repeat immediately before migration. | Captured 2026-10-30 and archived in `docs/production-baseline-2026-10-30.md`; refresh required before change window. | 🟢 **BASELINE CAPTURED (RECHECK REQUIRED)** |
+| **GATE-4** | **Rehearsal on Clean Container** | Isolated replay applies 0016–0027 and the fail-closed migration 0018 harness behaves correctly. | Prior replay and fail-closed tests verified 0016–0026; migration 0027 and `tests/security-definer-grants.test.ts` still require a fresh isolated replay/run. | 🟡 **PARTIAL (0027 pending)** |
+| **GATE-5** | **Production Baseline Inspection** | Read-only preflight executed and baseline archived; repeat immediately before migration. | Captured 2026-10-31 in `docs/production-baseline-2026-10-31.md`; repeat before change window. | 🟢 **BASELINE CAPTURED (RECHECK REQUIRED)** |
 | **GATE-6** | **Owner Backup Verification** | Complete project backup & recovery readiness: Platform snapshot/PITR verification, logical dumps (roles, schema, data, customizations diff), storage sync (`menu-images`), and supported restore verification. | Pending owner execution | 🔴 **PENDING (Owner action)** |
-| **GATE-7** | **Owner Accounting Sign-Off** | Owner accepts unreconciled NULL status for 17 cancelled bills and 0-discrepancy discount logic. | Pending owner review | 🔴 **PENDING (Owner action)** |
+| **GATE-7** | **Owner Accounting Sign-Off** | Owner accepts NULL status for cancelled bills, bill-total-based discount reconciliation, and unpaid unbilled orders. | Approved 2026-10-31 for the historical classification treatment. This is not production SQL or merge authorization. | 🟢 **APPROVED (classification only)** |
 | **GATE-8** | **Maintenance Window Scheduling** | Dedicated change window approved by business owners. | Pending owner scheduling | 🔴 **PENDING (Owner authorization)** |
 
+| **GATE-9** | **Security Hardening & Auth Configuration** | Migration 0027 replay passes; role grants/RLS retain legitimate staff and QR access; leaked-password protection is enabled or explicitly risk-accepted. | Migration 0027 and its static test are committed to the feature branch; replay/test pending. Leaked-password protection was reported disabled and has not been changed. | 🔴 **PENDING** |
+
 ### Final Verdict:
-**🔴 NO-GO FOR PRODUCTION EXECUTION until Gates 5, 6, 7, and 8 are satisfied.**
+**🔴 NO-GO FOR PRODUCTION EXECUTION.** Backup/restore (GATE-6), fresh preflight, isolated replay of migration 0027 and its regression test (GATE-4/GATE-1), security configuration review (GATE-9), maintenance scheduling (GATE-8), and explicit production SQL/merge authorization remain mandatory.
