@@ -1,22 +1,23 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
-import { calculateBillDiscount, type DiscountType } from '@/lib/billing';
+import { useState, useEffect } from 'react';
 
-interface TableOption {
+export interface TableOption {
   id: string;
   table_number: number;
   label: string;
 }
 
-interface MenuItemOption {
+export interface MenuItemOption {
   id: string;
   name: string;
   price_paise: number;
   is_available: boolean;
+  category_name?: string | null;
+  category_id?: string | null;
 }
 
-interface OrderItemRow {
+export interface OrderItemRow {
   isCustom: boolean;
   menuItemId?: string;
   name: string;
@@ -35,34 +36,58 @@ export default function ManualOrderModal({
   menuItems?: MenuItemOption[];
   onClose: () => void;
   onSuccess: (
-    order: { order_id: string; order_number: number; total_paise: number },
-    discount?: { type: DiscountType; value: number }
+    order: { order_id: string; order_number: number; total_paise: number }
   ) => void;
 }) {
-  const [serviceMode, setServiceMode] = useState<'dine_in' | 'takeaway' | 'counter' | 'delivery'>('dine_in');
+  const [serviceMode, setServiceMode] = useState<'dine_in' | 'takeaway'>('dine_in');
   const [tableId, setTableId] = useState<string>(tables[0]?.id || '');
-  const [customerName, setCustomerName] = useState('');
   const [customerNote, setCustomerNote] = useState('');
-  const [guestCount, setGuestCount] = useState(1);
   const [items, setItems] = useState<OrderItemRow[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // New item draft inputs
-  const [selectedMenuItemId, setSelectedMenuItemId] = useState<string>(menuItems[0]?.id || '');
+  // Catalogue search & category filter state
+  const [searchCatalogueQuery, setSearchCatalogueQuery] = useState('');
+  const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('ALL');
+
+  // Custom Item Form State
+  const [isAddingCustom, setIsAddingCustom] = useState(false);
   const [customName, setCustomName] = useState('');
   const [customPriceRupees, setCustomPriceRupees] = useState<string>('');
   const [customNote, setCustomNote] = useState('');
   const [customQty, setCustomQty] = useState(1);
-  const [isAddingCustom, setIsAddingCustom] = useState(false);
 
-  // Bill-level discount state
-  const [discountEnabled, setDiscountEnabled] = useState(false);
-  const [discountType, setDiscountType] = useState<DiscountType>('fixed');
-  const [discountValue, setDiscountValue] = useState<string>('');
+  // Available dishes from catalogue (only available items)
+  const availableDishes = menuItems.filter((m) => m.is_available);
 
-  function addCatalogueItem() {
-    const item = menuItems.find((m) => m.id === selectedMenuItemId);
+  // Distinct category names for filter chips
+  const categories = [
+    'ALL',
+    ...Array.from(
+      new Set(
+        availableDishes
+          .map((m) => m.category_name || 'Other')
+          .filter(Boolean)
+      )
+    ),
+  ];
+
+  // Filtered dishes for browsing
+  const filteredDishes = availableDishes.filter((m) => {
+    if (selectedCategoryFilter !== 'ALL' && (m.category_name || 'Other') !== selectedCategoryFilter) {
+      return false;
+    }
+    if (searchCatalogueQuery.trim()) {
+      const q = searchCatalogueQuery.trim().toLowerCase();
+      const matchName = m.name.toLowerCase().includes(q);
+      const matchCat = (m.category_name || '').toLowerCase().includes(q);
+      return matchName || matchCat;
+    }
+    return true;
+  });
+
+  function addOrIncrementCatalogueItem(menuItemId: string) {
+    const item = menuItems.find((m) => m.id === menuItemId);
     if (!item) return;
 
     setItems((prev) => {
@@ -137,40 +162,11 @@ export default function ManualOrderModal({
     });
   }
 
-  const totalPaise = items.reduce((acc, i) => acc + Math.round(i.unitPriceRupees * 100) * i.quantity, 0);
+  function removeItem(idx: number) {
+    setItems((prev) => prev.filter((_, i) => i !== idx));
+  }
 
-  const numDiscountValue = parseFloat(discountValue) || 0;
-  const discountCalc = useMemo(() => {
-    if (!discountEnabled || numDiscountValue <= 0) {
-      return {
-        subtotalBeforeDiscountPaise: totalPaise,
-        discountType: null,
-        discountValue: null,
-        discountPaise: 0,
-        totalPaise: totalPaise,
-        hasDiscount: false,
-        error: null,
-      };
-    }
-    try {
-      const calc = calculateBillDiscount(totalPaise, {
-        type: discountType,
-        value: numDiscountValue,
-      });
-      return { ...calc, error: null };
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : 'Invalid discount';
-      return {
-        subtotalBeforeDiscountPaise: totalPaise,
-        discountType: null,
-        discountValue: null,
-        discountPaise: 0,
-        totalPaise: totalPaise,
-        hasDiscount: false,
-        error: msg,
-      };
-    }
-  }, [discountEnabled, numDiscountValue, discountType, totalPaise]);
+  const totalPaise = items.reduce((acc, i) => acc + Math.round(i.unitPriceRupees * 100) * i.quantity, 0);
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -182,7 +178,7 @@ export default function ManualOrderModal({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose, submitting]);
 
-  async function handleSubmit(autoBill: boolean = true) {
+  async function handleSubmit() {
     if (items.length === 0) {
       setError('Please add at least one item to the order.');
       return;
@@ -195,9 +191,9 @@ export default function ManualOrderModal({
       const payload = {
         serviceMode,
         tableId: serviceMode === 'dine_in' ? tableId || null : null,
-        customerName: customerName.trim() || undefined,
+        customerName: undefined,
         customerNote: customerNote.trim() || undefined,
-        guestCount,
+        guestCount: 1,
         items: items.map((i) => ({
           menuItemId: i.isCustom ? undefined : i.menuItemId,
           name: i.isCustom ? i.name : undefined,
@@ -219,15 +215,7 @@ export default function ManualOrderModal({
         throw new Error(data.error || 'Failed to create order');
       }
 
-      if (discountCalc.error) {
-        setError(discountCalc.error);
-        return;
-      }
-      if (discountCalc.hasDiscount) {
-        onSuccess(data, { type: discountType, value: numDiscountValue });
-      } else {
-        onSuccess(data);
-      }
+      onSuccess(data);
     } catch (err) {
       console.error('Manual order submit error:', err);
       setError(err instanceof Error ? err.message : 'Could not create order.');
@@ -269,7 +257,7 @@ export default function ManualOrderModal({
         className="card"
         style={{
           width: '100%',
-          maxWidth: 580,
+          maxWidth: 600,
           margin: 'auto 0',
           backgroundColor: 'var(--card, #1c1512)',
           border: '1px solid var(--line, #3d2d24)',
@@ -299,7 +287,7 @@ export default function ManualOrderModal({
               fontWeight: 700,
             }}
           >
-            New Counter / Custom Order
+            New Order
           </h2>
           <button
             type="button"
@@ -318,7 +306,7 @@ export default function ManualOrderModal({
           </button>
         </div>
 
-        {/* Form Body (Standard Flow - Rock Solid across all WebViews) */}
+        {/* Form Body */}
         <div
           style={{
             padding: '16px 18px',
@@ -343,7 +331,7 @@ export default function ManualOrderModal({
             </div>
           )}
 
-          {/* Service Mode Selection (2x2 Grid) */}
+          {/* Service Mode Selection (Dine-in / Takeaway Only) */}
           <div>
             <label
               style={{
@@ -370,8 +358,6 @@ export default function ManualOrderModal({
                 [
                   ['dine_in', '🪑 Dine-in'],
                   ['takeaway', '🥡 Takeaway'],
-                  ['counter', '🛎️ Counter'],
-                  ['delivery', '🛵 Delivery'],
                 ] as const
               ).map(([mode, label]) => {
                 const isActive = serviceMode === mode;
@@ -408,134 +394,15 @@ export default function ManualOrderModal({
 
           {/* Table Selection for Dine-in */}
           {serviceMode === 'dine_in' && (
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
-                gap: 10,
-              }}
-            >
-              <div>
-                <label style={{ display: 'block', fontSize: 12, marginBottom: 4, fontWeight: 500 }}>
-                  Select Table
-                </label>
-                <select
-                  value={tableId}
-                  onChange={(e) => setTableId(e.target.value)}
-                  style={{
-                    width: '100%',
-                    minHeight: 44,
-                    padding: '8px 10px',
-                    borderRadius: 6,
-                    border: '1px solid var(--line, #3d2d24)',
-                    background: '#1a1a1a',
-                    color: 'inherit',
-                    boxSizing: 'border-box',
-                    fontSize: 13,
-                  }}
-                >
-                  {tables.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.label} (Table {t.table_number})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: 12, marginBottom: 4, fontWeight: 500 }}>
-                  Guest Count
-                </label>
-                <input
-                  type="number"
-                  min={1}
-                  max={20}
-                  value={guestCount}
-                  onChange={(e) => setGuestCount(parseInt(e.target.value, 10) || 1)}
-                  style={{
-                    width: '100%',
-                    minHeight: 44,
-                    padding: '8px 10px',
-                    borderRadius: 6,
-                    border: '1px solid var(--line, #3d2d24)',
-                    background: 'transparent',
-                    color: 'inherit',
-                    boxSizing: 'border-box',
-                    fontSize: 13,
-                  }}
-                />
-              </div>
-            </div>
-          )}
-
-          {/* Customer Details */}
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
-              gap: 10,
-            }}
-          >
             <div>
               <label style={{ display: 'block', fontSize: 12, marginBottom: 4, fontWeight: 500 }}>
-                Customer Name (Optional)
+                Select Table
               </label>
-              <input
-                type="text"
-                placeholder={serviceMode === 'takeaway' ? 'e.g. Priya (Takeaway)' : 'e.g. Walk-in Guest'}
-                value={customerName}
-                onChange={(e) => setCustomerName(e.target.value)}
-                style={{
-                  width: '100%',
-                  minHeight: 44,
-                  padding: '8px 10px',
-                  borderRadius: 6,
-                  border: '1px solid var(--line, #3d2d24)',
-                  background: 'transparent',
-                  color: 'inherit',
-                  boxSizing: 'border-box',
-                  fontSize: 13,
-                }}
-              />
-            </div>
-
-            <div>
-              <label style={{ display: 'block', fontSize: 12, marginBottom: 4, fontWeight: 500 }}>
-                Order Note (Optional)
-              </label>
-              <input
-                type="text"
-                placeholder="e.g. Parcel box / Less ice"
-                value={customerNote}
-                onChange={(e) => setCustomerNote(e.target.value)}
-                style={{
-                  width: '100%',
-                  minHeight: 44,
-                  padding: '8px 10px',
-                  borderRadius: 6,
-                  border: '1px solid var(--line, #3d2d24)',
-                  background: 'transparent',
-                  color: 'inherit',
-                  boxSizing: 'border-box',
-                  fontSize: 13,
-                }}
-              />
-            </div>
-          </div>
-
-          {/* Item Selection Section */}
-          <div style={{ borderTop: '1px solid var(--line, #3d2d24)', paddingTop: 14 }}>
-            <strong style={{ display: 'block', fontSize: 13, marginBottom: 8 }}>
-              Add Items to Order
-            </strong>
-
-            {/* Quick Catalogue Item Picker */}
-            <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
               <select
-                value={selectedMenuItemId}
-                onChange={(e) => setSelectedMenuItemId(e.target.value)}
+                value={tableId}
+                onChange={(e) => setTableId(e.target.value)}
                 style={{
-                  flex: '1 1 200px',
+                  width: '100%',
                   minHeight: 44,
                   padding: '8px 10px',
                   borderRadius: 6,
@@ -546,20 +413,192 @@ export default function ManualOrderModal({
                   fontSize: 13,
                 }}
               >
-                {menuItems.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name} — ₹{(m.price_paise / 100).toFixed(2)}
+                {tables.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.label} (Table {t.table_number})
                   </option>
                 ))}
               </select>
-              <button
-                type="button"
-                className="btn"
-                onClick={addCatalogueItem}
-                style={{ minHeight: 44, whiteSpace: 'nowrap', flex: '0 0 auto' }}
-              >
-                + Add Item
-              </button>
+            </div>
+          )}
+
+          {/* Order Note */}
+          <div>
+            <label style={{ display: 'block', fontSize: 12, marginBottom: 4, fontWeight: 500 }}>
+              Order Note (Optional)
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. Parcel box / Less ice"
+              value={customerNote}
+              onChange={(e) => setCustomerNote(e.target.value)}
+              style={{
+                width: '100%',
+                minHeight: 44,
+                padding: '8px 10px',
+                borderRadius: 6,
+                border: '1px solid var(--line, #3d2d24)',
+                background: 'transparent',
+                color: 'inherit',
+                boxSizing: 'border-box',
+                fontSize: 13,
+              }}
+            />
+          </div>
+
+          {/* Searchable, Scrollable Menu Catalogue Browser */}
+          <div style={{ display: 'grid', gap: 8, padding: '10px 0', borderTop: '1px solid var(--line, #3d2d24)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--accent, #c89f65)' }}>
+                Menu Catalogue ({availableDishes.length} dishes available)
+              </span>
+              {searchCatalogueQuery && (
+                <button
+                  type="button"
+                  className="chip"
+                  onClick={() => setSearchCatalogueQuery('')}
+                  style={{ fontSize: 11, padding: '2px 8px', cursor: 'pointer' }}
+                >
+                  Clear search
+                </button>
+              )}
+            </div>
+
+            {/* Category Filter Chips */}
+            <div
+              style={{
+                display: 'flex',
+                gap: 6,
+                overflowX: 'auto',
+                paddingBottom: 4,
+                WebkitOverflowScrolling: 'touch',
+              }}
+            >
+              {categories.map((cat) => {
+                const isCatSelected = selectedCategoryFilter === cat;
+                return (
+                  <button
+                    key={cat}
+                    type="button"
+                    className="chip"
+                    onClick={() => setSelectedCategoryFilter(cat)}
+                    style={{
+                      fontSize: 11,
+                      padding: '3px 8px',
+                      whiteSpace: 'nowrap',
+                      background: isCatSelected ? 'var(--accent, #c89f65)' : 'rgba(255,255,255,0.06)',
+                      color: isCatSelected ? '#2b1b16' : 'inherit',
+                      fontWeight: isCatSelected ? 700 : 500,
+                      borderColor: isCatSelected ? 'var(--accent, #c89f65)' : 'var(--line, #ffffff18)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {cat}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Search Input Field */}
+            <input
+              type="text"
+              aria-label="Search menu dishes"
+              placeholder="Search catalogue by name or category (e.g. Fries, Sandwich, Chai)..."
+              value={searchCatalogueQuery}
+              onChange={(e) => setSearchCatalogueQuery(e.target.value)}
+              style={{
+                padding: '8px 12px',
+                borderRadius: 6,
+                border: '1px solid var(--line, #3d2d24)',
+                background: '#ffffff10',
+                color: 'var(--ink, #f5ead9)',
+                fontSize: 13,
+                outline: 'none',
+                width: '100%',
+                boxSizing: 'border-box',
+              }}
+            />
+
+            {/* Scrollable Dish List Container */}
+            <div
+              style={{
+                maxHeight: 220,
+                overflowY: 'auto',
+                borderRadius: 6,
+                border: '1px solid var(--line, #3d2d24)',
+                background: 'rgba(0,0,0,0.2)',
+                padding: 6,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 4,
+              }}
+            >
+              {filteredDishes.length === 0 ? (
+                <div style={{ padding: '16px 12px', textAlign: 'center', fontSize: 12, color: 'var(--muted, #999)' }}>
+                  No dishes match &ldquo;{searchCatalogueQuery}&rdquo;. Try another term or add a custom dish below.
+                </div>
+              ) : (
+                filteredDishes.map((m) => {
+                  const existingInOrder = items.find((it) => !it.isCustom && it.menuItemId === m.id);
+                  const inOrderQty = existingInOrder?.quantity ?? 0;
+
+                  return (
+                    <div
+                      key={m.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '6px 10px',
+                        borderRadius: 4,
+                        background: inOrderQty > 0 ? 'rgba(200, 159, 101, 0.1)' : 'rgba(255,255,255,0.04)',
+                        border: inOrderQty > 0 ? '1px solid rgba(200, 159, 101, 0.3)' : '1px solid transparent',
+                        gap: 8,
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                          <span style={{ fontWeight: 600, fontSize: 13 }}>🍽️ {m.name}</span>
+                          {m.category_name && (
+                            <span className="chip" style={{ fontSize: 10, padding: '1px 5px', color: 'var(--muted, #a89485)' }}>
+                              {m.category_name}
+                            </span>
+                          )}
+                          <span style={{ fontSize: 12, color: 'var(--accent, #c89f65)' }}>
+                            ₹{(m.price_paise / 100).toFixed(2)}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        {inOrderQty > 0 && (
+                          <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent, #c89f65)' }}>
+                            {inOrderQty} in order
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          className="chip"
+                          aria-label={`Add ${m.name} to order`}
+                          onClick={() => addOrIncrementCatalogueItem(m.id)}
+                          style={{
+                            fontSize: 11,
+                            padding: '4px 10px',
+                            fontWeight: 700,
+                            background: inOrderQty > 0 ? 'rgba(255,255,255,0.1)' : 'var(--accent, #c89f65)',
+                            color: inOrderQty > 0 ? 'inherit' : '#2b1b16',
+                            cursor: 'pointer',
+                          }}
+                          title={`Add ${m.name} to order`}
+                        >
+                          {inOrderQty > 0 ? '+ Add Another' : '+ Add'}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
             </div>
 
             {/* Custom Line Item Toggle / Form */}
@@ -568,7 +607,7 @@ export default function ManualOrderModal({
                 type="button"
                 className="chip"
                 onClick={() => setIsAddingCustom(true)}
-                style={{ fontSize: 12, color: 'var(--accent, #c89f65)', padding: '6px 12px' }}
+                style={{ fontSize: 12, color: 'var(--accent, #c89f65)', padding: '6px 12px', marginTop: 4, width: 'fit-content' }}
               >
                 + Add Permitted Custom Line Item (Non-Catalogue)
               </button>
@@ -578,7 +617,7 @@ export default function ManualOrderModal({
                   padding: 12,
                   background: 'rgba(255,255,255,0.04)',
                   borderRadius: 8,
-                  marginTop: 8,
+                  marginTop: 6,
                   border: '1px solid var(--line, #3d2d24)',
                 }}
               >
@@ -599,50 +638,48 @@ export default function ManualOrderModal({
                     value={customName}
                     onChange={(e) => setCustomName(e.target.value)}
                     style={{
-                      padding: '8px 10px',
+                      gridColumn: 'span 2',
+                      minHeight: 38,
+                      padding: '6px 10px',
                       borderRadius: 6,
                       border: '1px solid var(--line, #3d2d24)',
                       background: 'transparent',
                       color: 'inherit',
-                      boxSizing: 'border-box',
                       fontSize: 13,
-                      minHeight: 40,
                     }}
                   />
                   <input
                     type="number"
-                    step="1"
+                    step="0.01"
                     min="0"
                     placeholder="Price (₹)"
                     value={customPriceRupees}
                     onChange={(e) => setCustomPriceRupees(e.target.value)}
                     style={{
-                      padding: '8px 10px',
+                      minHeight: 38,
+                      padding: '6px 10px',
                       borderRadius: 6,
                       border: '1px solid var(--line, #3d2d24)',
                       background: 'transparent',
                       color: 'inherit',
-                      boxSizing: 'border-box',
                       fontSize: 13,
-                      minHeight: 40,
                     }}
                   />
                   <input
                     type="number"
-                    min="1"
-                    max="20"
+                    min={1}
+                    max={20}
                     placeholder="Qty"
                     value={customQty}
                     onChange={(e) => setCustomQty(parseInt(e.target.value, 10) || 1)}
                     style={{
-                      padding: '8px 10px',
+                      minHeight: 38,
+                      padding: '6px 10px',
                       borderRadius: 6,
                       border: '1px solid var(--line, #3d2d24)',
                       background: 'transparent',
                       color: 'inherit',
-                      boxSizing: 'border-box',
                       fontSize: 13,
-                      minHeight: 40,
                     }}
                   />
                 </div>
@@ -653,23 +690,23 @@ export default function ManualOrderModal({
                   onChange={(e) => setCustomNote(e.target.value)}
                   style={{
                     width: '100%',
-                    padding: '8px 10px',
+                    minHeight: 38,
+                    padding: '6px 10px',
                     borderRadius: 6,
                     border: '1px solid var(--line, #3d2d24)',
                     background: 'transparent',
                     color: 'inherit',
                     marginBottom: 8,
-                    boxSizing: 'border-box',
                     fontSize: 13,
-                    minHeight: 40,
+                    boxSizing: 'border-box',
                   }}
                 />
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', gap: 8 }}>
                   <button
                     type="button"
-                    className="chip"
+                    className="btn"
                     onClick={addCustomLineItem}
-                    style={{ color: 'var(--accent, #c89f65)', fontWeight: 600, minHeight: 38 }}
+                    style={{ minHeight: 38, padding: '6px 16px', fontSize: 13 }}
                   >
                     Add Custom Item
                   </button>
@@ -677,7 +714,7 @@ export default function ManualOrderModal({
                     type="button"
                     className="chip"
                     onClick={() => setIsAddingCustom(false)}
-                    style={{ minHeight: 38 }}
+                    style={{ minHeight: 38, padding: '6px 12px', fontSize: 13 }}
                   >
                     Cancel
                   </button>
@@ -686,7 +723,7 @@ export default function ManualOrderModal({
             )}
           </div>
 
-          {/* Selected Items List */}
+          {/* Selected Items List (Edit Order Style) */}
           <div>
             <strong style={{ display: 'block', fontSize: 13, marginBottom: 6 }}>
               Selected Items ({items.length})
@@ -694,14 +731,14 @@ export default function ManualOrderModal({
 
             {items.length === 0 ? (
               <p className="muted" style={{ fontSize: 12, margin: '8px 0' }}>
-                No items added yet. Select a catalogue item above or create a custom line item.
+                No items added yet. Select a dish from the catalogue above or create a custom line item.
               </p>
             ) : (
               <div style={{ border: '1px solid var(--line, #3d2d24)', borderRadius: 8, overflow: 'hidden' }}>
                 <div style={{ maxHeight: 240, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
                   {items.map((item, idx) => (
                     <div
-                      key={idx}
+                      key={item.isCustom ? `custom-${idx}` : item.menuItemId || idx}
                       style={{
                         display: 'flex',
                         justifyContent: 'space-between',
@@ -716,7 +753,7 @@ export default function ManualOrderModal({
                       <div style={{ flex: '1 1 140px', minWidth: 0 }}>
                         <div style={{ fontWeight: 600, wordBreak: 'break-word' }}>{item.name}</div>
                         {item.isCustom && (
-                          <span className="chip" style={{ fontSize: 9, marginLeft: 0, marginTop: 2, display: 'inline-block' }}>
+                          <span className="chip" style={{ fontSize: 9, padding: '1px 6px', marginTop: 2, display: 'inline-block' }}>
                             Custom
                           </span>
                         )}
@@ -734,8 +771,8 @@ export default function ManualOrderModal({
                           className="chip"
                           onClick={() => updateQuantity(idx, -1)}
                           style={{
-                            minWidth: 36,
-                            minHeight: 36,
+                            minWidth: 32,
+                            minHeight: 32,
                             padding: 0,
                             display: 'flex',
                             alignItems: 'center',
@@ -745,7 +782,7 @@ export default function ManualOrderModal({
                           }}
                           aria-label="Decrease quantity"
                         >
-                          -
+                          −
                         </button>
                         <span style={{ fontWeight: 700, minWidth: 24, textAlign: 'center' }}>
                           {item.quantity}
@@ -755,8 +792,8 @@ export default function ManualOrderModal({
                           className="chip"
                           onClick={() => updateQuantity(idx, 1)}
                           style={{
-                            minWidth: 36,
-                            minHeight: 36,
+                            minWidth: 32,
+                            minHeight: 32,
                             padding: 0,
                             display: 'flex',
                             alignItems: 'center',
@@ -768,6 +805,16 @@ export default function ManualOrderModal({
                         >
                           +
                         </button>
+                        <button
+                          type="button"
+                          className="chip"
+                          aria-label={`Remove ${item.name}`}
+                          onClick={() => removeItem(idx)}
+                          style={{ fontSize: 11, padding: '4px 8px', color: '#ef4444', cursor: 'pointer' }}
+                          title="Remove item"
+                        >
+                          ✕
+                        </button>
                         <span style={{ fontWeight: 700, minWidth: 70, textAlign: 'right' }}>
                           ₹{(item.unitPriceRupees * item.quantity).toFixed(2)}
                         </span>
@@ -776,198 +823,21 @@ export default function ManualOrderModal({
                   ))}
                 </div>
 
-                {/* Optional Bill-level Discount Controls */}
+                {/* Order Total */}
                 <div
                   style={{
-                    padding: '10px 12px',
-                    background: 'rgba(255,255,255,0.02)',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    padding: '12px 14px',
+                    background: 'rgba(255,255,255,0.05)',
+                    fontWeight: 700,
+                    fontSize: 15,
                     borderTop: '1px solid var(--line, #3d2d24)',
-                    fontSize: 13,
                   }}
                 >
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      flexWrap: 'wrap',
-                      gap: 8,
-                    }}
-                  >
-                    <label
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        cursor: 'pointer',
-                        fontWeight: 600,
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={discountEnabled}
-                        onChange={(e) => {
-                          setDiscountEnabled(e.target.checked);
-                          if (!e.target.checked) setDiscountValue('');
-                        }}
-                        style={{
-                          width: 16,
-                          height: 16,
-                          cursor: 'pointer',
-                          accentColor: 'var(--accent, #c89f65)',
-                        }}
-                      />
-                      <span>Apply bill discount</span>
-                    </label>
-
-                    {discountEnabled && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setDiscountEnabled(false);
-                          setDiscountValue('');
-                        }}
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          color: '#df6d5d',
-                          fontSize: 12,
-                          cursor: 'pointer',
-                          padding: 0,
-                          textDecoration: 'underline',
-                        }}
-                      >
-                        Remove discount
-                      </button>
-                    )}
-                  </div>
-
-                  {discountEnabled && (
-                    <div style={{ marginTop: 10, display: 'grid', gap: 10 }}>
-                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                        <button
-                          type="button"
-                          className="chip"
-                          onClick={() => setDiscountType('fixed')}
-                          style={
-                            discountType === 'fixed'
-                              ? { background: 'var(--accent, #c89f65)', color: '#2b1b16', fontWeight: 700 }
-                              : { fontSize: 12 }
-                          }
-                        >
-                          Fixed Amount (₹)
-                        </button>
-                        <button
-                          type="button"
-                          className="chip"
-                          onClick={() => setDiscountType('percentage')}
-                          style={
-                            discountType === 'percentage'
-                              ? { background: 'var(--accent, #c89f65)', color: '#2b1b16', fontWeight: 700 }
-                              : { fontSize: 12 }
-                          }
-                        >
-                          Percentage (%)
-                        </button>
-                      </div>
-
-                      <div>
-                        <label
-                          htmlFor="bill-discount-value"
-                          style={{
-                            display: 'block',
-                            fontSize: 12,
-                            marginBottom: 4,
-                            color: 'var(--muted, #998377)',
-                          }}
-                        >
-                          {discountType === 'fixed'
-                            ? 'Discount amount in Rupees (₹)'
-                            : 'Discount percentage (%)'}
-                        </label>
-                        <input
-                          id="bill-discount-value"
-                          type="number"
-                          min="0"
-                          max={discountType === 'percentage' ? 100 : totalPaise / 100}
-                          step={discountType === 'percentage' ? '0.1' : '1'}
-                          placeholder={discountType === 'fixed' ? 'e.g. 50' : 'e.g. 10'}
-                          value={discountValue}
-                          onChange={(e) => setDiscountValue(e.target.value)}
-                          style={{
-                            width: '100%',
-                            padding: '8px 12px',
-                            borderRadius: 6,
-                            border: '1px solid var(--line, #3d2d24)',
-                            background: 'rgba(0,0,0,0.2)',
-                            color: 'var(--ink, #f5ead9)',
-                            fontSize: 14,
-                            outline: 'none',
-                          }}
-                        />
-                        {discountCalc.error && (
-                          <p style={{ color: '#df6d5d', fontSize: 12, margin: '4px 0 0' }}>
-                            {discountCalc.error}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  )}
+                  <span>Total Amount:</span>
+                  <span data-testid="manual-order-total-amount">₹{(totalPaise / 100).toFixed(2)}</span>
                 </div>
-
-                {/* Calculation Preview & Final Amount */}
-                {discountCalc.hasDiscount ? (
-                  <div
-                    style={{
-                      padding: '10px 12px',
-                      background: 'rgba(255,255,255,0.05)',
-                      fontSize: 13,
-                      borderTop: '1px solid var(--line, #3d2d24)',
-                      display: 'grid',
-                      gap: 4,
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--muted, #998377)' }}>
-                      <span>Bill Total:</span>
-                      <span>₹{(discountCalc.subtotalBeforeDiscountPaise / 100).toFixed(2)}</span>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', color: '#10b981' }}>
-                      <span>
-                        Discount ({discountType === 'percentage' ? `${numDiscountValue}%` : `₹${numDiscountValue}`}):
-                      </span>
-                      <span>-₹{(discountCalc.discountPaise / 100).toFixed(2)}</span>
-                    </div>
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        fontWeight: 700,
-                        fontSize: 15,
-                        marginTop: 2,
-                        paddingTop: 4,
-                        borderTop: '1px dashed var(--line, #3d2d24)',
-                      }}
-                    >
-                      <span>Amount to Pay:</span>
-                      <span>₹{(discountCalc.totalPaise / 100).toFixed(2)}</span>
-                    </div>
-                  </div>
-                ) : (
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      padding: '10px 12px',
-                      background: 'rgba(255,255,255,0.05)',
-                      fontWeight: 700,
-                      fontSize: 14,
-                      borderTop: '1px solid var(--line, #3d2d24)',
-                    }}
-                  >
-                    <span>Total Amount:</span>
-                    <span>₹{(totalPaise / 100).toFixed(2)}</span>
-                  </div>
-                )}
               </div>
             )}
           </div>
@@ -992,7 +862,7 @@ export default function ManualOrderModal({
             className="chip"
             onClick={onClose}
             disabled={submitting}
-            style={{ minHeight: 44, padding: '10px 16px', fontWeight: 600 }}
+            style={{ minHeight: 44, padding: '10px 16px', fontWeight: 600, cursor: 'pointer' }}
           >
             Cancel
           </button>
@@ -1000,17 +870,18 @@ export default function ManualOrderModal({
             type="button"
             className="btn"
             disabled={submitting || items.length === 0}
-            onClick={() => handleSubmit(true)}
+            onClick={handleSubmit}
             style={{
               backgroundColor: 'var(--accent, #c89f65)',
               color: '#2b1b16',
               minHeight: 44,
-              padding: '10px 20px',
+              padding: '10px 24px',
               fontWeight: 800,
+              cursor: submitting || items.length === 0 ? 'not-allowed' : 'pointer',
               opacity: submitting || items.length === 0 ? 0.5 : 1,
             }}
           >
-            {submitting ? 'Creating...' : 'Create & Generate Bill'}
+            {submitting ? 'Creating...' : 'Create Order'}
           </button>
         </div>
       </div>

@@ -2,8 +2,24 @@ import { NextRequest, NextResponse } from "next/server";
 import { owner } from "@/lib/owner";
 import { exportAuditEventsCsv } from "@/lib/csv";
 import type { BillAuditEvent } from "@/lib/billing";
+import { isPreviewDemoMode } from "@/lib/preview-demo";
+import { DEMO_BILL_EVENTS } from "@/lib/demo-fixtures";
 
 export async function GET(req: NextRequest) {
+  if (isPreviewDemoMode()) {
+    const csvContent = exportAuditEventsCsv(DEMO_BILL_EVENTS);
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const filename = `urbania-audit-events-demo-${dateStr}.csv`;
+    return new NextResponse(csvContent, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": `attachment; filename="${filename}"`,
+        "Cache-Control": "no-store, max-age=0",
+      },
+    });
+  }
+
   const db = await owner();
   if (!db) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -23,8 +39,8 @@ export async function GET(req: NextRequest) {
       .order("created_at", { ascending: false })
       .limit(2000);
 
-    if (eventType !== "all") query = query.eq("event_type", eventType);
     if (billId) query = query.eq("bill_id", billId);
+    if (eventType !== "all") query = query.eq("event_type", eventType);
     if (startDate) query = query.gte("created_at", `${startDate}T00:00:00.000Z`);
     if (endDate) query = query.lte("created_at", `${endDate}T23:59:59.999Z`);
     if (search) {
@@ -33,24 +49,22 @@ export async function GET(req: NextRequest) {
 
     const { data: events, error } = await query;
     if (error) {
-      console.warn("Audit Events CSV notice (Migration 0009 pending):", error.message);
-      // Return empty CSV with standard headers
-      const emptyCsv = exportAuditEventsCsv([]);
-      const filename = `urbania-audit-events-${new Date().toISOString().slice(0, 10)}.csv`;
-      return new NextResponse(emptyCsv, {
+      console.warn("Audit events export query error (schema pending):", error.message);
+      return new NextResponse(exportAuditEventsCsv([]), {
         status: 200,
         headers: {
           "Content-Type": "text/csv; charset=utf-8",
-          "Content-Disposition": `attachment; filename="${filename}"`,
+          "Content-Disposition": `attachment; filename="urbania-audit-events-empty.csv"`,
           "Cache-Control": "no-store, max-age=0",
         },
       });
     }
 
-    const csvData = exportAuditEventsCsv((events || []) as BillAuditEvent[]);
-    const filename = `urbania-audit-events-${new Date().toISOString().slice(0, 10)}.csv`;
+    const csvContent = exportAuditEventsCsv((events || []) as BillAuditEvent[]);
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const filename = `urbania-audit-events-${dateStr}.csv`;
 
-    return new NextResponse(csvData, {
+    return new NextResponse(csvContent, {
       status: 200,
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
@@ -59,7 +73,7 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (err) {
-    console.error("Events CSV route error:", err);
-    return NextResponse.json({ error: "Failed to generate CSV" }, { status: 500 });
+    console.error("CSV Export error for audit events:", err);
+    return NextResponse.json({ error: "Export generation failed" }, { status: 500 });
   }
 }

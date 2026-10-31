@@ -286,7 +286,7 @@ describe('Pre-Deployment QA & Release Readiness Test Suite', () => {
   // 2. MANUAL AND CUSTOM ORDERS
   // =========================================================================
   describe('Manual & Custom Orders Across Service Modes', () => {
-    it('supports all 4 service modes (Dine-in, Takeaway, Counter, Delivery) in ManualOrderModal', () => {
+    it('supports Dine-in and Takeaway service modes in ManualOrderModal', () => {
       render(
         <ManualOrderModal
           tables={mockTables}
@@ -298,28 +298,22 @@ describe('Pre-Deployment QA & Release Readiness Test Suite', () => {
 
       const dineInBtn = screen.getByRole('button', { name: /🪑 Dine-in/i });
       const takeawayBtn = screen.getByRole('button', { name: /🥡 Takeaway/i });
-      const counterBtn = screen.getByRole('button', { name: /🛎️ Counter/i });
-      const deliveryBtn = screen.getByRole('button', { name: /🛵 Delivery/i });
 
       expect(dineInBtn).toBeInTheDocument();
       expect(takeawayBtn).toBeInTheDocument();
-      expect(counterBtn).toBeInTheDocument();
-      expect(deliveryBtn).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /🛎️ Counter/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /🛵 Delivery/i })).not.toBeInTheDocument();
 
       // Dine-in displays table selection
       expect(screen.getByText('Select Table')).toBeInTheDocument();
 
-      // Switch to Delivery mode: table selection is omitted
-      fireEvent.click(deliveryBtn);
-      expect(screen.queryByText('Select Table')).not.toBeInTheDocument();
-
-      // Switch to Counter mode
-      fireEvent.click(counterBtn);
-      expect(screen.queryByText('Select Table')).not.toBeInTheDocument();
-
-      // Switch to Takeaway mode
+      // Switch to Takeaway mode: table selection is omitted
       fireEvent.click(takeawayBtn);
       expect(screen.queryByText('Select Table')).not.toBeInTheDocument();
+
+      // Switch back to Dine-in: table selection is restored
+      fireEvent.click(dineInBtn);
+      expect(screen.getByText('Select Table')).toBeInTheDocument();
     });
 
     it('adds custom line items with name, price, notes and calculates total', () => {
@@ -333,7 +327,7 @@ describe('Pre-Deployment QA & Release Readiness Test Suite', () => {
       );
 
       // Add catalogue item (Cold Coffee Frappe ₹180)
-      const addCatalogueBtn = screen.getByRole('button', { name: '+ Add Item' });
+      const addCatalogueBtn = screen.getByRole('button', { name: /Add Cold Coffee Frappe/i });
       fireEvent.click(addCatalogueBtn);
 
       // Add custom line item (₹75)
@@ -385,7 +379,7 @@ describe('Pre-Deployment QA & Release Readiness Test Suite', () => {
       const req = new NextRequest('http://localhost/api/staff/orders', {
         method: 'POST',
         body: JSON.stringify({
-          serviceMode: 'counter',
+          serviceMode: 'takeaway',
           customerName: 'Walk-in Guest',
           idempotencyKey: validIdempotencyKey,
           items: [

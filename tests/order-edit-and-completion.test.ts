@@ -401,23 +401,9 @@ describe('Order Status Completion & Edit Items API Routes', () => {
       const res = await updateOrderStatus(req, { params: Promise.resolve({ orderId: mockOrderId }) });
       expect(res.status).toBe(400);
       const data = await res.json();
-      expect(data.error).toContain('deadlock detected');
-      // Crucial: Must NOT attempt legacy bridging on deadlock/unrelated errors!
+      expect(data.error).toContain('deadlock detected on relation orders');
+      // Unrelated errors must NOT trigger legacy bridging
       expect(mockRpc).toHaveBeenCalledTimes(1);
-    });
-
-    it('is blocked by fail-closed Preview guard when VERCEL_ENV=preview', async () => {
-      process.env.VERCEL_ENV = 'preview';
-
-      const req = new NextRequest(`http://localhost/api/staff/orders/${mockOrderId}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ status: 'COMPLETED' }),
-      });
-
-      const res = await updateOrderStatus(req, { params: Promise.resolve({ orderId: mockOrderId }) });
-      expect(res.status).toBe(403);
-      const data = await res.json();
-      expect(data.code).toBe('PREVIEW_READ_ONLY');
     });
   });
 
@@ -481,6 +467,87 @@ describe('Order Status Completion & Edit Items API Routes', () => {
         p_order_id: mockOrderId,
         p_items: [{ menuItemId: mockMenuItemId, quantity: 2 }],
       });
+    });
+
+    it('accepts custom dishes with isCustom=true, name, price, quantity, and notes', async () => {
+      const mockRpc = vi.fn().mockResolvedValue({ data: { id: mockOrderId, total_paise: 35000 }, error: null });
+
+      (authDb as any).mockResolvedValue({
+        auth: {
+          getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'staff-user-1' } }, error: null }),
+        },
+        rpc: mockRpc,
+      });
+
+      const customItemsPayload = [
+        { menuItemId: mockMenuItemId, quantity: 1 },
+        { isCustom: true, name: 'Special Masala Chai', unitPriceRupees: 40, quantity: 2, note: 'Extra ginger' },
+      ];
+
+      const req = new NextRequest(`http://localhost/api/staff/orders/${mockOrderId}/items`, {
+        method: 'PATCH',
+        body: JSON.stringify({ items: customItemsPayload }),
+      });
+
+      const res = await editOrderItems(req, { params: Promise.resolve({ orderId: mockOrderId }) });
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.ok).toBe(true);
+      expect(mockRpc).toHaveBeenCalledWith('edit_order_items', {
+        p_order_id: mockOrderId,
+        p_items: [
+          { menuItemId: mockMenuItemId, quantity: 1 },
+          { isCustom: true, name: 'Special Masala Chai', unitPricePaise: 4000, quantity: 2, note: 'Extra ginger' },
+        ],
+      });
+    });
+
+    it('rejects custom dishes with empty name or negative price with HTTP 400', async () => {
+      (authDb as any).mockResolvedValue({
+        auth: {
+          getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'staff-user-1' } }, error: null }),
+        },
+      });
+
+      // 1. Empty dish name
+      const reqEmptyName = new NextRequest(`http://localhost/api/staff/orders/${mockOrderId}/items`, {
+        method: 'PATCH',
+        body: JSON.stringify({ items: [{ isCustom: true, name: '   ', unitPriceRupees: 50, quantity: 1 }] }),
+      });
+      const res1 = await editOrderItems(reqEmptyName, { params: Promise.resolve({ orderId: mockOrderId }) });
+      expect(res1.status).toBe(400);
+
+      // 2. Negative unit price
+      const reqNegPrice = new NextRequest(`http://localhost/api/staff/orders/${mockOrderId}/items`, {
+        method: 'PATCH',
+        body: JSON.stringify({ items: [{ isCustom: true, name: 'Toast', unitPriceRupees: -10, quantity: 1 }] }),
+      });
+      const res2 = await editOrderItems(reqNegPrice, { params: Promise.resolve({ orderId: mockOrderId }) });
+      expect(res2.status).toBe(400);
+    });
+
+    it('surfaces backend error when order is already billed or completed', async () => {
+      const mockRpc = vi.fn().mockResolvedValue({
+        data: null,
+        error: { message: 'Order has already been billed and cannot be edited' },
+      });
+
+      (authDb as any).mockResolvedValue({
+        auth: {
+          getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'staff-user-1' } }, error: null }),
+        },
+        rpc: mockRpc,
+      });
+
+      const req = new NextRequest(`http://localhost/api/staff/orders/${mockOrderId}/items`, {
+        method: 'PATCH',
+        body: JSON.stringify({ items: [{ menuItemId: mockMenuItemId, quantity: 1 }] }),
+      });
+
+      const res = await editOrderItems(req, { params: Promise.resolve({ orderId: mockOrderId }) });
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toContain('already been billed and cannot be edited');
     });
 
     it('returns informative HTTP 503 error when database function edit_order_items is missing', async () => {

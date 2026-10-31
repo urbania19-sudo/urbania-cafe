@@ -5,6 +5,7 @@ import MenuClient from '@/components/menu/MenuClient';
 import OrderBoard from '@/components/staff/OrderBoard';
 import ThermalBillModal from '@/components/staff/ThermalBillModal';
 import ManualOrderModal from '@/components/staff/ManualOrderModal';
+import BillDiscountModal from '@/components/staff/BillDiscountModal';
 import ReceiptPrintView from '@/components/bills/ReceiptPrintView';
 import { SAMPLE_BILL } from '@/lib/billing';
 
@@ -133,28 +134,21 @@ describe('Mobile Viewports (320px, 360px, 375px, 390px, 414px) Responsiveness', 
         expect(dialog.style.alignItems).toBe('flex-start');
         expect(dialog.style.overflowY).toBe('auto');
 
-        expect(screen.getByText('New Counter / Custom Order')).toBeInTheDocument();
+        expect(screen.getByText('New Order')).toBeInTheDocument();
 
-        // All 4 service mode buttons must be present and fully visible
+        // Only Dine-in and Takeaway service mode buttons must be present
         const dineInBtn = screen.getByRole('button', { name: /🪑 Dine-in/i });
         const takeawayBtn = screen.getByRole('button', { name: /🥡 Takeaway/i });
-        const counterBtn = screen.getByRole('button', { name: /🛎️ Counter/i });
-        const deliveryBtn = screen.getByRole('button', { name: /🛵 Delivery/i });
 
         expect(dineInBtn).toBeInTheDocument();
         expect(takeawayBtn).toBeInTheDocument();
-        expect(counterBtn).toBeInTheDocument();
-        expect(deliveryBtn).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /🛎️ Counter/i })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /🛵 Delivery/i })).not.toBeInTheDocument();
 
         // In Dine-in mode, Table selection is visible
         expect(screen.getByText('Select Table')).toBeInTheDocument();
 
-        // Switch to Counter mode
-        fireEvent.click(counterBtn);
-        // Table selection is hidden in Counter mode
-        expect(screen.queryByText('Select Table')).not.toBeInTheDocument();
-
-        // Switch to Takeaway mode
+        // Switch to Takeaway mode: table selection is omitted
         fireEvent.click(takeawayBtn);
         expect(screen.queryByText('Select Table')).not.toBeInTheDocument();
 
@@ -163,7 +157,7 @@ describe('Mobile Viewports (320px, 360px, 375px, 390px, 414px) Responsiveness', 
         expect(screen.getByText('Select Table')).toBeInTheDocument();
 
         // Add an item from catalogue
-        const addBtn = screen.getByRole('button', { name: '+ Add Item' });
+        const addBtn = screen.getByRole('button', { name: /Add Artisanal Wild Mushroom/i });
         fireEvent.click(addBtn);
 
         // Verify item is added to Selected Items
@@ -181,8 +175,8 @@ describe('Mobile Viewports (320px, 360px, 375px, 390px, 414px) Responsiveness', 
         fireEvent.click(minusBtn);
         expect(screen.queryByText(/₹560.00/i)).not.toBeInTheDocument();
 
-        // Verify Create & Generate Bill is enabled and styled
-        const submitBtn = screen.getByRole('button', { name: 'Create & Generate Bill' });
+        // Verify Create Order is enabled and styled
+        const submitBtn = screen.getByRole('button', { name: 'Create Order' });
         expect(submitBtn).toBeInTheDocument();
         expect(submitBtn).not.toBeDisabled();
 
@@ -190,6 +184,32 @@ describe('Mobile Viewports (320px, 360px, 375px, 390px, 414px) Responsiveness', 
         const cancelBtn = screen.getByRole('button', { name: 'Close dialog' });
         fireEvent.click(cancelBtn);
         expect(onClose).toHaveBeenCalled();
+      });
+
+      it(`renders BillDiscountModal without clipping at ${width}px`, () => {
+        const onClose = vi.fn();
+        const onConfirm = vi.fn().mockResolvedValue(undefined);
+
+        render(
+          <BillDiscountModal
+            orderNumber={13}
+            subtotalPaise={18000}
+            onClose={onClose}
+            onConfirm={onConfirm}
+          />
+        );
+
+        const dialog = screen.getByRole('dialog', { name: /Generate Bill for Order #13/i });
+        expect(dialog).toBeInTheDocument();
+        expect(dialog.style.display).toBe('flex');
+        expect(dialog.style.overflowY).toBe('auto');
+
+        expect(screen.getByRole('heading', { level: 2, name: /Issue Bill · Order #13/i })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /Close dialog/i })).toBeInTheDocument();
+        expect(screen.getByText('Order Amount:')).toBeInTheDocument();
+        expect(screen.getAllByText('₹180.00').length).toBeGreaterThanOrEqual(1);
+        expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /Collect ₹180.00 & Issue Bill/i })).toBeInTheDocument();
       });
     });
   });

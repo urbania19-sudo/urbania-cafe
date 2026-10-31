@@ -1,8 +1,97 @@
 import { NextRequest, NextResponse } from "next/server";
 import { owner } from "@/lib/owner";
 import type { Bill } from "@/lib/billing";
+import { getDailyServiceMetrics, parseReportSearch } from "@/lib/reports";
+import { isPreviewDemoMode } from "@/lib/preview-demo";
+import { DEMO_BILLS } from "@/lib/demo-fixtures";
 
 export async function GET(req: NextRequest) {
+  if (isPreviewDemoMode()) {
+    const { searchParams } = new URL(req.url);
+    const search = searchParams.get("search")?.trim() || "";
+    const startDate = searchParams.get("startDate")?.trim() || "";
+    const endDate = searchParams.get("endDate")?.trim() || "";
+    const orderSource = searchParams.get("orderSource") || "all";
+    const status = searchParams.get("status") || "all";
+    const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") || "20", 10) || 20));
+
+    const parsedSearch = parseReportSearch(search);
+    let filtered = [...DEMO_BILLS];
+
+    if (status !== "all") {
+      filtered = filtered.filter((b) => b.status === status);
+    }
+    if (orderSource !== "all") {
+      filtered = filtered.filter((b) => b.order_source === orderSource);
+    }
+    if (startDate) {
+      filtered = filtered.filter((b) => b.issued_at >= `${startDate}T00:00:00.000Z`);
+    }
+    if (endDate) {
+      filtered = filtered.filter((b) => b.issued_at <= `${endDate}T23:59:59.999Z`);
+    }
+    if (parsedSearch.trimmed) {
+      filtered = filtered.filter((b) => {
+        if (parsedSearch.orderNumber !== null && b.order_number === parsedSearch.orderNumber) {
+          return true;
+        }
+        if (b.bill_number.toLowerCase().includes(parsedSearch.trimmed.toLowerCase())) {
+          return true;
+        }
+        if (b.customer_name?.toLowerCase().includes(parsedSearch.trimmed.toLowerCase())) {
+          return true;
+        }
+        return false;
+      });
+    }
+
+    const totalCount = filtered.length;
+    const offset = (page - 1) * limit;
+    const paginated = filtered.slice(offset, offset + limit);
+
+    const issuedBills = filtered.filter((r) => r.status === "issued");
+    const cancelledBills = filtered.filter((r) => r.status === "cancelled");
+    const totalSalesPaise = issuedBills.reduce((acc, r) => acc + (r.total_paise || 0), 0);
+    const totalTaxPaise = issuedBills.reduce((acc, r) => acc + (r.tax_paise || 0), 0);
+
+    return NextResponse.json({
+      ok: true,
+      bills: paginated,
+      totalCount,
+      page,
+      limit,
+      isLegacySchema: false,
+      unbilledOrder: null,
+      searchedOrderNumber: parsedSearch.orderNumber,
+      summary: {
+        totalCount,
+        issuedCount: issuedBills.length,
+        cancelledCount: cancelledBills.length,
+        totalSalesPaise,
+        totalTaxPaise,
+        todaySalesPaise: totalSalesPaise,
+        todayBillCount: issuedBills.length,
+        todayGrossSalesPaise: totalSalesPaise,
+        todayDiscountsPaise: 0,
+        todayNetSalesPaise: totalSalesPaise,
+        todayCollectedPaise: totalSalesPaise,
+        todayCashCollectedPaise: 0,
+        todayOnlineCollectedPaise: totalSalesPaise,
+        todayCustomerCollectedPaise: totalSalesPaise,
+        todayCustomerOutstandingPaise: 0,
+        todayRefundsPaise: 0,
+        todayHistoricalRefundClassifiedPaise: 0,
+        todayAdminCreditSettledTodayPaise: 0,
+        todayExternalDeliveryCount: 0,
+        todayExternalDeliveryPaise: 0,
+        todayAdminCreditCount: 1,
+        todayAdminCreditTotalPaise: 30800,
+        todayAdminCreditOutstandingPaise: 30800,
+      },
+    });
+  }
+
   const db = await owner();
   if (!db) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -34,14 +123,16 @@ export async function GET(req: NextRequest) {
     if (orderSource !== "all") primaryQuery = primaryQuery.eq("order_source", orderSource);
     if (startDate) primaryQuery = primaryQuery.gte("issued_at", `${startDate}T00:00:00.000Z`);
     if (endDate) primaryQuery = primaryQuery.lte("issued_at", `${endDate}T23:59:59.999Z`);
-    if (search) {
-      const isNum = /^[0-9]+$/.test(search);
-      if (isNum) {
+    const parsedSearch = parseReportSearch(search);
+    if (parsedSearch.trimmed) {
+      if (parsedSearch.orderNumber !== null) {
         primaryQuery = primaryQuery.or(
-          `bill_number.ilike.%${search}%,order_number.eq.${search},customer_name.ilike.%${search}%`
+          `order_number.eq.${parsedSearch.orderNumber},bill_number.ilike.%${parsedSearch.trimmed}%,customer_name.ilike.%${parsedSearch.trimmed}%`
         );
       } else {
-        primaryQuery = primaryQuery.or(`bill_number.ilike.%${search}%,customer_name.ilike.%${search}%`);
+        primaryQuery = primaryQuery.or(
+          `bill_number.ilike.%${parsedSearch.trimmed}%,customer_name.ilike.%${parsedSearch.trimmed}%`
+        );
       }
     }
 
@@ -73,12 +164,11 @@ export async function GET(req: NextRequest) {
         if (status !== "all") fallback1 = fallback1.eq("status", status);
         if (startDate) fallback1 = fallback1.gte("issued_at", `${startDate}T00:00:00.000Z`);
         if (endDate) fallback1 = fallback1.lte("issued_at", `${endDate}T23:59:59.999Z`);
-        if (search) {
-          const isNum = /^[0-9]+$/.test(search);
-          if (isNum) {
-            fallback1 = fallback1.or(`bill_number.ilike.%${search}%,order_number.eq.${search}`);
+        if (parsedSearch.trimmed) {
+          if (parsedSearch.orderNumber !== null) {
+            fallback1 = fallback1.or(`order_number.eq.${parsedSearch.orderNumber},bill_number.ilike.%${parsedSearch.trimmed}%`);
           } else {
-            fallback1 = fallback1.ilike("bill_number", `%${search}%`);
+            fallback1 = fallback1.ilike("bill_number", `%${parsedSearch.trimmed}%`);
           }
         }
 
@@ -99,12 +189,11 @@ export async function GET(req: NextRequest) {
           if (status !== "all") fallback2 = fallback2.eq("status", status);
           if (startDate) fallback2 = fallback2.gte("issued_at", `${startDate}T00:00:00.000Z`);
           if (endDate) fallback2 = fallback2.lte("issued_at", `${endDate}T23:59:59.999Z`);
-          if (search) {
-            const isNum = /^[0-9]+$/.test(search);
-            if (isNum) {
-              fallback2 = fallback2.or(`bill_number.ilike.%${search}%,order_number.eq.${search}`);
+          if (parsedSearch.trimmed) {
+            if (parsedSearch.orderNumber !== null) {
+              fallback2 = fallback2.or(`order_number.eq.${parsedSearch.orderNumber},bill_number.ilike.%${parsedSearch.trimmed}%`);
             } else {
-              fallback2 = fallback2.ilike("bill_number", `%${search}%`);
+              fallback2 = fallback2.ilike("bill_number", `%${parsedSearch.trimmed}%`);
             }
           }
 
@@ -123,6 +212,33 @@ export async function GET(req: NextRequest) {
           rawBills = (res2.data || []) as unknown as Record<string, unknown>[];
           totalCount = res2.count ?? rawBills.length;
         }
+      }
+    }
+
+    // Check if an order exists in orders table when searching by order number but 0 bills were found
+    let unbilledOrder: {
+      id: string;
+      orderNumber: number;
+      status: string;
+      customerName?: string | null;
+      createdAt?: string;
+    } | null = null;
+
+    if (parsedSearch.orderNumber !== null && rawBills.length === 0) {
+      const { data: matchedOrder } = await db
+        .from("orders")
+        .select("id, order_number, status, customer_name, created_at")
+        .eq("order_number", parsedSearch.orderNumber)
+        .maybeSingle();
+
+      if (matchedOrder) {
+        unbilledOrder = {
+          id: matchedOrder.id,
+          orderNumber: matchedOrder.order_number,
+          status: matchedOrder.status,
+          customerName: matchedOrder.customer_name,
+          createdAt: matchedOrder.created_at,
+        };
       }
     }
 
@@ -164,20 +280,8 @@ export async function GET(req: NextRequest) {
     const totalSalesPaise = issuedBills.reduce((acc, r) => acc + (r.total_paise || 0), 0);
     const totalTaxPaise = issuedBills.reduce((acc, r) => acc + (r.tax_paise || 0), 0);
 
-    // Today's metrics (Asia/Kolkata date boundary)
-    const now = new Date();
-    const istOffset = 5.5 * 60 * 60 * 1000;
-    const istNow = new Date(now.getTime() + istOffset);
-    const todayIstStr = istNow.toISOString().slice(0, 10);
-
-    const todayIssued = allMatching.filter((r) => {
-      if (r.status !== "issued") return false;
-      const bDate = new Date(new Date(r.issued_at).getTime() + istOffset);
-      return bDate.toISOString().slice(0, 10) === todayIstStr;
-    });
-
-    const todaySalesPaise = todayIssued.reduce((acc, r) => acc + (r.total_paise || 0), 0);
-    const todayBillCount = todayIssued.length;
+    // Unified today's metrics using shared reporting layer
+    const dailyMetrics = await getDailyServiceMetrics(db);
 
     return NextResponse.json({
       ok: true,
@@ -186,14 +290,32 @@ export async function GET(req: NextRequest) {
       page,
       limit,
       isLegacySchema,
+      unbilledOrder,
+      searchedOrderNumber: parsedSearch.orderNumber,
       summary: {
         totalCount,
         issuedCount: issuedBills.length,
         cancelledCount: cancelledBills.length,
         totalSalesPaise,
         totalTaxPaise,
-        todaySalesPaise,
-        todayBillCount,
+        todaySalesPaise: dailyMetrics.netSalesPaise,
+        todayBillCount: dailyMetrics.completedOrderCount,
+        todayGrossSalesPaise: dailyMetrics.grossSalesPaise,
+        todayDiscountsPaise: dailyMetrics.discountsPaise,
+        todayNetSalesPaise: dailyMetrics.netSalesPaise,
+        todayCollectedPaise: dailyMetrics.collectedPaise,
+        todayCashCollectedPaise: dailyMetrics.cashCollectedPaise,
+        todayOnlineCollectedPaise: dailyMetrics.onlineCollectedPaise,
+        todayCustomerCollectedPaise: dailyMetrics.customerCollectedPaise,
+        todayCustomerOutstandingPaise: dailyMetrics.customerOutstandingPaise,
+        todayRefundsPaise: dailyMetrics.customerRefundsPaise,
+        todayHistoricalRefundClassifiedPaise: dailyMetrics.historicalRefundClassifiedPaise ?? dailyMetrics.customerRefundsPaise,
+        todayAdminCreditSettledTodayPaise: dailyMetrics.adminCreditSettledTodayPaise,
+        todayExternalDeliveryCount: dailyMetrics.externalPlatformCount,
+        todayExternalDeliveryPaise: dailyMetrics.externalPlatformValuePaise,
+        todayAdminCreditCount: dailyMetrics.adminCreditCount,
+        todayAdminCreditTotalPaise: dailyMetrics.adminCreditTotalPaise,
+        todayAdminCreditOutstandingPaise: dailyMetrics.adminCreditOutstandingPaise,
       },
     });
   } catch (err) {

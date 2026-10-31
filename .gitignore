@@ -15,3 +15,5 @@ supabase/backups/
 
 # Local scratch work and extracted reference materials.
 work/
+.vercel
+scratch/

@@ -2,6 +2,9 @@ import { redirect, notFound } from 'next/navigation';
 import { authDb } from '@/lib/supabase/auth-server';
 import ReceiptPrintView from '@/components/bills/ReceiptPrintView';
 import { SAMPLE_BILL, type Bill } from '@/lib/billing';
+import { isPreviewDemoMode } from '@/lib/preview-demo';
+import PreviewDemoBanner from '@/components/demo/PreviewDemoBanner';
+import { DEMO_BILLS } from '@/lib/demo-fixtures';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,6 +18,28 @@ export default async function BillPrintPage({
   const { billId } = await params;
   const { reprint } = await searchParams;
   const isReprint = reprint === 'true';
+
+  const isDemo = isPreviewDemoMode();
+  if (isDemo) {
+    if (billId === 'sample' || billId === '00000000-0000-0000-0000-000000000000') {
+      return (
+        <>
+          <PreviewDemoBanner />
+          <ReceiptPrintView bill={SAMPLE_BILL} isReprint={isReprint} />
+        </>
+      );
+    }
+    const demoBill = DEMO_BILLS.find((b) => b.id === billId || b.bill_number === billId);
+    if (!demoBill) {
+      notFound();
+    }
+    return (
+      <>
+        <PreviewDemoBanner />
+        <ReceiptPrintView bill={demoBill} isReprint={isReprint} />
+      </>
+    );
+  }
 
   // Sample receipt for thermal printer testing (e.g. Fun Print MX11) without requiring auth or DB
   if (billId === 'sample' || billId === '00000000-0000-0000-0000-000000000000') {

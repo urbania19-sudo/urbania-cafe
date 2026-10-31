@@ -5,11 +5,14 @@ import { friendlyBillingError } from "@/lib/billing";
 import { enforcePreviewWriteGuard } from "@/lib/preview-guard";
 
 const manualOrderSchema = z.object({
+  orderSource: z.enum(["manual", "swiggy", "zomato", "delivery_platform"]).default("manual"),
   serviceMode: z.enum(["dine_in", "takeaway", "counter", "delivery"]).default("dine_in"),
   tableId: z.string().uuid().optional().nullable(),
   customerName: z.string().max(60).optional().nullable(),
   customerNote: z.string().max(300).optional().nullable(),
   guestCount: z.number().int().min(1).max(20).default(1),
+  externalPlatformName: z.string().max(50).optional().nullable(),
+  externalPlatformRef: z.string().max(50).optional().nullable(),
   idempotencyKey: z.string().uuid().optional(),
   items: z
     .array(
@@ -25,6 +28,16 @@ const manualOrderSchema = z.object({
     )
     .min(1)
     .max(25),
+}).superRefine((data, ctx) => {
+  const isPlatform =
+    data.orderSource === 'swiggy' || data.orderSource === 'zomato' || data.orderSource === 'delivery_platform';
+  if (!isPlatform && data.serviceMode !== 'dine_in' && data.serviceMode !== 'takeaway') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Manual orders only support Dine-in and Takeaway service modes",
+      path: ["serviceMode"],
+    });
+  }
 });
 
 export async function POST(req: NextRequest) {
@@ -45,218 +58,130 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { serviceMode, tableId, customerName, customerNote, guestCount, items } = parsed.data;
+  const {
+    orderSource,
+    serviceMode,
+    tableId,
+    customerName,
+    customerNote,
+    guestCount,
+    externalPlatformName,
+    externalPlatformRef,
+    items,
+  } = parsed.data;
   const idempotencyKey = parsed.data.idempotencyKey || crypto.randomUUID();
 
+  const isPlatformOrder =
+    orderSource === 'swiggy' || orderSource === 'zomato' || orderSource === 'delivery_platform';
+
+  const finalPlatformName = isPlatformOrder
+    ? externalPlatformName?.trim() || (orderSource === 'swiggy' ? 'Swiggy' : 'Zomato')
+    : null;
+  const finalPlatformRef = isPlatformOrder ? externalPlatformRef?.trim() || null : null;
+  const finalServiceMode = isPlatformOrder ? 'delivery' : serviceMode;
+
   try {
-    // 1. Try atomic database RPC
-    const { data: rpcData, error: rpcError } = await db.rpc("create_manual_order", {
+    // 1. Standard manual orders (dine-in, takeaway, counter) MUST execute atomic database RPC
+    if (!isPlatformOrder) {
+      const { data: rpcData, error: rpcError } = await db.rpc("create_manual_order", {
+        p_payload: {
+          serviceMode: finalServiceMode,
+          tableId: tableId ?? null,
+          customerName: customerName ?? null,
+          customerNote: customerNote ?? null,
+          guestCount,
+          idempotencyKey,
+          items,
+        },
+      });
+
+      if (rpcError) {
+        console.error("Error in create_manual_order RPC:", rpcError);
+        const errCode = (rpcError as { code?: string }).code;
+        const errMsg = rpcError.message || "";
+        const isExactRpc = errMsg.includes("create_manual_order");
+        const isPermissionDenied = errMsg.toLowerCase().includes("permission denied");
+
+        const isMissingFunction =
+          !isPermissionDenied &&
+          (errCode === "PGRST202" ||
+            (errCode === "42883" && isExactRpc) ||
+            (isExactRpc &&
+              (errMsg.includes("does not exist") || errMsg.includes("Could not find the function"))));
+
+        if (isMissingFunction) {
+          return NextResponse.json(
+            { error: "Manual order service is temporarily unavailable (database function pending migration)." },
+            { status: 503 }
+          );
+        }
+
+        return NextResponse.json(
+          { error: friendlyBillingError(rpcError) },
+          { status: 400 }
+        );
+      }
+
+      if (!rpcData?.ok) {
+        return NextResponse.json(
+          { error: rpcData?.error || "Failed to create manual order." },
+          { status: 400 }
+        );
+      }
+
+      return NextResponse.json(rpcData, { status: 201 });
+    }
+
+    // 2. External delivery platform orders (Swiggy, Zomato, delivery_platform)
+    const { data: platformRpcData, error: platformRpcErr } = await db.rpc("create_external_platform_order", {
       p_payload: {
-        serviceMode,
-        tableId: tableId ?? null,
-        customerName: customerName ?? null,
-        customerNote: customerNote ?? null,
+        orderSource,
+        externalPlatformName: finalPlatformName,
+        externalPlatformRef: finalPlatformRef,
+        customerName,
+        customerNote,
         guestCount,
         idempotencyKey,
         items,
       },
     });
 
-    if (!rpcError && rpcData?.ok) {
-      return NextResponse.json(rpcData, { status: 201 });
-    }
+    if (platformRpcErr) {
+      console.error("Error in create_external_platform_order RPC:", platformRpcErr);
+      const errCode = (platformRpcErr as { code?: string }).code;
+      const errMsg = platformRpcErr.message || "";
+      const isExactRpc = errMsg.includes("create_external_platform_order");
+      const isPermissionDenied = errMsg.toLowerCase().includes("permission denied");
 
-    // 2. Fallback logic if RPC is not yet compiled in the database
-    // Check idempotency first
-    const { data: existingOrder } = await db
-      .from("orders")
-      .select("id, order_number, status, total_paise, service_mode")
-      .eq("idempotency_key", idempotencyKey)
-      .maybeSingle();
+      const isMissingFunction =
+        !isPermissionDenied &&
+        (errCode === "PGRST202" ||
+          (errCode === "42883" && isExactRpc) ||
+          (isExactRpc &&
+            (errMsg.includes("does not exist") || errMsg.includes("Could not find the function"))));
 
-    if (existingOrder) {
+      if (isMissingFunction) {
+        return NextResponse.json(
+          { error: "External platform order service is temporarily unavailable (database function pending migration)." },
+          { status: 503 }
+        );
+      }
+
+      const status = errMsg.includes("forbidden") ? 403 : 400;
       return NextResponse.json(
-        {
-          ok: true,
-          order_id: existingOrder.id,
-          order_number: existingOrder.order_number,
-          status: existingOrder.status,
-          total_paise: existingOrder.total_paise,
-        },
-        { status: 200 }
+        { error: friendlyBillingError(platformRpcErr) },
+        { status }
       );
     }
 
-    // Validate table if dine-in
-    let finalTableId: string | null = null;
-    if (serviceMode === "dine_in" && tableId) {
-      const { data: table } = await db
-        .from("cafe_tables")
-        .select("id, is_active")
-        .eq("id", tableId)
-        .maybeSingle();
-      if (table && table.is_active) {
-        finalTableId = table.id;
-      }
-    }
-
-    // Process and validate items
-    let totalPaise = 0;
-    const processedItems: {
-      menuItemId: string | null;
-      name: string;
-      unitPricePaise: number;
-      quantity: number;
-      lineTotalPaise: number;
-      note: string | null;
-      options: { name: string; price_delta_paise: number }[];
-      isCustom: boolean;
-    }[] = [];
-
-    for (const item of items) {
-      if (item.isCustom) {
-        const customName = item.name?.trim();
-        if (!customName) {
-          return NextResponse.json(
-            { error: "Each custom item requires a valid dish or service name." },
-            { status: 400 }
-          );
-        }
-        const unitPrice = item.unitPricePaise ?? 0;
-        const lineTotal = unitPrice * item.quantity;
-        totalPaise += lineTotal;
-
-        processedItems.push({
-          menuItemId: null,
-          name: customName,
-          unitPricePaise: unitPrice,
-          quantity: item.quantity,
-          lineTotalPaise: lineTotal,
-          note: item.note?.trim() || null,
-          options: [],
-          isCustom: true,
-        });
-      } else {
-        if (!item.menuItemId) {
-          return NextResponse.json(
-            { error: "Catalogue item must provide a valid menuItemId." },
-            { status: 400 }
-          );
-        }
-        const { data: menuItem } = await db
-          .from("menu_items")
-          .select("id, name, price_paise, is_available")
-          .eq("id", item.menuItemId)
-          .maybeSingle();
-
-        if (!menuItem || !menuItem.is_available) {
-          return NextResponse.json(
-            { error: `Item "${menuItem?.name || "Selected item"}" is currently unavailable.` },
-            { status: 400 }
-          );
-        }
-
-        let optionsDelta = 0;
-        const selectedOptions: { name: string; price_delta_paise: number }[] = [];
-
-        if (item.optionIds && item.optionIds.length > 0) {
-          const { data: optionsData } = await db
-            .from("menu_item_options")
-            .select("id, name, price_delta_paise, is_available")
-            .in("id", item.optionIds)
-            .eq("menu_item_id", menuItem.id);
-
-          for (const opt of optionsData || []) {
-            if (opt.is_available) {
-              selectedOptions.push({
-                name: opt.name,
-                price_delta_paise: opt.price_delta_paise,
-              });
-              optionsDelta += opt.price_delta_paise;
-            }
-          }
-        }
-
-        const unitPrice = menuItem.price_paise + optionsDelta;
-        const lineTotal = unitPrice * item.quantity;
-        totalPaise += lineTotal;
-
-        processedItems.push({
-          menuItemId: menuItem.id,
-          name: menuItem.name,
-          unitPricePaise: unitPrice,
-          quantity: item.quantity,
-          lineTotalPaise: lineTotal,
-          note: item.note?.trim() || null,
-          options: selectedOptions,
-          isCustom: false,
-        });
-      }
-    }
-
-    const defaultCustomerName =
-      serviceMode === "takeaway"
-        ? "Takeaway Guest"
-        : serviceMode === "delivery"
-          ? "Delivery Guest"
-          : "Walk-in Guest";
-
-    // Insert order
-    const { data: newOrder, error: orderErr } = await db
-      .from("orders")
-      .insert({
-        table_id: finalTableId,
-        order_source: "manual",
-        service_mode: serviceMode,
-        status: "ACCEPTED",
-        customer_name: customerName?.trim() || defaultCustomerName,
-        guest_count: guestCount,
-        customer_note: customerNote?.trim() || null,
-        subtotal_paise: totalPaise,
-        total_paise: totalPaise,
-        idempotency_key: idempotencyKey,
-        accepted_at: new Date().toISOString(),
-      })
-      .select()
-      .single();
-
-    if (orderErr || !newOrder) {
-      console.error("Manual order creation failed:", orderErr);
+    if (!platformRpcData?.ok) {
       return NextResponse.json(
-        { error: friendlyBillingError(orderErr) },
-        { status: 500 }
+        { error: platformRpcData?.error || "Failed to create external platform order." },
+        { status: 400 }
       );
     }
 
-    // Insert order items
-    const itemInserts = processedItems.map((pi) => ({
-      order_id: newOrder.id,
-      menu_item_id: pi.menuItemId,
-      item_name_snapshot: pi.name,
-      unit_price_paise: pi.unitPricePaise,
-      quantity: pi.quantity,
-      selected_options_snapshot: pi.options,
-      line_total_paise: pi.lineTotalPaise,
-      item_note: pi.note,
-      is_custom: pi.isCustom,
-    }));
-
-    const { error: itemsErr } = await db.from("order_items").insert(itemInserts);
-    if (itemsErr) {
-      console.error("Order items insert failed:", itemsErr);
-    }
-
-    return NextResponse.json(
-      {
-        ok: true,
-        order_id: newOrder.id,
-        order_number: newOrder.order_number,
-        service_mode: newOrder.service_mode,
-        status: newOrder.status,
-        total_paise: newOrder.total_paise,
-      },
-      { status: 201 }
-    );
+    return NextResponse.json(platformRpcData, { status: 201 });
   } catch (err) {
     console.error("API error in /api/staff/orders:", err);
     return NextResponse.json(

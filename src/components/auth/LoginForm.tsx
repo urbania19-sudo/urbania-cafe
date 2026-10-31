@@ -101,7 +101,7 @@ export default function LoginForm({ portal }: { portal: 'owner' | 'staff' }) {
           <p className="muted" style={{ margin: '0 0 26px' }}>
             {staff ? 'Staff accounts only.' : 'Owner and administrator accounts only.'}
           </p>
-          <form onSubmit={submit} style={{ display: 'grid', gap: 18 }}>
+          <form onSubmit={submit} method="POST" style={{ display: 'grid', gap: 18 }}>
             <label style={{ display: 'grid', gap: 7, fontWeight: 700, fontSize: 14 }}>
               Email address
               <input
@@ -147,7 +147,7 @@ export default function LoginForm({ portal }: { portal: 'owner' | 'staff' }) {
                 {error}
               </p>
             )}
-            <button className="btn" disabled={busy} style={{ width: '100%', marginTop: 4 }}>
+            <button type="submit" className="btn" disabled={busy} style={{ width: '100%', marginTop: 4 }}>
               {busy ? 'Signing in…' : 'Sign in securely'}
             </button>
           </form>

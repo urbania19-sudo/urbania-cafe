@@ -14,6 +14,11 @@ interface ReportsSummary {
   totalTaxPaise: number;
   todaySalesPaise: number;
   todayBillCount: number;
+  todayCashCollectedPaise?: number;
+  todayOnlineCollectedPaise?: number;
+  todayCustomerCollectedPaise?: number;
+  todayCustomerOutstandingPaise?: number;
+  todayCollectedPaise?: number;
 }
 
 interface TableOption {
@@ -64,6 +69,14 @@ export default function ReportsManager({
   const [cancelling, setCancelling] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [isLegacySchema, setIsLegacySchema] = useState(false);
+  const [unbilledOrder, setUnbilledOrder] = useState<{
+    id: string;
+    orderNumber: number;
+    status: string;
+    customerName?: string | null;
+    createdAt?: string;
+  } | null>(null);
+  const [searchedOrderNumber, setSearchedOrderNumber] = useState<number | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -94,6 +107,8 @@ export default function ReportsManager({
         setTotalCount(data.totalCount || 0);
         setSummary(data.summary || null);
         setIsLegacySchema(Boolean(data.isLegacySchema));
+        setUnbilledOrder(data.unbilledOrder || null);
+        setSearchedOrderNumber(data.searchedOrderNumber ?? null);
       })
       .catch((err) => {
         if (!active) return;
@@ -261,11 +276,18 @@ export default function ReportsManager({
           </div>
 
           <div className="card" style={{ padding: 16, borderTop: '3px solid #10b981' }}>
-            <span className="muted" style={{ fontSize: 12 }}>Today’s Live Revenue</span>
+            <span className="muted" style={{ fontSize: 12 }}>Today’s Collections</span>
             <div style={{ fontFamily: 'Georgia,serif', fontSize: '1.9rem', margin: '4px 0 2px' }}>
-              ₹{(summary.todaySalesPaise / 100).toFixed(2)}
+              ₹{(((summary.todayCollectedPaise ?? summary.todaySalesPaise) / 100)).toFixed(2)}
             </div>
-            <small className="muted">{summary.todayBillCount} orders billed today</small>
+            <small className="muted" style={{ display: 'block', marginTop: 2 }}>
+              Cash: ₹{(((summary.todayCashCollectedPaise ?? summary.todaySalesPaise) / 100)).toFixed(2)} · Online: ₹{(((summary.todayOnlineCollectedPaise ?? 0) / 100)).toFixed(2)}
+            </small>
+            {(summary.todayCustomerOutstandingPaise ?? 0) > 0 && (
+              <small style={{ color: '#f59e0b', display: 'block', marginTop: 2 }}>
+                ⚠️ Due: ₹{((summary.todayCustomerOutstandingPaise! / 100)).toFixed(2)}
+              </small>
+            )}
           </div>
 
           <div className="card" style={{ padding: 16 }}>
@@ -312,26 +334,75 @@ export default function ReportsManager({
 
       {/* Filter and Search Bar */}
       <section className="card" style={{ padding: 16 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12, alignItems: 'end' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 2fr) repeat(auto-fit, minmax(130px, 1fr))', gap: 12, alignItems: 'start' }}>
           <div>
-            <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Search Bills</label>
-            <input
-              type="text"
-              placeholder="Bill #, order #, name..."
-              value={search}
-              onChange={(e) => {
-                setSearch(e.target.value);
-                setPage(1);
-              }}
+            <label
+              htmlFor="report-search-input"
               style={{
-                width: '100%',
-                padding: '8px 12px',
-                borderRadius: 6,
-                border: '1px solid var(--line)',
-                background: 'transparent',
-                color: 'inherit',
+                display: 'block',
+                fontSize: 12,
+                fontWeight: 700,
+                marginBottom: 6,
+                letterSpacing: '0.02em',
+                color: 'var(--accent, #c89f65)',
               }}
-            />
+            >
+              Search by Order Number
+            </label>
+            <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+              <input
+                id="report-search-input"
+                type="text"
+                placeholder="e.g. 123 or Order #123 (also: UB-01001, name)"
+                value={search}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setPage(1);
+                }}
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  paddingRight: search ? 30 : 12,
+                  borderRadius: 6,
+                  border: '1px solid var(--line, #3d2d24)',
+                  background: 'transparent',
+                  color: 'inherit',
+                  fontSize: 13,
+                  boxSizing: 'border-box',
+                }}
+                aria-describedby="report-search-help"
+              />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearch('');
+                    setPage(1);
+                  }}
+                  aria-label="Clear search"
+                  style={{
+                    position: 'absolute',
+                    right: 8,
+                    background: 'transparent',
+                    border: 'none',
+                    color: 'var(--muted, #a89485)',
+                    cursor: 'pointer',
+                    padding: 4,
+                    fontSize: 12,
+                    lineHeight: 1,
+                  }}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+            <small
+              id="report-search-help"
+              className="muted"
+              style={{ display: 'block', marginTop: 4, fontSize: 11, lineHeight: 1.35 }}
+            >
+              Enter displayed order number (e.g. 123 or Order #123), bill number, or customer name — not internal UUID.
+            </small>
           </div>
 
           <div>
@@ -455,13 +526,76 @@ export default function ReportsManager({
             <p className="muted" style={{ margin: 0 }}>Loading billing records...</p>
           </div>
         ) : bills.length === 0 ? (
-          <div className="card" style={{ padding: 40, textAlign: 'center' }}>
-            <div style={{ fontSize: 32, marginBottom: 8 }}>📄</div>
-            <h3 style={{ fontFamily: 'Georgia,serif', margin: '0 0 6px' }}>No bills found</h3>
-            <p className="muted" style={{ margin: 0 }}>
-              Try adjusting your date range, search query, or order source filter.
-            </p>
-          </div>
+          unbilledOrder ? (
+            <div
+              role="status"
+              className="card"
+              style={{
+                padding: 36,
+                textAlign: 'center',
+                borderLeft: '4px solid var(--accent, #c89f65)',
+                background: 'rgba(213, 168, 75, 0.05)',
+              }}
+            >
+              <div style={{ fontSize: 36, marginBottom: 10 }}>📋</div>
+              <h3 style={{ fontFamily: 'Georgia,serif', margin: '0 0 8px', fontSize: '1.25rem' }}>
+                Order #{unbilledOrder.orderNumber} has no bill generated yet
+              </h3>
+              <p
+                style={{
+                  margin: '0 auto 16px',
+                  color: 'var(--muted, #d7c3ab)',
+                  fontSize: 13,
+                  maxWidth: 560,
+                  lineHeight: 1.5,
+                }}
+              >
+                Order #{unbilledOrder.orderNumber} exists in the active service queue (Status:{' '}
+                <strong style={{ color: 'inherit' }}>{unbilledOrder.status}</strong>), but has not been billed yet.{' '}
+                <strong>Audit &amp; Reports lists only finalized billing records</strong>.
+              </p>
+              <div style={{ display: 'flex', justifyContent: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <Link
+                  href="/staff"
+                  className="chip"
+                  style={{
+                    fontWeight: 600,
+                    padding: '8px 16px',
+                    fontSize: 13,
+                    background: 'var(--accent, #c89f65)',
+                    color: '#2b1b16',
+                    textDecoration: 'none',
+                  }}
+                >
+                  Open Staff Queue to Bill Order →
+                </Link>
+              </div>
+            </div>
+          ) : searchedOrderNumber !== null ? (
+            <div role="status" className="card" style={{ padding: 40, textAlign: 'center' }}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>📋</div>
+              <h3 style={{ fontFamily: 'Georgia,serif', margin: '0 0 6px' }}>
+                No billed records found for Order #{searchedOrderNumber}
+              </h3>
+              <p
+                className="muted"
+                style={{ margin: '0 auto 14px', fontSize: 13, maxWidth: 520, lineHeight: 1.5 }}
+              >
+                Audit &amp; Reports lists finalized billing records. If Order #{searchedOrderNumber} is currently in service or awaiting payment, it will appear in the Staff Queue.
+              </p>
+              <Link href="/staff" className="chip" style={{ fontWeight: 600, textDecoration: 'none' }}>
+                Check Staff Queue →
+              </Link>
+            </div>
+          ) : (
+            <div className="card" style={{ padding: 40, textAlign: 'center' }}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>📄</div>
+              <h3 style={{ fontFamily: 'Georgia,serif', margin: '0 0 6px' }}>No bills found</h3>
+              <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+                Try adjusting your date range, search query, or order source filter. Note that Audit &amp; Reports lists only finalized billing records.
+              </p>
+            </div>
+          )
         ) : (
           <div style={{ display: 'grid', gap: 10 }}>
             {bills.map((bill) => {
@@ -512,6 +646,21 @@ export default function ReportsManager({
                         <span className="chip" style={{ fontSize: 10, padding: '2px 8px' }}>
                           {bill.service_mode || 'dine_in'}
                         </span>
+                        {bill.payment_method && (
+                          <span
+                            className="chip"
+                            style={{
+                              fontSize: 10,
+                              padding: '2px 8px',
+                              background: bill.payment_method === 'cash' ? '#10b98122' : '#8b5cf622',
+                              color: bill.payment_method === 'cash' ? '#10b981' : '#a78bfa',
+                              fontWeight: 600,
+                            }}
+                          >
+                            {bill.payment_method === 'cash' ? '💵 Cash' : '📱 UPI'}
+                            {bill.payment_status === 'paid' ? ' (Paid)' : bill.payment_status === 'partially_paid' ? ' (Partial)' : ''}
+                          </span>
+                        )}
                         {isCancelled && (
                           <span className="chip" style={{ fontSize: 10, padding: '2px 8px', background: '#ef444422', color: '#ef4444' }}>
                             Cancelled
@@ -838,15 +987,6 @@ export default function ReportsManager({
           onSuccess={(created) => {
             setShowManualModal(false);
             setRefreshKey((k) => k + 1);
-            // Automatically prompt to open thermal bill
-            fetch(`/api/staff/orders/${created.order_id}/bill`, { method: 'POST' })
-              .then((r) => r.json())
-              .then((d) => {
-                if (d.ok && d.bill) {
-                  setThermalBill({ bill: d.bill, isReprint: false });
-                }
-              })
-              .catch(() => {});
           }}
         />
       )}

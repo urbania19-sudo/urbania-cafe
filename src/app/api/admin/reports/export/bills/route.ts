@@ -1,9 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import { owner } from "@/lib/owner";
+import { parseReportSearch } from "@/lib/reports";
 import { exportBillsCsv } from "@/lib/csv";
 import type { Bill } from "@/lib/billing";
+import { isPreviewDemoMode } from "@/lib/preview-demo";
+import { DEMO_BILLS } from "@/lib/demo-fixtures";
 
 export async function GET(req: NextRequest) {
+  if (isPreviewDemoMode()) {
+    const csvContent = exportBillsCsv(DEMO_BILLS);
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const filename = `urbania-bills-demo-${dateStr}.csv`;
+    return new NextResponse(csvContent, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": `attachment; filename="${filename}"`,
+        "Cache-Control": "no-store, max-age=0",
+      },
+    });
+  }
+
   const db = await owner();
   if (!db) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -30,14 +47,16 @@ export async function GET(req: NextRequest) {
     if (orderSource !== "all") primaryQuery = primaryQuery.eq("order_source", orderSource);
     if (startDate) primaryQuery = primaryQuery.gte("issued_at", `${startDate}T00:00:00.000Z`);
     if (endDate) primaryQuery = primaryQuery.lte("issued_at", `${endDate}T23:59:59.999Z`);
-    if (search) {
-      const isNum = /^[0-9]+$/.test(search);
-      if (isNum) {
+    const parsedSearch = parseReportSearch(search);
+    if (parsedSearch.trimmed) {
+      if (parsedSearch.orderNumber !== null) {
         primaryQuery = primaryQuery.or(
-          `bill_number.ilike.%${search}%,order_number.eq.${search},customer_name.ilike.%${search}%`
+          `order_number.eq.${parsedSearch.orderNumber},bill_number.ilike.%${parsedSearch.trimmed}%,customer_name.ilike.%${parsedSearch.trimmed}%`
         );
       } else {
-        primaryQuery = primaryQuery.or(`bill_number.ilike.%${search}%,customer_name.ilike.%${search}%`);
+        primaryQuery = primaryQuery.or(
+          `bill_number.ilike.%${parsedSearch.trimmed}%,customer_name.ilike.%${parsedSearch.trimmed}%`
+        );
       }
     }
 
@@ -46,58 +65,55 @@ export async function GET(req: NextRequest) {
     if (!primaryRes.error) {
       rawBills = (primaryRes.data || []) as unknown as Record<string, unknown>[];
     } else {
-      console.warn("Primary bills CSV export query failed, falling back to legacy schema query:", primaryRes.error.message);
-
+      // 2. Backward-Compatibility Fallback: Try query without order_source/service_mode joins
+      console.warn("Primary export query failed, falling back to legacy schema query:", primaryRes.error.message);
       if (orderSource === "manual") {
         rawBills = [];
       } else {
-        // Fallback 1: Query bills with safe orders(customer_name, guest_count)
-        let fallback1 = db
+        let fallbackQuery = db
           .from("bills")
           .select("*, orders(customer_name, guest_count)")
           .order("issued_at", { ascending: false })
           .limit(1000);
 
-        if (status !== "all") fallback1 = fallback1.eq("status", status);
-        if (startDate) fallback1 = fallback1.gte("issued_at", `${startDate}T00:00:00.000Z`);
-        if (endDate) fallback1 = fallback1.lte("issued_at", `${endDate}T23:59:59.999Z`);
-        if (search) {
-          const isNum = /^[0-9]+$/.test(search);
-          if (isNum) {
-            fallback1 = fallback1.or(`bill_number.ilike.%${search}%,order_number.eq.${search}`);
+        if (status !== "all") fallbackQuery = fallbackQuery.eq("status", status);
+        if (startDate) fallbackQuery = fallbackQuery.gte("issued_at", `${startDate}T00:00:00.000Z`);
+        if (endDate) fallbackQuery = fallbackQuery.lte("issued_at", `${endDate}T23:59:59.999Z`);
+        if (parsedSearch.trimmed) {
+          if (parsedSearch.orderNumber !== null) {
+            fallbackQuery = fallbackQuery.or(`order_number.eq.${parsedSearch.orderNumber},bill_number.ilike.%${parsedSearch.trimmed}%`);
           } else {
-            fallback1 = fallback1.ilike("bill_number", `%${search}%`);
+            fallbackQuery = fallbackQuery.ilike("bill_number", `%${parsedSearch.trimmed}%`);
           }
         }
 
-        const res1 = await fallback1;
-        if (!res1.error) {
-          rawBills = (res1.data || []) as unknown as Record<string, unknown>[];
+        const fallbackRes = await fallbackQuery;
+        if (!fallbackRes.error) {
+          rawBills = (fallbackRes.data || []) as unknown as Record<string, unknown>[];
         } else {
-          // Fallback 2: Direct bills query with no joins
-          let fallback2 = db
+          // Fallback to direct bills table
+          let directQuery = db
             .from("bills")
             .select("*")
             .order("issued_at", { ascending: false })
             .limit(1000);
 
-          if (status !== "all") fallback2 = fallback2.eq("status", status);
-          if (startDate) fallback2 = fallback2.gte("issued_at", `${startDate}T00:00:00.000Z`);
-          if (endDate) fallback2 = fallback2.lte("issued_at", `${endDate}T23:59:59.999Z`);
-          if (search) {
-            const isNum = /^[0-9]+$/.test(search);
-            if (isNum) {
-              fallback2 = fallback2.or(`bill_number.ilike.%${search}%,order_number.eq.${search}`);
+          if (status !== "all") directQuery = directQuery.eq("status", status);
+          if (startDate) directQuery = directQuery.gte("issued_at", `${startDate}T00:00:00.000Z`);
+          if (endDate) directQuery = directQuery.lte("issued_at", `${endDate}T23:59:59.999Z`);
+          if (parsedSearch.trimmed) {
+            if (parsedSearch.orderNumber !== null) {
+              directQuery = directQuery.or(`order_number.eq.${parsedSearch.orderNumber},bill_number.ilike.%${parsedSearch.trimmed}%`);
             } else {
-              fallback2 = fallback2.ilike("bill_number", `%${search}%`);
+              directQuery = directQuery.ilike("bill_number", `%${parsedSearch.trimmed}%`);
             }
           }
 
-          const res2 = await fallback2;
-          if (res2.error) {
-            return NextResponse.json({ error: `Export query failed: ${res2.error.message}` }, { status: 500 });
+          const directRes = await directQuery;
+          if (directRes.error) {
+            return NextResponse.json({ error: "Failed to export bills" }, { status: 500 });
           }
-          rawBills = (res2.data || []) as unknown as Record<string, unknown>[];
+          rawBills = (directRes.data || []) as unknown as Record<string, unknown>[];
         }
       }
     }

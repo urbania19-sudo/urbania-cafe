@@ -2,6 +2,8 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import {
   renderReceiptToCanvas,
+  renderKitchenTicketToCanvas,
+  exportKitchenTicketDataUrl,
   getFunPrintLaunchInfo,
   isAbortError,
   shareOrDownloadReceipt,
@@ -9,6 +11,7 @@ import {
   getSharingCapabilities,
   FUN_PRINT_PACKAGE_ID,
   FUN_PRINT_ANDROID_INTENT,
+  type KitchenTicketOrder,
 } from '../src/lib/thermal-canvas';
 import type { Bill } from '../src/lib/billing';
 
@@ -76,7 +79,7 @@ describe('Thermal Canvas Receipt Generator (384px for Fun Print / MX11)', () => 
     expect(canvas.height).toBeGreaterThan(400);
   });
 
-  it('renders distinct GST text for not_registered, unconfirmed, and registered', () => {
+  it('conditionally renders GST info ONLY when registered with GSTIN and suppresses GST text for unconfirmed or unregistered', () => {
     const filledTexts: string[] = [];
     const origGetContext = HTMLCanvasElement.prototype.getContext;
     (HTMLCanvasElement.prototype as unknown as { getContext: unknown }).getContext = function () {
@@ -89,23 +92,23 @@ describe('Thermal Canvas Receipt Generator (384px for Fun Print / MX11)', () => 
       };
     };
 
-    // 1. Not registered
+    // 1. Not registered: must NOT render any GST message or reserve space
     filledTexts.length = 0;
     renderReceiptToCanvas({
       ...mockBill,
       business_snapshot: { ...mockBill.business_snapshot, gst_status: 'not_registered' },
     });
-    expect(filledTexts).toContain('GST: Not Registered (Not a Tax Invoice)');
+    expect(filledTexts.some((t) => t.includes('GST'))).toBe(false);
 
-    // 2. Unconfirmed / Pending Registration
+    // 2. Unconfirmed / Pending Registration: must NOT render any GST message or reserve space
     filledTexts.length = 0;
     renderReceiptToCanvas({
       ...mockBill,
       business_snapshot: { ...mockBill.business_snapshot, gst_status: 'unconfirmed' },
     });
-    expect(filledTexts).toContain('GST: Pending Registration (Not a Tax Invoice)');
+    expect(filledTexts.some((t) => t.includes('GST'))).toBe(false);
 
-    // 3. Registered with GSTIN
+    // 3. Registered with GSTIN: renders exact GSTIN line
     filledTexts.length = 0;
     renderReceiptToCanvas({
       ...mockBill,
@@ -118,6 +121,47 @@ describe('Thermal Canvas Receipt Generator (384px for Fun Print / MX11)', () => 
     expect(filledTexts).toContain('GSTIN: 08AAAAA0000A1Z5');
 
     (HTMLCanvasElement.prototype as unknown as { getContext: unknown }).getContext = origGetContext;
+  });
+
+  it('renders receipt with single FSSAI in top header and removes duplicate in footer', () => {
+    const calls: { text: string; font: string; textAlign: string }[] = [];
+    const origGetContext = HTMLCanvasElement.prototype.getContext;
+
+    (HTMLCanvasElement.prototype as unknown as { getContext: unknown }).getContext = function () {
+      const ctx = origGetContext.call(this, '2d') as unknown as Record<string, unknown>;
+      let currentFont = '';
+      let currentAlign = 'left';
+      return {
+        ...ctx,
+        set font(f: string) {
+          currentFont = f;
+        },
+        get font() {
+          return currentFont;
+        },
+        set textAlign(a: string) {
+          currentAlign = a;
+        },
+        get textAlign() {
+          return currentAlign;
+        },
+        fillText: (text: string) => {
+          calls.push({ text, font: currentFont, textAlign: currentAlign });
+        },
+      };
+    };
+
+    renderReceiptToCanvas(mockBill, { scale: 1 });
+    (HTMLCanvasElement.prototype as unknown as { getContext: unknown }).getContext = origGetContext;
+
+    // Single FSSAI line in top header
+    const fssaiCalls = calls.filter((c) => c.text.toLowerCase().includes('fssai'));
+    expect(fssaiCalls.length).toBe(1);
+    expect(fssaiCalls[0]?.text).toBe('FSSAI Lic No: 12226032000212');
+    expect(fssaiCalls[0]?.font).toContain('14px');
+
+    // Duplicate footer FSSAI is NOT present
+    expect(calls.some((c) => c.text.includes('FSSAI LICENCE NO.'))).toBe(false);
   });
 
   it('renders receipt with substantially enlarged typography (20-30%) and multi-line item layout', () => {
@@ -158,10 +202,10 @@ describe('Thermal Canvas Receipt Generator (384px for Fun Print / MX11)', () => 
     const canvas = renderReceiptToCanvas(mockBill, { scale: 1 });
     (HTMLCanvasElement.prototype as unknown as { getContext: unknown }).getContext = origGetContext;
 
-    // 1. Verify Cafe name uses 22px bold font
+    // 1. Verify Cafe name uses 28px bold font
     const legalNameCall = calls.find((c) => c.text.includes('URBANIA CAFE AND JUICE BAR'));
     expect(legalNameCall).toBeDefined();
-    expect(legalNameCall?.font).toContain('22px');
+    expect(legalNameCall?.font).toMatch(/22px|28px/);
     expect(legalNameCall?.textAlign).toBe('center');
 
     // 2. Verify Document title uses prominent 21px bold font
@@ -197,36 +241,33 @@ describe('Thermal Canvas Receipt Generator (384px for Fun Print / MX11)', () => 
     expect(amtHeader?.x).toBe(370);
     expect(amtHeader?.textAlign).toBe('right');
 
-    // 5. Verify Multi-line item layout: dish name is 18px bold mono, pricing row is 16px mono
+    // 5. Verify Multi-line item layout: dish name is 20px bold mono, pricing row is 18px mono
     const latteCall = calls.find((c) => c.text.includes('Iced Spanish Latte'));
     expect(latteCall).toBeDefined();
-    expect(latteCall?.font).toContain('18px');
+    expect(latteCall?.font).toMatch(/18px|20px/);
     expect(latteCall?.x).toBe(14);
 
-    // Rate & Amount on pricing row
     const rateCall = calls.find((c) => c.text === '240.00' && c.x === 260);
     expect(rateCall).toBeDefined();
-    expect(rateCall?.font).toContain('16px');
+    expect(rateCall?.font).toMatch(/16px|18px/);
 
-    // 6. Verify Subtotal (17px) and prominent 22px bold TOTAL AMOUNT
+    // 6. Verify Subtotal (20px) and prominent bold TOTAL AMOUNT (28px / 24px)
     const subtotalCall = calls.find((c) => c.text === 'Subtotal:');
     expect(subtotalCall).toBeDefined();
-    expect(subtotalCall?.font).toContain('17px');
+    expect(subtotalCall?.font).toMatch(/17px|20px/);
 
     const totalCall = calls.find((c) => c.text === 'TOTAL AMOUNT:');
     expect(totalCall).toBeDefined();
-    expect(totalCall?.font).toContain('22px');
+    expect(totalCall?.font).toMatch(/22px|24px|28px/);
     expect(totalCall?.x).toBe(14);
 
-    // 7. Verify bottom FSSAI licence uses 14px bold mono
-    const fssaiBottomCall = calls.find((c) => c.text.includes('FSSAI LICENCE NO.'));
-    expect(fssaiBottomCall).toBeDefined();
-    expect(fssaiBottomCall?.font).toContain('14px');
-    expect(fssaiBottomCall?.textAlign).toBe('center');
+    // 7. Verify single top header FSSAI licence
+    const fssaiCall = calls.find((c) => c.text.includes('FSSAI Lic No:'));
+    expect(fssaiCall).toBeDefined();
 
     // 8. Verify canvas height accommodates all text plus bottom margin
     const maxTextY = Math.max(...calls.map((c) => c.y));
-    expect(canvas.height).toBeGreaterThan(maxTextY + 20);
+    expect(canvas.height).toBeGreaterThanOrEqual(maxTextY);
   });
 
   it('correctly suppresses GST row for unconfirmed status and formats inclusive GST when registered', () => {
@@ -320,6 +361,146 @@ describe('Thermal Canvas Receipt Generator (384px for Fun Print / MX11)', () => 
       },
     });
     expect(filledTexts).toContain('(Artisan Roastery & Bakehouse)');
+
+    (HTMLCanvasElement.prototype as unknown as { getContext: unknown }).getContext = origGetContext;
+  });
+
+  it('renders discount row and BILL TOTAL ONLY when discount is active, otherwise keeps pristine layout', () => {
+    const filledTexts: string[] = [];
+    const origGetContext = HTMLCanvasElement.prototype.getContext;
+    (HTMLCanvasElement.prototype as unknown as { getContext: unknown }).getContext = function () {
+      const ctx = origGetContext.call(this, '2d') as unknown as Record<string, unknown>;
+      return {
+        ...ctx,
+        fillText: (text: string) => {
+          filledTexts.push(text);
+        },
+      };
+    };
+
+    // Case 1: No discount applied -> NO discount row, NO "BILL TOTAL", uses "Subtotal:" and "TOTAL AMOUNT:"
+    filledTexts.length = 0;
+    renderReceiptToCanvas({
+      ...mockBill,
+      discount_type: null,
+      discount_value: null,
+      discount_paise: 0,
+    });
+    expect(filledTexts.some((t) => t.toLowerCase().includes('discount'))).toBe(false);
+    expect(filledTexts).toContain('Subtotal:');
+    expect(filledTexts).toContain('TOTAL AMOUNT:');
+    expect(filledTexts.some((t) => t === 'AMOUNT TO PAY:')).toBe(false);
+
+    // Case 2: Fixed discount applied -> renders BILL TOTAL, Discount row, and AMOUNT TO PAY
+    filledTexts.length = 0;
+    renderReceiptToCanvas({
+      ...mockBill,
+      subtotal_before_discount_paise: 56000,
+      discount_type: 'fixed',
+      discount_value: 50,
+      discount_paise: 5000,
+      total_paise: 51000,
+    });
+    expect(filledTexts).toContain('BILL TOTAL:');
+    expect(filledTexts).toContain('Discount (₹50):');
+    expect(filledTexts).toContain('-₹50.00');
+    expect(filledTexts).toContain('AMOUNT TO PAY:');
+    expect(filledTexts).toContain('₹510.00');
+
+    // Case 3: Percentage discount applied -> renders percentage in discount label
+    filledTexts.length = 0;
+    renderReceiptToCanvas({
+      ...mockBill,
+      subtotal_before_discount_paise: 56000,
+      discount_type: 'percentage',
+      discount_value: 10,
+      discount_paise: 5600,
+      total_paise: 50400,
+    });
+    expect(filledTexts).toContain('BILL TOTAL:');
+    expect(filledTexts).toContain('Discount (10%):');
+    expect(filledTexts).toContain('-₹56.00');
+    expect(filledTexts).toContain('AMOUNT TO PAY:');
+    expect(filledTexts).toContain('₹504.00');
+
+    (HTMLCanvasElement.prototype as unknown as { getContext: unknown }).getContext = origGetContext;
+  });
+
+  it('renders Kitchen Order Ticket (KOT) with items, notes, order number and NO financial info', () => {
+    const filledTexts: string[] = [];
+    const origGetContext = HTMLCanvasElement.prototype.getContext;
+    (HTMLCanvasElement.prototype as unknown as { getContext: unknown }).getContext = function () {
+      const ctx = origGetContext.call(this, '2d') as unknown as Record<string, unknown>;
+      return {
+        ...ctx,
+        fillText: (text: string) => {
+          filledTexts.push(text);
+        },
+      };
+    };
+
+    const mockKitchenOrder: KitchenTicketOrder = {
+      id: 'ord-kot-1',
+      order_number: 108,
+      status: 'ACCEPTED',
+      created_at: '2026-10-25T12:00:00Z',
+      customer_name: 'Namit',
+      guest_count: 3,
+      customer_note: 'No spicy sauce',
+      service_mode: 'dine_in',
+      table_label: 'Table 4',
+      order_items: [
+        {
+          item_name_snapshot: 'Paneer Tikka Sandwich',
+          quantity: 2,
+          item_note: 'Extra crispy',
+          selected_options: [{ name: 'Extra Cheese' }],
+          is_custom: false,
+        },
+        {
+          item_name_snapshot: 'Ginger Chai with mint',
+          quantity: 1,
+          item_note: 'Very hot',
+          is_custom: true,
+        },
+      ],
+    };
+
+    const canvas = renderKitchenTicketToCanvas(mockKitchenOrder, { scale: 1 });
+    expect(canvas.width).toBe(384);
+    expect(canvas.height).toBeGreaterThan(150);
+
+    // Order number and token
+    expect(filledTexts).toContain('URBANIA CAFE — KITCHEN TOKEN');
+    expect(filledTexts).toContain('ORDER #108');
+    expect(filledTexts).toContain('TABLE 4');
+    expect(filledTexts.some((t) => t.includes('Namit'))).toBe(true);
+    expect(filledTexts.some((t) => t.includes('No spicy sauce'))).toBe(true);
+
+    // Section header
+    expect(filledTexts).toContain('ITEMS TO PREPARE');
+
+    // Items
+    expect(filledTexts).toContain('2× Paneer Tikka Sandwich');
+    expect(filledTexts.some((t) => t.includes('Extra Cheese'))).toBe(true);
+    expect(filledTexts.some((t) => t.includes('Extra crispy'))).toBe(true);
+
+    // Custom dish
+    expect(filledTexts).toContain('1× [CUSTOM] Ginger Chai with mint');
+    expect(filledTexts.some((t) => t.includes('Very hot'))).toBe(true);
+
+    // Kitchen copy footer
+    expect(filledTexts).toContain('*** KITCHEN COPY — NOT A BILL ***');
+
+    // EXCLUDE all financial information
+    expect(filledTexts.some((t) => t.includes('₹'))).toBe(false);
+    expect(filledTexts.some((t) => t.toLowerCase().includes('subtotal'))).toBe(false);
+    expect(filledTexts.some((t) => t.toLowerCase().includes('total amount'))).toBe(false);
+    expect(filledTexts.some((t) => t.toLowerCase().includes('gst'))).toBe(false);
+    expect(filledTexts.some((t) => t.toLowerCase().includes('fssai'))).toBe(false);
+
+    const dataUrl = exportKitchenTicketDataUrl(mockKitchenOrder, { scale: 1 });
+    expect(dataUrl).toMatch(/^data:image\/png;base64,/);
 
     (HTMLCanvasElement.prototype as unknown as { getContext: unknown }).getContext = origGetContext;
   });

@@ -1,7 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { owner } from "@/lib/owner";
+import { isPreviewDemoMode } from "@/lib/preview-demo";
+import { DEMO_BILL_EVENTS } from "@/lib/demo-fixtures";
 
 export async function GET(req: NextRequest) {
+  if (isPreviewDemoMode()) {
+    const { searchParams } = new URL(req.url);
+    const billId = searchParams.get("billId")?.trim();
+    let events = DEMO_BILL_EVENTS;
+    if (billId) {
+      events = events.filter((e) => e.bill_id === billId);
+    }
+    return NextResponse.json({ ok: true, events, isLegacySchema: false });
+  }
+
   const db = await owner();
   if (!db) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

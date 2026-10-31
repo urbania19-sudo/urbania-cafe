@@ -192,7 +192,7 @@ export default function MenuManager({
       {/* Category Creation */}
       <form
         onSubmit={addCategory}
-        className="card"
+        className="card menu-category-form"
         style={{ padding: 14, margin: '10px 0', display: 'flex', gap: 8, flexWrap: 'wrap' }}
       >
         <input
@@ -209,7 +209,7 @@ export default function MenuManager({
       {/* Item Creation Form */}
       <form
         onSubmit={addItem}
-        className="card"
+        className="card menu-create-form"
         style={{ padding: 16, margin: '14px 0', display: 'grid', gap: 12 }}
       >
         <b style={{ fontFamily: 'Georgia, serif', fontSize: '1.2rem' }}>Add new menu dish</b>
@@ -332,18 +332,60 @@ export default function MenuManager({
         </button>
       </form>
 
+      {/* Category Quick Navigation Scroller */}
+      {categories.length > 0 && (
+        <nav
+          className="admin-nav"
+          aria-label="Category quick navigation"
+          style={{ margin: '14px 0 20px', padding: '10px 0' }}
+        >
+          {categories.map((c) => (
+            <a
+              key={c.id}
+              href={`#cat-${c.id}`}
+              className="chip"
+              style={{ fontSize: 13, textDecoration: 'none' }}
+            >
+              {c.name}
+            </a>
+          ))}
+        </nav>
+      )}
+
       {/* Menu Categories & Items List */}
       {categories.map((c) => {
         const list = rows.filter((i) => i.category_id === c.id);
         return (
-          <div key={c.id}>
-            <h2 style={{ fontFamily: 'Georgia, serif', margin: '28px 0 8px', fontSize: '1.4rem' }}>
-              {c.name} <small className="muted">({list.length} dishes)</small>
+          <div key={c.id} id={`cat-${c.id}`}>
+            <h2
+              style={{
+                fontFamily: 'Georgia, serif',
+                margin: '28px 0 8px',
+                fontSize: '1.4rem',
+                display: 'flex',
+                alignItems: 'baseline',
+                flexWrap: 'wrap',
+                gap: 8,
+                wordBreak: 'normal',
+                overflowWrap: 'break-word',
+              }}
+            >
+              <span>{c.name}</span>
+              <small
+                className="muted"
+                style={{
+                  whiteSpace: 'nowrap',
+                  fontSize: '0.9rem',
+                  fontWeight: 'normal',
+                }}
+              >
+                ({list.length} {list.length === 1 ? 'dish' : 'dishes'})
+              </small>
             </h2>
             <div style={{ display: 'grid', gap: 10 }}>
               {list.map((i) => (
                 <article
-                  className="card"
+                  className="card menu-edit-card"
                   style={{
                     padding: 16,
                     display: 'grid',

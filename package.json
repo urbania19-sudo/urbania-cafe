@@ -4,12 +4,16 @@
   "description": "",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --hostname 0.0.0.0",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:integration:financial": "vitest run tests/financial-workflow-integration.test.ts --config vitest.integration.config.ts",
+    "test:integration:disposable": "powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-disposable-financial-integration.ps1",
+    "test:migration:replay": "powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-two-phase-migration-replay.ps1",
+    "test:migration:fail-closed": "powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-migration-0018-failure-replay.ps1"
   },
   "keywords": [],
   "author": "",

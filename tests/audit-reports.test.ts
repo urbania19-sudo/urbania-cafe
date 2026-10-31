@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { friendlyBillingError, type CreateManualOrderInput, type Bill } from '../src/lib/billing';
+import { parseReportSearch } from '../src/lib/reports';
 
 describe('Audit & Reports Business Logic & Validation', () => {
   describe('Billing error translation', () => {
@@ -129,6 +130,52 @@ describe('Audit & Reports Business Logic & Validation', () => {
       expect(qrBills.length).toBe(2);
       expect(manualBills.length).toBe(1);
       expect(manualBills[0]?.bill_number).toBe('UB-01002');
+    });
+  });
+  describe('Search Query Parsing for Audit & Reports', () => {
+    it('parses plain numeric order numbers correctly', () => {
+      const res = parseReportSearch('123');
+      expect(res.orderNumber).toBe(123);
+      expect(res.trimmed).toBe('123');
+    });
+
+    it('parses Order #123 with whitespace and casing', () => {
+      expect(parseReportSearch('Order #123').orderNumber).toBe(123);
+      expect(parseReportSearch('order #123').orderNumber).toBe(123);
+      expect(parseReportSearch('ORDER #123').orderNumber).toBe(123);
+      expect(parseReportSearch('  Order #123  ').orderNumber).toBe(123);
+      expect(parseReportSearch('Order # 123').orderNumber).toBe(123);
+      expect(parseReportSearch('order 123').orderNumber).toBe(123);
+    });
+
+    it('parses #123 with optional hash prefix', () => {
+      expect(parseReportSearch('#123').orderNumber).toBe(123);
+      expect(parseReportSearch('  #123  ').orderNumber).toBe(123);
+      expect(parseReportSearch('# 123').orderNumber).toBe(123);
+    });
+
+    it('preserves exact numeric matching and does not confuse order 12 with 123', () => {
+      const res12 = parseReportSearch('12');
+      const res123 = parseReportSearch('123');
+      expect(res12.orderNumber).toBe(12);
+      expect(res123.orderNumber).toBe(123);
+      expect(res12.orderNumber).not.toBe(res123.orderNumber);
+    });
+
+    it('returns null orderNumber for bill numbers and customer names while preserving search term', () => {
+      const billRes = parseReportSearch('UB-01001');
+      expect(billRes.orderNumber).toBeNull();
+      expect(billRes.trimmed).toBe('UB-01001');
+
+      const nameRes = parseReportSearch('Rohit Sharma');
+      expect(nameRes.orderNumber).toBeNull();
+      expect(nameRes.trimmed).toBe('Rohit Sharma');
+    });
+
+    it('handles empty and whitespace-only searches safely', () => {
+      expect(parseReportSearch('').orderNumber).toBeNull();
+      expect(parseReportSearch('   ').orderNumber).toBeNull();
+      expect(parseReportSearch('').trimmed).toBe('');
     });
   });
 });
