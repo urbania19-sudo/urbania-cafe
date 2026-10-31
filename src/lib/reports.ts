@@ -189,6 +189,34 @@ export function getTodayDateString(timezone = 'Asia/Kolkata'): string {
   }
 }
 
+interface ReportOrder {
+  id: string;
+  order_number: number;
+  status: string;
+  total_paise: number;
+  subtotal_paise?: number;
+  order_source?: string | null;
+  payment_status?: string | null;
+  paid_paise?: number;
+  created_at: string;
+}
+
+interface ReportBill {
+  id: string;
+  order_id?: string;
+  order_number: number;
+  status: string;
+  total_paise: number;
+  discount_paise?: number;
+  tax_paise?: number;
+  subtotal_paise?: number;
+  order_source?: string | null;
+  payment_status?: string | null;
+  payment_method?: string | null;
+  paid_paise?: number;
+  issued_at: string;
+}
+
 /**
  * Computes unified service and audit metrics for a specific business day.
  */
@@ -202,22 +230,68 @@ export async function getDailyServiceMetrics(
   const { startUtcIso, endUtcIso } = getTimezoneDateBounds(dateStr, timezone);
 
   // 1. Query all orders placed on this business day
-  const ordersResult = await db
+  let ordersResult: any = await db
     .from('orders')
     .select('id, order_number, status, total_paise, subtotal_paise, order_source, payment_status, paid_paise, created_at')
     .gte('created_at', startUtcIso)
     .lte('created_at', endUtcIso);
+
+  if (ordersResult.error) {
+    // Fallback for pre-0016 schemas where payment_status/paid_paise/order_source do not exist
+    ordersResult = await db
+      .from('orders')
+      .select('id, order_number, status, total_paise, subtotal_paise, created_at')
+      .gte('created_at', startUtcIso)
+      .lte('created_at', endUtcIso);
+  }
+
   if (ordersResult.error) throw new Error(`Unable to load orders for report: ${ordersResult.error.message}`);
-  const orders = ordersResult.data || [];
+  const rawOrders = ordersResult.data || [];
+  const orders: ReportOrder[] = rawOrders.map((o: any) => ({
+    id: o.id,
+    order_number: o.order_number,
+    status: o.status,
+    total_paise: o.total_paise || 0,
+    subtotal_paise: o.subtotal_paise || 0,
+    order_source: o.order_source || 'qr',
+    payment_status: o.payment_status ?? null,
+    paid_paise: typeof o.paid_paise === 'number' ? o.paid_paise : 0,
+    created_at: o.created_at,
+  }));
 
   // 2. Query all bills issued on this business day
-  const billsResult = await db
+  let billsResult: any = await db
     .from('bills')
     .select('id, order_id, order_number, status, total_paise, discount_paise, tax_paise, subtotal_paise, order_source, payment_status, payment_method, paid_paise, issued_at')
     .gte('issued_at', startUtcIso)
     .lte('issued_at', endUtcIso);
+
+  if (billsResult.error) {
+    // Fallback for pre-0016 schemas where payment_status/paid_paise/order_source do not exist
+    billsResult = await db
+      .from('bills')
+      .select('id, order_id, order_number, status, total_paise, discount_paise, tax_paise, subtotal_paise, issued_at')
+      .gte('issued_at', startUtcIso)
+      .lte('issued_at', endUtcIso);
+  }
+
   if (billsResult.error) throw new Error(`Unable to load bills for report: ${billsResult.error.message}`);
-  const bills = billsResult.data || [];
+  const rawBills = billsResult.data || [];
+  const bills: ReportBill[] = rawBills.map((b: any) => ({
+    id: b.id,
+    order_id: b.order_id,
+    order_number: b.order_number,
+    status: b.status,
+    total_paise: b.total_paise || 0,
+    discount_paise: b.discount_paise || 0,
+    tax_paise: b.tax_paise || 0,
+    subtotal_paise: b.subtotal_paise || 0,
+    order_source: b.order_source || 'qr',
+    payment_status: b.payment_status ?? (b.status === 'issued' ? 'paid' : null),
+    payment_method: b.payment_method ?? null,
+    paid_paise: typeof b.paid_paise === 'number' ? b.paid_paise : (b.status === 'issued' ? b.total_paise : 0),
+    issued_at: b.issued_at,
+  }));
 
   // 3. Query all customer payments recorded on this business day
   let customerPayments: {
@@ -280,7 +354,7 @@ export async function getDailyServiceMetrics(
     (o) => o.order_source === 'qr' || o.order_source === 'manual' || !o.order_source
   );
   const platformOrders = nonCancelledOrders.filter((o) =>
-    ['swiggy', 'zomato', 'delivery_platform'].includes(o.order_source)
+    ['swiggy', 'zomato', 'delivery_platform'].includes(o.order_source || '')
   );
   const adminCreditOrders = nonCancelledOrders.filter((o) => o.order_source === 'admin_credit');
 

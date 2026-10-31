@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { authDb } from '@/lib/supabase/auth-server';
 import LogoutButton from '@/components/auth/LogoutButton';
 import AdminNav from '@/components/admin/AdminNav';
-import { getDailyServiceMetrics, getTimezoneDateBounds } from '@/lib/reports';
+import { getDailyServiceMetrics, getTimezoneDateBounds, getTodayDateString } from '@/lib/reports';
 import { isPreviewDemoMode } from '@/lib/preview-demo';
 import PreviewDemoBanner from '@/components/demo/PreviewDemoBanner';
 import { DEMO_ADMIN_METRICS, DEMO_ADMIN_ORDERS } from '@/lib/demo-fixtures';
@@ -47,10 +47,43 @@ export default async function Admin() {
     role = profile.role;
 
     // Unified business-day reporting using cafe timezone
-    const dailyMetrics = await getDailyServiceMetrics(db);
+    let dailyMetrics;
+    try {
+      dailyMetrics = await getDailyServiceMetrics(db);
+    } catch (err) {
+      console.error('Failed to compute daily service metrics, using fallback:', err);
+      const todayStr = getTodayDateString('Asia/Kolkata');
+      dailyMetrics = {
+        date: todayStr,
+        timezone: 'Asia/Kolkata',
+        orderCount: 0,
+        completedOrderCount: 0,
+        activeOrderCount: 0,
+        cancelledOrderCount: 0,
+        customerOrderCount: 0,
+        externalPlatformCount: 0,
+        adminCreditCount: 0,
+        grossSalesPaise: 0,
+        discountsPaise: 0,
+        netSalesPaise: 0,
+        cashCollectedPaise: 0,
+        onlineCollectedPaise: 0,
+        customerCollectedPaise: 0,
+        customerRefundsPaise: 0,
+        historicalRefundClassifiedPaise: 0,
+        unclassifiedCollectedPaise: 0,
+        customerOutstandingPaise: 0,
+        collectedPaise: 0,
+        totalCollectedPaise: 0,
+        externalPlatformValuePaise: 0,
+        adminCreditTotalPaise: 0,
+        adminCreditOutstandingPaise: 0,
+        adminCreditSettledTodayPaise: 0,
+      };
+    }
     const { startUtcIso, endUtcIso } = getTimezoneDateBounds(dailyMetrics.date, dailyMetrics.timezone);
 
-    const { data: orders } = await db
+    let ordersQuery: any = await db
       .from('orders')
       .select(
         'id,order_number,status,total_paise,created_at,customer_name,guest_count,order_source,payment_status,external_platform_name,external_platform_ref,cafe_tables(label),order_items(item_name_snapshot,quantity)'
@@ -59,7 +92,26 @@ export default async function Admin() {
       .lte('created_at', endUtcIso)
       .order('created_at', { ascending: false });
 
-    rows = (orders ?? []) as unknown as typeof DEMO_ADMIN_ORDERS;
+    if (ordersQuery.error) {
+      // Fallback for pre-0016 schema
+      ordersQuery = await db
+        .from('orders')
+        .select(
+          'id,order_number,status,total_paise,created_at,customer_name,guest_count,cafe_tables(label),order_items(item_name_snapshot,quantity)'
+        )
+        .gte('created_at', startUtcIso)
+        .lte('created_at', endUtcIso)
+        .order('created_at', { ascending: false });
+    }
+
+    const rawOrders = ordersQuery.data ?? [];
+    rows = rawOrders.map((o: any) => ({
+      ...o,
+      order_source: o.order_source || 'qr',
+      payment_status: o.payment_status ?? null,
+      external_platform_name: o.external_platform_name ?? null,
+      external_platform_ref: o.external_platform_ref ?? null,
+    })) as unknown as typeof DEMO_ADMIN_ORDERS;
 
     metrics = [
       ["Today's orders", dailyMetrics.orderCount, `${dailyMetrics.completedOrderCount} completed · ${dailyMetrics.activeOrderCount} in service`],
