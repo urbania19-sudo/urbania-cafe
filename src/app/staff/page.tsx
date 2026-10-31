@@ -64,14 +64,14 @@ export default async function Staff() {
         db
           .from('orders')
           .select(
-            'id,order_number,status,customer_name,guest_count,total_paise,created_at,cafe_tables(label),order_items(menu_item_id,item_name_snapshot,quantity)'
+            'id,order_number,status,customer_name,customer_note,guest_count,total_paise,created_at,billed_at,service_mode,order_source,cafe_tables(label),order_items(id,menu_item_id,item_name_snapshot,quantity,unit_price_paise,item_note,is_custom,selected_options_snapshot)'
           )
           .in('status', ['NEW', 'ACCEPTED', 'PREPARING', 'READY'])
           .order('created_at'),
         db
           .from('orders')
           .select(
-            'id,order_number,status,customer_name,guest_count,total_paise,created_at,cafe_tables(label),order_items(menu_item_id,item_name_snapshot,quantity)'
+            'id,order_number,status,customer_name,customer_note,guest_count,total_paise,created_at,billed_at,service_mode,order_source,cafe_tables(label),order_items(id,menu_item_id,item_name_snapshot,quantity,unit_price_paise,item_note,is_custom,selected_options_snapshot)'
           )
           .eq('status', 'COMPLETED')
           .order('created_at', { ascending: false })
@@ -82,11 +82,22 @@ export default async function Staff() {
       const completedList = fallbackCompleted.data ?? [];
       const combined = [...activeList, ...completedList];
       const seen = new Set<string>();
-      orders = combined.filter((o) => {
-        if (seen.has(o.id)) return false;
-        seen.add(o.id);
-        return true;
-      });
+      orders = combined
+        .filter((o: any) => {
+          if (seen.has(o.id)) return false;
+          seen.add(o.id);
+          return true;
+        })
+        .map((o: any) => ({
+          ...o,
+          order_source: o.order_source || 'qr',
+          service_mode: o.service_mode || 'dine_in',
+          payment_status: o.payment_status ?? (o.billed_at ? 'paid' : 'unpaid'),
+          payment_method: o.payment_method ?? null,
+          paid_paise: typeof o.paid_paise === 'number' ? o.paid_paise : (o.billed_at ? o.total_paise : 0),
+          external_platform_name: o.external_platform_name ?? null,
+          external_platform_ref: o.external_platform_ref ?? null,
+        }));
       error = fallbackActive.error;
     } else {
       const activeList = activeRes.data ?? [];

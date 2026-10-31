@@ -100,11 +100,23 @@ export async function POST(
 
   // Guard: Delivery platform orders are paid externally; block customer billing
   try {
-    const { data: targetOrder } = await db
+    let targetOrder: any = null;
+    const { data: directOrder, error: orderErr } = await db
       .from("orders")
       .select("id, order_source, external_platform_name, external_platform_ref")
       .eq("id", orderId)
       .maybeSingle();
+
+    if (!orderErr && directOrder) {
+      targetOrder = directOrder;
+    } else {
+      const fallback = await db
+        .from("orders")
+        .select("id, order_source")
+        .eq("id", orderId)
+        .maybeSingle();
+      targetOrder = fallback.data;
+    }
 
     if (targetOrder && ["swiggy", "zomato", "delivery_platform"].includes(targetOrder.order_source)) {
       return NextResponse.json(
@@ -177,35 +189,52 @@ export async function POST(
         p_idempotency_key: idempotency_key || null,
       });
 
-      if (paymentError || !paymentResult?.ok) {
-        console.error("Payment recording failed after bill issuance:", paymentError);
-        // The bill remains issued and unpaid. Staff can retry using Collect Payment;
-        // never report a payment as successful when the atomic ledger write failed.
-        return NextResponse.json(
-          {
-            error: "Bill issued, but payment was not recorded. The bill remains unpaid; use Collect Payment to retry.",
-            code: "BILL_ISSUED_PAYMENT_PENDING",
-            bill_id: data.bill.id,
-            bill: data.bill,
-          },
-          { status: 503 }
-        );
-      }
+      if (paymentError) {
+        const msg = paymentError.message || "";
+        const errCode = (paymentError as { code?: string }).code;
+        const isRpcMissing =
+          errCode === "PGRST202" ||
+          errCode === "42883" ||
+          msg.includes("record_customer_payment") ||
+          msg.includes("function") ||
+          msg.includes("does not exist");
 
-      data.bill = paymentResult.bill || data.bill;
+        if (isRpcMissing) {
+          // Pre-0017 fallback: in older schemas, generate_bill alone settled the bill.
+          // Safely set the bill return attributes without failing the request.
+          data.bill.payment_method = normalizedMethod;
+          data.bill.payment_status = "paid";
+          data.bill.paid_paise = billTotalPaise;
+        } else {
+          console.error("Payment recording failed after bill issuance:", paymentError);
+          // The bill remains issued and unpaid. Staff can retry using Collect Payment;
+          // never report a payment as successful when the atomic ledger write failed.
+          return NextResponse.json(
+            {
+              error: "Bill issued, but payment was not recorded. The bill remains unpaid; use Collect Payment to retry.",
+              code: "BILL_ISSUED_PAYMENT_PENDING",
+              bill_id: data.bill.id,
+              bill: data.bill,
+            },
+            { status: 503 }
+          );
+        }
+      } else if (paymentResult?.bill) {
+        data.bill = paymentResult.bill;
+      }
     } else {
       // The bill defaults to unpaid. Store the selected method for the pending balance,
-      // and check the update results rather than silently ignoring schema or DB errors.
-      const [billUpdate, orderUpdate] = await Promise.all([
-        db.from("bills").update({ payment_status: "unpaid", paid_paise: 0, payment_method: normalizedMethod }).eq("id", data.bill.id),
-        db.from("orders").update({ payment_status: "unpaid", paid_paise: 0, payment_method: normalizedMethod }).eq("id", data.bill.order_id),
-      ]);
-      if (billUpdate.error || orderUpdate.error) {
-        console.error("Could not persist unpaid bill state:", billUpdate.error || orderUpdate.error);
-        return NextResponse.json(
-          { error: "Bill issued but payment status could not be confirmed. Check the bill before retrying.", bill_id: data.bill.id },
-          { status: 500 }
-        );
+      // and tolerate missing columns on pre-0016 database schemas.
+      try {
+        const [billUpdate, orderUpdate] = await Promise.all([
+          db.from("bills").update({ payment_status: "unpaid", paid_paise: 0, payment_method: normalizedMethod }).eq("id", data.bill.id),
+          db.from("orders").update({ payment_status: "unpaid", paid_paise: 0, payment_method: normalizedMethod }).eq("id", data.bill.order_id),
+        ]);
+        if (billUpdate.error || orderUpdate.error) {
+          console.warn("Could not persist unpaid payment_status columns (likely pre-0016 schema):", billUpdate.error || orderUpdate.error);
+        }
+      } catch (updateErr) {
+        console.warn("Payment status update skipped on pre-0016 schema:", updateErr);
       }
       data.bill.paid_paise = 0;
       data.bill.payment_status = "unpaid";

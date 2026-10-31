@@ -445,18 +445,17 @@ export default function OrderBoard({
     setBusy(o.id);
     setError('');
     try {
-      if (o.billed_at) {
-        // Already billed: directly fetch existing bill (reprint mode, NO discount prompt)
+      // First attempt to load existing bill if order is billed or completed
+      if (o.billed_at || o.status === 'COMPLETED') {
         const res = await fetch(`/api/staff/orders/${o.id}/bill`);
         const data = await res.json();
-        if (!res.ok || !data.bill) {
-          throw new Error(data.error || 'Failed to load existing bill');
+        if (res.ok && data.bill) {
+          setActiveBill({
+            bill: data.bill,
+            isReprint: true,
+          });
+          return;
         }
-        setActiveBill({
-          bill: data.bill,
-          isReprint: true,
-        });
-        return;
       }
 
       // Not yet billed: allow staff to apply optional discount before issuing

@@ -74,22 +74,31 @@ export async function GET(
   }
 
   // Fetch order items and latest acknowledged ticket
-  const [orderRes, kotRes] = await Promise.all([
-    db
+  let orderRes = await db
+    .from('orders')
+    .select(
+      'id,order_number,status,customer_name,customer_note,guest_count,total_paise,created_at,billed_at,service_mode,order_source,cafe_tables(label),order_items(id,menu_item_id,item_name_snapshot,quantity,unit_price_paise,item_note,is_custom,selected_options_snapshot)'
+    )
+    .eq('id', orderId)
+    .maybeSingle();
+
+  if (orderRes.error) {
+    orderRes = await db
       .from('orders')
       .select(
-        'id,order_number,status,customer_name,customer_note,guest_count,total_paise,created_at,billed_at,service_mode,order_source,cafe_tables(label),order_items(id,menu_item_id,item_name_snapshot,quantity,unit_price_paise,item_note,is_custom,selected_options_snapshot)'
+        'id,order_number,status,customer_name,customer_note,guest_count,total_paise,created_at,billed_at,service_mode,cafe_tables(label),order_items(id,menu_item_id,item_name_snapshot,quantity,unit_price_paise,item_note,is_custom,selected_options_snapshot)'
       )
       .eq('id', orderId)
-      .maybeSingle(),
-    db
-      .from('order_kitchen_tickets')
-      .select('id,ticket_number,ticket_type,items_snapshot,full_order_snapshot,created_at')
-      .eq('order_id', orderId)
-      .order('ticket_number', { ascending: false })
-      .limit(1)
-      .maybeSingle(),
-  ]);
+      .maybeSingle();
+  }
+
+  const kotRes = await db
+    .from('order_kitchen_tickets')
+    .select('id,ticket_number,ticket_type,items_snapshot,full_order_snapshot,created_at')
+    .eq('order_id', orderId)
+    .order('ticket_number', { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
   if (orderRes.error || !orderRes.data) {
     return NextResponse.json({ error: 'Order not found' }, { status: 404 });

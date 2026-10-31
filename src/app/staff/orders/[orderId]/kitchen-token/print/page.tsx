@@ -70,7 +70,10 @@ export default async function KitchenTokenPrintPage({
     redirect('/staff/login');
   }
 
-  const { data: order, error } = await db
+  let order: any = null;
+  let error: any = null;
+
+  const orderRes = await db
     .from('orders')
     .select(
       'id,order_number,status,customer_name,customer_note,guest_count,total_paise,created_at,billed_at,service_mode,order_source,payment_status,external_platform_name,external_platform_ref,cafe_tables(label),order_items(id,menu_item_id,item_name_snapshot,quantity,unit_price_paise,item_note,is_custom,selected_options_snapshot)'
@@ -78,14 +81,38 @@ export default async function KitchenTokenPrintPage({
     .eq('id', orderId)
     .maybeSingle();
 
+  if (orderRes.error) {
+    // Fallback for pre-0016 schema where payment_status / external_platform_* columns do not exist
+    const fallback = await db
+      .from('orders')
+      .select(
+        'id,order_number,status,customer_name,customer_note,guest_count,total_paise,created_at,billed_at,service_mode,order_source,cafe_tables(label),order_items(id,menu_item_id,item_name_snapshot,quantity,unit_price_paise,item_note,is_custom,selected_options_snapshot)'
+      )
+      .eq('id', orderId)
+      .maybeSingle();
+    order = fallback.data;
+    error = fallback.error;
+  } else {
+    order = orderRes.data;
+    error = null;
+  }
+
   if (error || !order) {
     notFound();
   }
 
+  const normalizedOrder = {
+    ...order,
+    order_source: (order as any).order_source || 'qr',
+    payment_status: (order as any).payment_status ?? null,
+    external_platform_name: (order as any).external_platform_name ?? null,
+    external_platform_ref: (order as any).external_platform_ref ?? null,
+  };
+
   const currentItems = (order.order_items || []) as unknown as KitchenTicketOrderItem[];
 
   if (isReprint) {
-    const reprintTicket = createFullReprintTicket(order as unknown as KitchenTicketOrder);
+    const reprintTicket = createFullReprintTicket(normalizedOrder as unknown as KitchenTicketOrder);
     return (
       <KitchenTokenPrintView
         order={reprintTicket}
@@ -117,10 +144,20 @@ export default async function KitchenTokenPrintPage({
     latestKot?.full_order_snapshot as unknown as KitchenTicketOrderItem[] | null
   );
 
-  if (delta.ticketType === 'none') notFound();
+  // If there are no new delta items, render the full ticket as a reprint rather than throwing a 404
+  if (delta.ticketType === 'none') {
+    const reprintTicket = createFullReprintTicket(normalizedOrder as unknown as KitchenTicketOrder);
+    return (
+      <KitchenTokenPrintView
+        order={reprintTicket}
+        isReprint={true}
+        ticketType="reprint"
+      />
+    );
+  }
 
   const printOrder: KitchenTicketOrder = {
-    ...(order as unknown as KitchenTicketOrder),
+    ...(normalizedOrder as unknown as KitchenTicketOrder),
     ticket_type: delta.ticketType,
     order_items: delta.deltaItems,
   };

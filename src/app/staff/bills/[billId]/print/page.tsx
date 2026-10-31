@@ -65,11 +65,11 @@ export default async function BillPrintPage({
     redirect('/staff/login');
   }
 
-  const { data: bill, error } = await db
-    .from('bills')
-    .select('*')
-    .eq('id', billId)
-    .maybeSingle();
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(billId);
+  const billQuery = isUuid
+    ? db.from('bills').select('*').eq('id', billId)
+    : db.from('bills').select('*').eq('bill_number', billId);
+  const { data: bill, error } = await billQuery.maybeSingle();
 
   if (error || !bill) {
     notFound();
