@@ -5,9 +5,9 @@
     Phase 1: Provisions an isolated ephemeral Supabase stack with migrations 0001 through 0015 only.
              Inserts production-derived legacy fixtures into the pre-0016 schema.
              Validates that supabase/preflight-production-release.sql executes cleanly on legacy schema.
-    Phase 2: Applies migrations 0016 through 0026 chronologically against the live historical fixtures.
+    Phase 2: Applies migrations 0016 through 0027 chronologically against the live historical fixtures.
              Asserts real database rows for all production findings (Finding 1, 2, 3, External, Admin Credit).
-             Validates that supabase/preflight-production-release.sql executes on post-0026 schema with 0 discrepancies.
+             Validates that supabase/preflight-production-release.sql executes on post-0027 schema with 0 discrepancies.
     Phase 3: Rehearses the multiple-bill safety gate to ensure fail-closed behavior on duplicate bills.
     Phase 4: Guaranteed teardown of containers, volumes, and temporary files. Persistent DB at 54321 untouched.
 #>
@@ -196,9 +196,9 @@ try {
     Write-Success "Preflight SQL executed cleanly on pre-0016 schema with 0 errors."
 
     # -------------------------------------------------------------------------
-    # 6. Phase 2: Copy and Apply Migrations 0016-0026 Chronologically
+    # 6. Phase 2: Copy and Apply Migrations 0016-0027 Chronologically
     # -------------------------------------------------------------------------
-    Write-Step "Copying migrations 0016-0026 and applying to the live historical fixtures..."
+    Write-Step "Copying migrations 0016-0027 and applying to the live historical fixtures..."
     Write-Host "Copying pending release migrations (count: $($phase2Migrations.Count))..."
     foreach ($f in $phase2Migrations) {
         Copy-Item -Path $f.FullName -Destination (Join-Path $DisposableDir "supabase\migrations\$($f.Name)")
@@ -207,9 +207,9 @@ try {
     # Apply pending migrations using supabase migration up
     npx supabase migration up --local --workdir $DisposableDir
     if ($LASTEXITCODE -ne 0) {
-        throw "Failed to apply migrations 0016-0026."
+        throw "Failed to apply migrations 0016-0027."
     }
-    Write-Success "Migrations 0016-0026 applied successfully in chronological order."
+    Write-Success "Migrations 0016-0027 applied successfully in chronological order."
 
     # -------------------------------------------------------------------------
     # 7. Phase 2: Assert Real Database Rows and Reconciled State

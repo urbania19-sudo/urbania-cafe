@@ -1,6 +1,6 @@
 # Urbania Café — Staging Database & Vercel Preview Billing Guide
 
-This guide documents how to safely configure and use an isolated Supabase staging database for Vercel Preview deployments, details the complete database migration sequence (0001–0026), explains financial and refund safety behaviors, and outlines the required verification gates before production release.
+This guide documents how to safely configure and use an isolated Supabase staging database for Vercel Preview deployments, details the complete database migration sequence (0001–0027), explains financial and refund safety behaviors, and outlines the required verification gates before production release.
 
 ---
 
@@ -8,7 +8,7 @@ This guide documents how to safely configure and use an isolated Supabase stagin
 
 Urbania Café enforces a strict fail-closed write-safety policy (`src/lib/preview-guard.ts`):
 
-- **Production (`VERCEL_ENV=production`)**: Normal café operations permitted against the production database (`rexeyagnvssvjlukjcbd`).
+- **Production (`VERCEL_ENV=production`)**: Normal café operations permitted against the production database (`asdrrunxpsqzbvswmzgv`).
 - **Local Development (`VERCEL_ENV` undefined)**: Normal operations permitted against local Docker Supabase (`http://127.0.0.1:54321`).
 - **Vercel Preview (`VERCEL_ENV=preview`)**: All database mutations (`POST`, `PATCH`, `PUT`, `DELETE`) are **blocked by default** (`HTTP 403 PREVIEW_READ_ONLY`) when Preview deployments share or inherit the production database.
 - **Preview Demo Mode**: When Preview lacks isolated staging credentials, synthetic in-memory fixtures (`src/lib/demo-fixtures.ts`) render the admin dashboard, staff queue, demo QR menus, and sample receipts safely without connecting to any database.
@@ -20,7 +20,7 @@ Preview deployments are permitted to perform write operations **only** when all 
 2. `ISOLATED_STAGING_DB=true` explicitly confirms that an isolated staging project is configured.
 3. `ALLOW_PREVIEW_WRITES=true` explicitly enables writes for testing.
 4. `BLOCK_PREVIEW_WRITES` is unset or not `true`.
-5. No configured database connection URL (`NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_INTERNAL_URL`, `SUPABASE_URL`, `POSTGRES_URL`, `DATABASE_URL`) matches or contains the known production project reference (`rexeyagnvssvjlukjcbd`).
+5. No configured database connection URL (`NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_INTERNAL_URL`, `SUPABASE_URL`, `POSTGRES_URL`, `DATABASE_URL`) matches or contains the known production project reference (`asdrrunxpsqzbvswmzgv`).
 6. No configured database connection matches `PRODUCTION_SUPABASE_URL` or `PRODUCTION_DATABASE_URL`.
 7. All configured candidate URLs point to the same consistent staging database target. Missing or unrecognized database targets fail closed.
 
@@ -36,9 +36,9 @@ When Preview deployments share or inherit production configuration (read-only pr
 
 ---
 
-## 2. Complete Database Migration Inventory (0001–0026)
+## 2. Complete Database Migration Inventory (0001–0027)
 
-The repository contains 26 chronological migrations in `supabase/migrations/`. Migrations must be applied strictly in this numerical order:
+The repository contains 27 chronological migrations in `supabase/migrations/`. Migrations must be applied strictly in this numerical order:
 
 | # | Migration File | Description & Schema Changes | Required RPCs & Triggers |
 |---|---|---|---|
@@ -68,8 +68,16 @@ The repository contains 26 chronological migrations in `supabase/migrations/`. M
 | **0024** | `202610290024_option_snapshot_price_consistency.sql` | Price consistency: cross-menu and unavailable option validation, guarantees option price delta parity across snapshots and order totals. | Updated `place_public_order()`, `create_admin_credit_order()`, etc. |
 | **0025** | `202610290025_admin_credit_order_idempotency.sql` | Concurrency & Idempotency: enforces mandatory UUID idempotency keys on admin credit orders with PostgreSQL transaction advisory locking (`pg_advisory_xact_lock`). | Updated `create_admin_credit_order()` |
 | **0026** | `202610290026_admin_credit_payload_hash.sql` | Payload fingerprinting: SHA-256 fingerprinting stored in `orders.idempotency_hash`; detects payload tampering on retried keys (HTTP 409) and fails closed on unhashed legacy rows. | Updated `create_admin_credit_order()` |
+| **0027** | `202610310027_harden_rpc_execution_privileges.sql` | Authorization hardening: binds UUID role helpers to the current authenticated user and `admin_profiles`, narrows admin/staff RLS policies to authenticated sessions, revokes anonymous access to sensitive staff/admin RPCs, and preserves public token-based QR entry points. | Updated `has_role()`, `is_staff(uuid)`, zero-argument role helpers, and sensitive RPC grants |
 
 ---
+
+
+### Migration 0027 — Security verification required
+
+Migration 0027 is additive and does not rewrite café business rows. It changes the role-helper source of truth from the legacy `user_roles` table to the current `admin_profiles` records, makes UUID-based role checks self-only, limits staff/admin RLS policies to authenticated sessions, and revokes anonymous execution from sensitive staff/admin RPCs. Anonymous menu browsing and token-based QR ordering/status functions remain available by design.
+
+The migration also splits the `categories` read policy so anonymous customers can still read active menu categories without needing to execute an authenticated role helper. The old enum value `kitchen` maps to the current `admin_profiles.role = 'staff'` state; the disposable replay and RLS test must verify this compatibility mapping before any production application.
 
 ## 3. Financial & Refund Safety Rules
 
@@ -166,7 +174,7 @@ npm run build           # Next.js production build succeeds
 ## 6. Testing Environments: Disposable Local Containers & Optional Hosted Staging
 
 The Urbania Café POS testing strategy does **not** require provisioning a hosted staging Supabase project. Instead, the project uses two complementary, isolated environments:
-1. **Automated Disposable Local Integration Runner (`npm run test:integration:disposable`)**: Spawns an ephemeral Supabase container stack on isolated ports (`54421` API, `54422` DB), applies migrations 0001 through 0026 from scratch, executes financial integration tests, and unconditionally tears down all containers, volumes, and temporary workspaces.
+1. **Automated Disposable Local Integration Runner (`npm run test:integration:disposable`)**: Spawns an ephemeral Supabase container stack on isolated ports (`54421` API, `54422` DB), applies migrations 0001 through 0027 from scratch, executes financial integration tests, and unconditionally tears down all containers, volumes, and temporary workspaces.
 2. **Safe Vercel Preview Demo Mode (`src/lib/demo-fixtures.ts`)**: For Vercel Preview deployments, synthetic in-memory fixtures render the admin dashboard, staff queue, and QR menu safely without connecting to any database or requiring cloud staging infrastructure.
 
 ### Optional: Hosted Staging Project Setup (Optional Manual Cloud Staging Only)
@@ -175,7 +183,7 @@ If the café management optionally chooses to maintain a dedicated hosted stagin
 2. Click **New Project** and name it `urbania-cafe-staging` (choose region `ap-south-1` Mumbai to match production).
 3. Set a strong database password and save it securely.
 4. Retrieve API Keys (`anon` public key and `service_role` secret key).
-5. Apply migrations 0001 through 0026 in sequence via the SQL Editor.
+5. Apply migrations 0001 through 0027 in sequence via the SQL Editor.
 6. Run `supabase/seed.sql`.
 7. Create test owner and staff accounts in Supabase Auth.
 
@@ -194,7 +202,7 @@ In Vercel Dashboard → **Settings** → **Environment Variables** (check **ONLY
 | `ISOLATED_STAGING_DB` | **Preview** | `true` | Confirms database is isolated staging |
 | `ALLOW_PREVIEW_WRITES` | **Preview** | `true` | Enables Preview mutation endpoints |
 | `BLOCK_PREVIEW_WRITES` | **Preview** | *(leave unset)* | Failsafe kill switch |
-| `PRODUCTION_SUPABASE_URL` | **Preview** | `https://rexeyagnvssvjlukjcbd.supabase.co` | Used for production-target collision checks |
+| `PRODUCTION_SUPABASE_URL` | **Preview** | `https://asdrrunxpsqzbvswmzgv.supabase.co` | Used for production-target collision checks |
 | `EXCEL_EXPORT_TOKEN` | **Preview** | `<random-staging-token>` | (Optional) Token for Preview Excel tests |
 
 ---
@@ -211,7 +219,7 @@ In Vercel Dashboard → **Settings** → **Environment Variables** (check **ONLY
 - [x] Idempotency replay and conflict detection verified on customer payments and admin credit orders.
 - [x] Asia/Kolkata timezone reconciliation verified.
 - [x] Preview Demo Mode with synthetic fixtures verified fail-closed without requiring hosted staging infrastructure.
-- [x] 479/479 automated tests pass across 39 test files. TypeScript, ESLint, and Next.js production build pass.
+- [x] Previously reported feature-branch verification: 517/517 automated tests across 41 files, TypeScript and Next.js production build passed, ESLint had zero errors. Migration 0027 and its new regression tests are an additional security change; do not treat them as verified until rerun on the café development workstation or a disposable environment.
 
 > [!WARNING]
 > **Production readiness has NOT been approved.** The candidate is locally verified and code-complete, but formal release and deployment to production remain blocked pending stakeholder sign-off and the operational prerequisites listed below.
@@ -219,7 +227,7 @@ In Vercel Dashboard → **Settings** → **Environment Variables** (check **ONLY
 ### Items Requiring External / Business Action (Remaining Blockers — Production Readiness NOT Approved)
 - [ ] **Release & Staging Approval**: Formal sign-off from café owners/stakeholders to authorize staging and production deployment.
 - [ ] **Physical Thermal Printer Hardware**: Thermal receipt canvas rendering is verified via jsdom/canvas, but ESC/POS raw raster stream compatibility with the physical Bluetooth/USB thermal printer requires on-site hardware verification.
-- [ ] **Production Migration Deployment**: Migrations 0007–0026 have not been applied to production Supabase (`rexeyagnvssvjlukjcbd`). Applying migrations requires explicit release approval and scheduled maintenance.
+- [ ] **Production Migration Deployment**: Migrations 0016–0027 have not been applied to production Supabase (`asdrrunxpsqzbvswmzgv`) as of the latest read-only audit. Migrations must be rehearsed and owner-approved before production execution. Applying migrations requires explicit release approval and scheduled maintenance.
 - [ ] **Full Refund Ledger Specification**: If the business requires partial or full cash/UPI refund tracking in the future, a dedicated schema migration and product specification must be designed.
 
 *(Note: Provisioning a hosted staging Supabase database is NOT a blocker; the project uses the automated disposable local integration environment and synthetic Preview Demo Mode.)*
