@@ -116,16 +116,19 @@ create policy "staff read customer payments"
 
 -- Public menu visitors can read active categories only. Authenticated admins retain
 -- visibility of inactive categories through the authenticated policy.
-drop policy if exists "Public reads active categories" on public.categories;
-drop policy if exists "Authenticated reads active categories" on public.categories;
+-- Optional legacy table public.categories: if present (e.g. production/restored environments),
+-- safely harden its RLS policies using dynamic execution.
+do $$
+begin
+  if to_regclass('public.categories') is not null then
+    execute 'drop policy if exists "Public reads active categories" on public.categories;';
+    execute 'drop policy if exists "Authenticated reads active categories" on public.categories;';
 
-create policy "Public reads active categories"
-  on public.categories for select to anon
-  using (is_active);
+    execute 'create policy "Public reads active categories" on public.categories for select to anon using (is_active);';
 
-create policy "Authenticated reads active categories"
-  on public.categories for select to authenticated
-  using (is_active or public.has_role(auth.uid(), 'admin'::public.app_role));
+    execute 'create policy "Authenticated reads active categories" on public.categories for select to authenticated using (is_active or public.has_role(auth.uid(), ''admin''::public.app_role));';
+  end if;
+end $$;
 
 -- 2. Revoke anonymous execution from privileged application RPCs.
 -- Authenticated grants are retained; function bodies continue to enforce their own
@@ -142,67 +145,85 @@ revoke execute on function public.generate_bill(uuid, text, numeric) from public
 revoke execute on function public.record_bill_reprint(uuid, jsonb) from public, anon;
 revoke execute on function public.update_staff_order_status(uuid, public.order_status, text) from public, anon;
 
-revoke execute on function public.admin_list_staff() from public, anon;
-revoke execute on function public.admin_set_role(text, public.app_role, boolean) from public, anon;
 revoke execute on function public.acknowledge_kitchen_ticket(uuid, text, jsonb, jsonb, uuid) from public, anon;
+
+-- Optional legacy administrative RPCs from production: guard with schema, signature, and type checks
+do $$
+begin
+  if to_regprocedure('public.admin_list_staff()') is not null then
+    execute 'revoke execute on function public.admin_list_staff() from public, anon;';
+  end if;
+  if to_regtype('public.app_role') is not null and to_regprocedure('public.admin_set_role(text, public.app_role, boolean)') is not null then
+    execute 'revoke execute on function public.admin_set_role(text, public.app_role, boolean) from public, anon;';
+  end if;
+end $$;
 
 -- Restrict role lookups to the caller's own user ID, except that an admin may
 -- inspect another account. This prevents authenticated users from probing arbitrary
 -- UUIDs through SECURITY DEFINER helper RPCs. RLS policies call these with auth.uid().
-create or replace function public.has_role(_user_id uuid, _role public.app_role)
-returns boolean
-language sql
-stable
-security definer
-set search_path = public, pg_temp
-as $$
-  select case
-    when auth.uid() is null or _user_id is null then false
-    when _user_id = auth.uid() then exists (
-      select 1 from public.user_roles
-      where user_id = _user_id and role = _role
-    )
-    when exists (
-      select 1 from public.admin_profiles requester
-      where requester.user_id = auth.uid()
-        and requester.role in ('owner', 'admin')
-    ) then exists (
-      select 1 from public.user_roles target
-      where target.user_id = _user_id and target.role = _role
-    )
-    else false
-  end;
-$$;
+-- Optional legacy role table public.user_roles and enum type public.app_role:
+do $$
+begin
+  if to_regtype('public.app_role') is not null and to_regclass('public.user_roles') is not null then
+    execute $fn$
+      create or replace function public.has_role(_user_id uuid, _role public.app_role)
+      returns boolean
+      language sql
+      stable
+      security definer
+      set search_path = public, pg_temp
+      as $body$
+        select case
+          when auth.uid() is null or _user_id is null then false
+          when _user_id = auth.uid() then exists (
+            select 1 from public.user_roles
+            where user_id = _user_id and role = _role
+          )
+          when exists (
+            select 1 from public.admin_profiles requester
+            where requester.user_id = auth.uid()
+              and requester.role in ('owner', 'admin')
+          ) then exists (
+            select 1 from public.user_roles target
+            where target.user_id = _user_id and target.role = _role
+          )
+          else false
+        end;
+      $body$;
+    $fn$;
 
-create or replace function public.is_staff(_user_id uuid)
-returns boolean
-language sql
-stable
-security definer
-set search_path = public, pg_temp
-as $$
-  select case
-    when auth.uid() is null or _user_id is null then false
-    when _user_id = auth.uid() then exists (
-      select 1 from public.user_roles where user_id = _user_id
-    )
-    when exists (
-      select 1 from public.admin_profiles requester
-      where requester.user_id = auth.uid()
-        and requester.role in ('owner', 'admin')
-    ) then exists (
-      select 1 from public.user_roles target where target.user_id = _user_id
-    )
-    else false
-  end;
-$$;
+    execute $fn$
+      create or replace function public.is_staff(_user_id uuid)
+      returns boolean
+      language sql
+      stable
+      security definer
+      set search_path = public, pg_temp
+      as $body$
+        select case
+          when auth.uid() is null or _user_id is null then false
+          when _user_id = auth.uid() then exists (
+            select 1 from public.user_roles where user_id = _user_id
+          )
+          when exists (
+            select 1 from public.admin_profiles requester
+            where requester.user_id = auth.uid()
+              and requester.role in ('owner', 'admin')
+          ) then exists (
+            select 1 from public.user_roles target where target.user_id = _user_id
+          )
+          else false
+        end;
+      $body$;
+    $fn$;
 
--- These helpers remain executable by authenticated because RLS policies use them.
-revoke execute on function public.has_role(uuid, public.app_role) from public, anon;
-grant execute on function public.has_role(uuid, public.app_role) to authenticated, service_role;
+    execute 'revoke execute on function public.has_role(uuid, public.app_role) from public, anon;';
+    execute 'grant execute on function public.has_role(uuid, public.app_role) to authenticated, service_role;';
 
-revoke execute on function public.is_staff(uuid) from public, anon;
-grant execute on function public.is_staff(uuid) to authenticated, service_role;
+    execute 'revoke execute on function public.is_staff(uuid) from public, anon;';
+    execute 'grant execute on function public.is_staff(uuid) to authenticated, service_role;';
+  end if;
+end $$;
 
 revoke execute on function public.is_admin() from public, anon;
 grant execute on function public.is_admin() to authenticated, service_role;
@@ -217,9 +238,18 @@ revoke execute on function public.order_has_items(uuid) from public, anon;
 
 -- 4. Trigger/event-trigger entry points are not RPCs. Existing triggers continue to
 -- invoke them; clients must not call them directly.
-revoke execute on function public.log_order_status() from public, anon, authenticated;
-revoke execute on function public.rls_auto_enable() from public, anon, authenticated;
 revoke execute on function public.prevent_customer_payment_mutation() from public, anon, authenticated;
+
+-- Optional legacy triggers from production: guard with schema and signature checks
+do $$
+begin
+  if to_regprocedure('public.log_order_status()') is not null then
+    execute 'revoke execute on function public.log_order_status() from public, anon, authenticated;';
+  end if;
+  if to_regprocedure('public.rls_auto_enable()') is not null then
+    execute 'revoke execute on function public.rls_auto_enable() from public, anon, authenticated;';
+  end if;
+end $$;
 
 -- 5. Retain pre-0009 snapshots, but remove anon/authenticated Data API grants when
 -- the historical tables exist. Clean local replay may not contain these production-

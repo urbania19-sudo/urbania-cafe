@@ -99,6 +99,10 @@ describe('Migration 0027: SECURITY DEFINER execution privilege hardening', () =>
     );
   });
 
+  it('guards optional legacy table public.categories policies with to_regclass', () => {
+    expect(flatSql).toContain("if to_regclass('public.categories') is not null then");
+  });
+
   it('does not revoke intentionally public token-based QR endpoints', () => {
     const publicQrFunctions = [
       'place_order(text, jsonb, text, integer, text)',
