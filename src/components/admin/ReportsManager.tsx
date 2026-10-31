@@ -688,11 +688,26 @@ export default function ReportsManager({
               </table>
 
               <div style={{ padding: '10px 12px', display: 'grid', gap: 4, textAlign: 'right', fontSize: 13, background: '#ffffff05' }}>
-                <div>Subtotal: ₹{(selectedBill.subtotal_paise / 100).toFixed(2)}</div>
-                {selectedBill.tax_paise > 0 && <div>Tax: ₹{(selectedBill.tax_paise / 100).toFixed(2)}</div>}
-                <div style={{ fontSize: 16, fontWeight: 700, marginTop: 4 }}>
-                  Total Amount: ₹{(selectedBill.total_paise / 100).toFixed(2)}
-                </div>
+                {selectedBill.discount_paise && selectedBill.discount_paise > 0 ? (
+                  <>
+                    <div>Bill Total: ₹{((selectedBill.subtotal_before_discount_paise || (selectedBill.total_paise + selectedBill.discount_paise)) / 100).toFixed(2)}</div>
+                    {selectedBill.tax_paise > 0 && <div>Tax: ₹{(selectedBill.tax_paise / 100).toFixed(2)}</div>}
+                    <div style={{ color: '#10b981' }}>
+                      Discount {selectedBill.discount_type === 'percentage' && selectedBill.discount_value ? `(${selectedBill.discount_value}%)` : selectedBill.discount_type === 'fixed' && selectedBill.discount_value ? `(₹${selectedBill.discount_value})` : ''}: -₹{(selectedBill.discount_paise / 100).toFixed(2)}
+                    </div>
+                    <div style={{ fontSize: 16, fontWeight: 700, marginTop: 4 }}>
+                      Amount to Pay: ₹{(selectedBill.total_paise / 100).toFixed(2)}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>Subtotal: ₹{(selectedBill.subtotal_paise / 100).toFixed(2)}</div>
+                    {selectedBill.tax_paise > 0 && <div>Tax: ₹{(selectedBill.tax_paise / 100).toFixed(2)}</div>}
+                    <div style={{ fontSize: 16, fontWeight: 700, marginTop: 4 }}>
+                      Total Amount: ₹{(selectedBill.total_paise / 100).toFixed(2)}
+                    </div>
+                  </>
+                )}
               </div>
             </div>
 

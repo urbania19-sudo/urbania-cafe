@@ -94,6 +94,13 @@ export async function GET(req: NextRequest) {
       const taxRate = Number(b.tax_rate) || 0;
       const taxPaise = Number(b.tax_paise) || 0;
       const totalPaise = Number(b.total_paise) || 0;
+      const discountPaise = Number(b.discount_paise) || 0;
+      const originalTotalPaise =
+        b.subtotal_before_discount_paise != null
+          ? Number(b.subtotal_before_discount_paise)
+          : totalPaise + discountPaise;
+      const discountType = (b.discount_type as string) || null;
+      const discountValue = b.discount_value != null ? Number(b.discount_value) : null;
 
       return {
         bill_id: b.id,
@@ -109,6 +116,14 @@ export async function GET(req: NextRequest) {
         table_label: b.table_label || '',
         customer_name: b.customer_name || linkedOrder?.customer_name || null,
         guest_count: linkedOrder?.guest_count ?? 1,
+        original_total_paise: originalTotalPaise,
+        original_total_inr: Math.round(originalTotalPaise) / 100,
+        subtotal_before_discount_paise: originalTotalPaise,
+        subtotal_before_discount_inr: Math.round(originalTotalPaise) / 100,
+        discount_type: discountType,
+        discount_value: discountValue,
+        discount_paise: discountPaise,
+        discount_inr: Math.round(discountPaise) / 100,
         subtotal_paise: subtotalPaise,
         subtotal_inr: Math.round(subtotalPaise) / 100,
         tax_rate: taxRate,

@@ -106,6 +106,7 @@ export function renderReceiptToCanvas(
   const baseWidth = 384;
   const isReprint = !!options.isReprint;
   const biz = bill.business_snapshot;
+  const hasDiscount = Boolean(bill.discount_paise && bill.discount_paise > 0);
 
   // Create canvas for measuring and rendering
   const canvas = document.createElement("canvas");
@@ -221,10 +222,11 @@ export function renderReceiptToCanvas(
 
   // Divider + Totals
   y += 6 + 20; // divider gap (26)
-  y += 24;     // Subtotal (17px mono)
+  y += 24;     // Subtotal / Bill Total (17px mono)
   if (bill.tax_paise > 0 && biz.gst_status === "registered") y += 24; // GST (17px mono)
+  if (hasDiscount) y += 24; // Discount row (17px mono)
   y += 8 + 22; // divider gap (30)
-  y += 32;     // TOTAL AMOUNT (22px bold mono)
+  y += 32;     // TOTAL AMOUNT / AMOUNT TO PAY (22px bold mono)
   y += 12 + 24; // divider gap (36)
 
   // Footer & FSSAI declaration
@@ -482,12 +484,15 @@ export function renderReceiptToCanvas(
   const subtotalPaise = bill.subtotal_paise ?? (bill as unknown as { subtotal_cents: number }).subtotal_cents ?? 0;
   const taxPaise = bill.tax_paise ?? (bill as unknown as { tax_cents: number }).tax_cents ?? 0;
   const totalPaise = bill.total_paise ?? (bill as unknown as { total_cents: number }).total_cents ?? 0;
+  const discountPaise = bill.discount_paise ?? 0;
+  const subtotalBeforeDiscountPaise =
+    bill.subtotal_before_discount_paise ?? (totalPaise + discountPaise);
 
   renderCtx.font = `17px ${fontMono}`;
   renderCtx.textAlign = "left";
-  renderCtx.fillText("Subtotal:", leftX, curY);
+  renderCtx.fillText(hasDiscount ? "BILL TOTAL:" : "Subtotal:", leftX, curY);
   renderCtx.textAlign = "right";
-  renderCtx.fillText(`₹${(subtotalPaise / 100).toFixed(2)}`, rightX, curY);
+  renderCtx.fillText(`₹${((hasDiscount ? subtotalBeforeDiscountPaise : subtotalPaise) / 100).toFixed(2)}`, rightX, curY);
   curY += 24;
 
   if (taxPaise > 0 && biz.gst_status === "registered") {
@@ -503,6 +508,25 @@ export function renderReceiptToCanvas(
     curY += 24;
   }
 
+  if (hasDiscount) {
+    let discountLabel = "Discount:";
+    if (bill.discount_type === "percentage" && bill.discount_value != null) {
+      discountLabel = `Discount (${bill.discount_value}%):`;
+    } else if (bill.discount_type === "fixed" && bill.discount_value != null) {
+      discountLabel = `Discount (₹${bill.discount_value}):`;
+    } else if (bill.discount_type === "percentage") {
+      const pct = Math.round((discountPaise / (subtotalBeforeDiscountPaise || 1)) * 100);
+      discountLabel = `Discount (${pct}%):`;
+    } else if (bill.discount_type === "fixed") {
+      discountLabel = `Discount (₹${(discountPaise / 100).toFixed(2)}):`;
+    }
+    renderCtx.textAlign = "left";
+    renderCtx.fillText(discountLabel, leftX, curY);
+    renderCtx.textAlign = "right";
+    renderCtx.fillText(`-₹${(discountPaise / 100).toFixed(2)}`, rightX, curY);
+    curY += 24;
+  }
+
   curY += 8;
   drawDashedLine(curY);
   curY += 22;
@@ -510,7 +534,7 @@ export function renderReceiptToCanvas(
   // 12. Final Total Amount (22px bold mono — high visual prominence)
   renderCtx.font = `bold 22px ${fontMono}`;
   renderCtx.textAlign = "left";
-  renderCtx.fillText("TOTAL AMOUNT:", leftX, curY);
+  renderCtx.fillText(hasDiscount ? "AMOUNT TO PAY:" : "TOTAL AMOUNT:", leftX, curY);
   renderCtx.textAlign = "right";
   renderCtx.fillText(`₹${(totalPaise / 100).toFixed(2)}`, rightX, curY);
   curY += 12;
