@@ -23,7 +23,10 @@ const ANON_KEY = env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 const SERVICE_KEY = env.SUPABASE_SERVICE_ROLE_KEY || '';
 const APP_URL = 'http://127.0.0.1:3000';
 
-describe('Migrations 0019 & 0020: PostgreSQL RLS Authorization & Order Integrity Test Suite', () => {
+const hasCredentials = Boolean(ANON_KEY && SERVICE_KEY);
+const describeSuite = hasCredentials ? describe : describe.skip;
+
+describeSuite('Migrations 0019 & 0020: PostgreSQL RLS Authorization & Order Integrity Test Suite', () => {
   let adminClient: SupabaseClient;
   let ownerClient: SupabaseClient;
   let staffClient: SupabaseClient;

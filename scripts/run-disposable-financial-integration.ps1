@@ -3,7 +3,7 @@
     Repeatable, fully isolated, disposable financial integration test runner for Urbania Café POS.
 .DESCRIPTION
     Provisions a 100% ephemeral local Supabase instance in Docker on dedicated non-conflicting
-    ports (API: 54421, DB: 54422), applies all chronological migrations from scratch (0001 through 0026),
+    ports (API: 54421, DB: 54422), applies all chronological migrations from scratch (0001 through 0027),
     runs tests/financial-workflow-integration.test.ts, and unconditionally tears down all containers,
     volumes, and temporary files.
 
@@ -105,7 +105,7 @@ New-Item -ItemType Directory -Path (Join-Path $DisposableDir "supabase\migration
 # Copy all chronological migrations
 $migrationSource = Join-Path $RepoRoot "supabase\migrations"
 $migrationFiles = Get-ChildItem -Path "$migrationSource\*.sql" | Sort-Object Name
-Write-Host "Copying $($migrationFiles.Count) migrations (0001 through 0026)..."
+Write-Host "Copying $($migrationFiles.Count) migrations (0001 through 0027)..."
 Copy-Item -Path "$migrationSource\*.sql" -Destination (Join-Path $DisposableDir "supabase\migrations")
 
 # Copy seed.sql if present
